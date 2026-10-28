@@ -23,7 +23,7 @@ What has been tested:
 - Returning to HLauncher with the Honda icon inside CarPlay.
 - HDMI output without a Linux desktop or login cursor over the app.
 
-CarPlay requests **60fps**. That is the requested stream rate, not a guarantee for every phone, dongle or Pi. The tested radio negotiated **720×480 over HDMI**; touch is scaled to the actual output size.
+CarPlay requests **60fps**. That is the requested stream rate, not a guarantee for every phone, dongle or Pi. The panel is **800×480**, and forced **800×480 HDMI output at approximately 60Hz** has now been verified on the bench. The radio advertises 720×480 by default; use the [HDMI setting](docs/setup.md#hdmi) to select 800×480. Touch is scaled to the actual output size.
 
 What is still missing:
 

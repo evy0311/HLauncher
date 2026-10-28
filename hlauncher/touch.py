@@ -47,3 +47,21 @@ def pixels(contact, width, height):
         round(contact["x_raw"] * (width - 1) / 32767),
         round(contact["y_raw"] * (height - 1) / 32767),
     )
+
+
+def for_viewport(touch, width, height):
+    """Keep both raw contacts and add viewport coordinates for plugin consumers."""
+    event = dict(touch, width=width, height=height)
+    event["contacts"] = []
+    for contact in touch.get("contacts", []):
+        item = dict(contact)
+        point = pixels(contact, width, height)
+        item.update(
+            id=contact["slot"],
+            x=contact["x_raw"] / 32767 if point else None,
+            y=contact["y_raw"] / 32767 if point else None,
+            x_px=point[0] if point else None,
+            y_px=point[1] if point else None,
+        )
+        event["contacts"].append(item)
+    return event

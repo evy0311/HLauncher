@@ -23,16 +23,11 @@ def main():
                     last_frame = last_status = -1
                     backend.start(client.width, client.height)
                 elif kind in ("host.deactivate", "touch.cancel"):
-                    backend.touch({"action": "unused", "has_position": False})
+                    backend.touch({"contacts": []})
                     if kind == "host.deactivate":
                         active = False
                 elif kind == "touch" and active:
-                    contacts = message.get("contacts", [])
-                    backend.touch(
-                        contacts[0]
-                        if contacts
-                        else {"action": "unused", "has_position": False}
-                    )
+                    backend.touch(message)
                 elif kind == "host.stop":
                     return
             if backend.take_host_ui_request():

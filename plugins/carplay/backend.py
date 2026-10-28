@@ -2,6 +2,7 @@
 
 import json, os, pathlib, struct, subprocess, sys, threading, time
 from collections import deque
+from input import TouchRouter
 
 RUNTIME = pathlib.Path(__file__).resolve().parent / "runtime/usb"
 LOG_DIR = pathlib.Path(
@@ -38,8 +39,7 @@ class CarplayHDMI:
         self.version = 0
         self.status = "Select CarPlay"
         self.status_version = 0
-        self.last_xy = (0.5, 0.5)
-        self.down = False
+        self.touch_router = TouchRouter()
         self.frames = 0
         self.host_ui_requested = False
 
@@ -57,7 +57,7 @@ class CarplayHDMI:
             return not self.stop_event.is_set()
         self.stop_event = threading.Event()
         self.queue.clear()
-        self.down = False
+        self.touch_router = TouchRouter()
         self.frame = None
         self.frames = 0
         self.host_ui_requested = False
@@ -90,50 +90,33 @@ class CarplayHDMI:
             except (OSError, subprocess.TimeoutExpired):
                 self.notify("carplay_process_cleanup_pending", pid=proc.pid)
 
-    def touch(self, contact):
-        if contact["has_position"]:
-            self.last_xy = (contact["x_raw"] / 32767, contact["y_raw"] / 32767)
-        action = contact["action"]
-        if action == "down":
-            out = 14 if not self.down else 15
-            self.down = True
-        elif action == "move":
-            out = 15 if self.down else 14
-            self.down = True
-        elif action in ("up", "unused") and self.down:
-            out = 16
-            self.down = False
-        else:
-            return
-        item = {
-            "type": "touch",
-            "action": out,
-            "x": self.last_xy[0],
-            "y": self.last_xy[1],
-        }
+    def touch(self, event):
         with self.cond:
-            if out == 15 and self.queue and self.queue[-1]["action"] == 15:
-                self.queue[-1] = item
-            else:
-                if len(self.queue) >= 64:
-                    moves = [i for i, v in enumerate(self.queue) if v["action"] == 15]
-                    if moves:
-                        del self.queue[moves[0]]
-                    else:
-                        self.queue.clear()
-                        self.queue.append(
-                            {
-                                "type": "touch",
-                                "action": 16,
-                                "x": item["x"],
-                                "y": item["y"],
-                            }
-                        )
-                        self.down = False
-                        if out == 15:
-                            self.cond.notify()
-                            return
-                self.queue.append(item)
+            for item in self.touch_router.feed(event):
+                if (
+                    item.get("_motion")
+                    and self.queue
+                    and self.queue[-1].get("_motion")
+                    and self.queue[-1]["type"] == item["type"]
+                ):
+                    self.queue[-1] = item
+                else:
+                    if len(self.queue) >= 64:
+                        moves = [
+                            i
+                            for i, value in enumerate(self.queue)
+                            if value.get("_motion")
+                        ]
+                        if moves:
+                            del self.queue[moves[0]]
+                        else:
+                            self.queue.clear()
+                            self.queue.extend(self.touch_router.cancel())
+                            self.notify(
+                                "carplay_input_overflow", released_contacts=True
+                            )
+                            break
+                    self.queue.append(item)
             self.cond.notify()
 
     def send_inputs(self, proc):
@@ -142,7 +125,8 @@ class CarplayHDMI:
                 if not self.queue:
                     self.cond.wait(0.1)
                     continue
-                item = self.queue.popleft()
+                item = dict(self.queue.popleft())
+                item.pop("_motion", None)
             try:
                 proc.stdin.write((json.dumps(item) + "\n").encode())
                 proc.stdin.flush()

@@ -13,7 +13,7 @@ fi
 apt-get update
 apt-get install -y python3 python3-pil python3-dbus python3-gi \
   bluez bluez-alsa-utils libasound2-plugin-bluez alsa-utils openssl \
-  nodejs npm libudev-dev libusb-1.0-0 libavcodec59 libavutil57 libswscale6 \
+  nodejs npm libudev-dev libusb-1.0-0 libdrm2 libavcodec59 libavutil57 libswscale6 \
   fonts-dejavu-core fbset usbutils
 root=/opt/hlauncher
 if [[ $(pwd -P) == "$root" ]]; then

@@ -1,16 +1,16 @@
 // Headless Carlinkit adapter, using pinned node-carplay DongleDriver (MIT).
 // stdout: type:u8 + payload_length:u32be + payload; type1=H264, type2=JSON status.
-// stdin: JSON lines {type:'touch', action:14|15|16, x:0..1, y:0..1}.
+// stdin: JSON lines: single touch or two fixed-slot multitouch contacts (normalized x/y).
 import fs from 'node:fs';
 import readline from 'node:readline';
 import { format } from 'node:util';
 import { DongleDriver, DEFAULT_CONFIG, VideoData, AudioData, Plugged, Unplugged,
-         SendTouch, SendCommand, Command } from './vendor/node-carplay/dist/modules/index.js';
+         SendTouch, SendMultiTouch, SendCommand, Command } from './vendor/node-carplay/dist/modules/index.js';
 const write = process.stdout.write.bind(process.stdout);
 for (const name of ['log','debug','info','warn','error']) {
   console[name] = (...args) => process.stderr.write(format(...args)+'\n');
 }
-let shutting = false, driver = null, connected = false, down = false;
+let shutting = false, driver = null, connected = false, down = false, multiDown = false;
 let videoPackets = 0, audioPackets = 0, lastStats = 0, lastSize = '';
 function packet(type, payload) {
   if (shutting) return;
@@ -30,21 +30,30 @@ function handleCommand(value) {
   if(value===3) status('host_ui_requested');
 }
 function touch(m) {
-  if (!m || m.type!=='touch' || ![14,15,16].includes(m.action) ||
-      !Number.isFinite(m.x) || !Number.isFinite(m.y) || !connected) return;
-  const message=new SendTouch(Math.max(0,Math.min(1,m.x)),Math.max(0,Math.min(1,m.y)),m.action);
+  if (!m || !connected) return;
+  let message;
+  if (m.type==='touch') {
+    if (![14,15,16].includes(m.action) || !Number.isFinite(m.x) || !Number.isFinite(m.y)) return;
+    message=new SendTouch(Math.max(0,Math.min(1,m.x)),Math.max(0,Math.min(1,m.y)),m.action);
+    down=m.action!==16;
+  } else if (m.type==='multitouch') {
+    if (!Array.isArray(m.touches) || m.touches.length!==2 || m.touches.some(t=>
+        !t || ![0,1,2].includes(t.action) || !Number.isFinite(t.x) || !Number.isFinite(t.y))) return;
+    const touches=m.touches.map(t=>({action:t.action,x:Math.max(0,Math.min(1,t.x)),y:Math.max(0,Math.min(1,t.y))}));
+    message=new SendMultiTouch(touches);
+    multiDown=touches.some(t=>t.action!==0);
+  } else return;
   const sequence=++touchSequence, queued=Date.now();
-  console.error(JSON.stringify({state:'touch_node_received',sequence,action:m.action,x:m.x,y:m.y,payload:message.getPayload().toString('hex')}));
+  console.error(JSON.stringify({state:'touch_node_received',sequence,mode:m.type,action:m.action,touches:m.touches,x:m.x,y:m.y,payload:message.getPayload().toString('hex')}));
   touchChain=touchChain.then(async()=>{
     const started=Date.now();
     const pending=setTimeout(()=>console.error(JSON.stringify({state:'touch_usb_pending',sequence,elapsed_ms:Date.now()-started})),1500);
     try {
       const result=await driver.send(message);
-      console.error(JSON.stringify({state:'touch_usb_complete',sequence,action:m.action,result:result===true?'ok':result===false?'failed':'no_device',queue_ms:started-queued,transfer_ms:Date.now()-started}));
+      console.error(JSON.stringify({state:'touch_usb_complete',sequence,mode:m.type,result:result===true?'ok':result===false?'failed':'no_device',queue_ms:started-queued,transfer_ms:Date.now()-started}));
     } catch(e) {console.error(JSON.stringify({state:'touch_usb_error',sequence,error:String(e)}));}
     finally {clearTimeout(pending);}
   });
-  down=m.action!==16;
 }
 if (!process.argv.includes('--self-test')) readline.createInterface({input:process.stdin}).on('line',line=>{
   if (line.length>1024) return;
@@ -53,7 +62,9 @@ if (!process.argv.includes('--self-test')) readline.createInterface({input:proce
 async function stop() {
   if (shutting) return; shutting=true;
   if (driver) {
+    await touchChain;
     if (down) await driver.send(new SendTouch(0,0,16));
+    if (multiDown) await driver.send(new SendMultiTouch([{x:0,y:0,action:0},{x:0,y:0,action:0}]));
     await driver.close().catch(()=>{});
   }
   process.exit(0);
@@ -68,9 +79,18 @@ if (process.argv.includes('--self-test')) {
   touch({type:'touch',action:15,x:2,y:-1});
   touch({type:'touch',action:16,x:0.5,y:0.5});
   touch({type:'touch',action:99,x:0,y:0});
+  touch({type:'multitouch',touches:[{x:.2,y:.4,action:1},{x:.8,y:.6,action:1}]});
+  touch({type:'multitouch',touches:[{x:.1,y:.4,action:2},{x:.9,y:.6,action:2}]});
+  touch({type:'multitouch',touches:[{x:.1,y:.4,action:0},{x:.9,y:.6,action:0}]});
+  touch({type:'multitouch',touches:[{x:NaN,y:0,action:1},{x:1,y:1,action:1}]});
   await touchChain;
+  const multi=sent[3]?.getPayload();
+  if (!multi || multi.length!==32 || Math.abs(multi.readFloatLE(0)-.2)>.00001 ||
+      multi.readUInt32LE(8)!==1 || multi.readUInt32LE(12)!==0 ||
+      Math.abs(multi.readFloatLE(16)-.8)>.00001 || multi.readUInt32LE(28)!==1 ||
+      sent[5].getPayload().readUInt32LE(24)!==0) throw Error('Multitouch serialization failed');
   handleCommand(3);
-  if (sent.length!==3 || sent[0].getPayload().readUInt32LE(0)!==14 ||
+  if (sent.length!==6 || sent[0].getPayload().readUInt32LE(0)!==14 ||
       sent[0].getPayload().readUInt32LE(4)!==2500 ||
       sent[0].getPayload().readUInt32LE(8)!==7500 ||
       sent[1].getPayload().readUInt32LE(4)!==10000 ||

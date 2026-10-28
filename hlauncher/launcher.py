@@ -8,7 +8,7 @@ from .catalog import discover
 from .config import Preferences
 from .display import Framebuffer
 from .plugin_host import PluginHost
-from .touch import pixels
+from .touch import pixels, for_viewport
 
 REPOSITORY = "github.com/evy0311/HLauncher"
 
@@ -22,7 +22,7 @@ class Launcher:
         manifests=None,
     ):
         self.event = event
-        self.fb = framebuffer or Framebuffer()
+        self.fb = framebuffer or Framebuffer(event)
         self.fb.open()
         self.prefs = preferences or Preferences()
         self.manifests = discover(event) if manifests is None else manifests
@@ -294,6 +294,7 @@ class Launcher:
         self.draw()
 
     def update(self, touch):
+        touch = for_viewport(touch, self.fb.w, self.fb.h)
         primary = touch.get("contacts", [])
         primary = primary[0] if primary else {"action": "unused", "has_position": False}
         point = pixels(primary, self.fb.w, self.fb.h)

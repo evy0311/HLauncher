@@ -90,6 +90,7 @@ class Worker:
             width=width,
             height=height,
             pixel_format="rgb565le",
+            max_contacts=2,
             slots=SLOTS,
             capabilities=sorted(manifest.capabilities),
         )

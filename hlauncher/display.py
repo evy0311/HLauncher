@@ -5,7 +5,9 @@ from array import array
 
 
 class Framebuffer:
-    def __init__(self):
+    def __init__(self, event=lambda **values: None):
+        self.event = event
+        self.kms = None
         self.fd = None
         self.tty_fd = None
         self.tty_mode = None
@@ -36,6 +38,25 @@ class Framebuffer:
                 os.close(tty)
                 raise
             self.fd = fd
+            if os.environ.get("HLAUNCHER_DISPLAY", "drm") != "fbdev":
+                try:
+                    from .drm import KMSDisplay
+
+                    self.kms = KMSDisplay(self.w, self.h, self.event)
+                except (OSError, RuntimeError) as exc:
+                    self.event(
+                        state="display_backend",
+                        backend="fbdev",
+                        vsync=False,
+                        reason=str(exc),
+                    )
+            else:
+                self.event(
+                    state="display_backend",
+                    backend="fbdev",
+                    vsync=False,
+                    reason="Explicit override",
+                )
         except Exception:
             os.close(fd)
             raise
@@ -44,6 +65,14 @@ class Framebuffer:
         self.open()
         if len(raw) != self.w * self.h * 2:
             raise ValueError("frame size mismatch")
+        if self.kms is not None:
+            try:
+                self.kms.present(raw)
+                return
+            except RuntimeError as exc:
+                self.event(state="display_fallback", reason=str(exc))
+                self.kms.close()
+                self.kms = None
         if self.stride == self.w * 2 and self.xo == 0:
             if os.pwrite(self.fd, raw, self.yo * self.stride) != len(raw):
                 raise OSError("short framebuffer write")
@@ -59,6 +88,9 @@ class Framebuffer:
         self.blit(encode(im))
 
     def close(self):
+        if self.kms is not None:
+            self.kms.close()
+            self.kms = None
         if self.tty_fd is not None:
             try:
                 fcntl.ioctl(self.tty_fd, 0x4B3A, self.tty_mode)

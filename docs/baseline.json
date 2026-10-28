@@ -5,7 +5,7 @@
   "repo_changes": [
     "Configurable peer and deployment paths",
     "Pi serial read from device tree rather than the development board serial",
-    "Extract streaming decoder from the old MirrorLink runtime",
+    "Extract the streaming decoder into the CarPlay runtime",
     "Launcher title changed to HLauncher",
     "Allow --seconds 0 for an unlimited service"
   ],

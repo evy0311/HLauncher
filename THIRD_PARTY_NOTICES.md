@@ -11,15 +11,15 @@
 
 Our `plugins/carplay/runtime/usb/bridge.mjs` adapts those modules to a headless video/touch stream. The underlying dongle protocol implementation is node-CarPlay's work.
 
-## MirrorLink-Pi
+## FFmpeg decoder helper
 
-- Source: https://github.com/rsyrnicki/mirror-link-pi
+- Author: rsyrnicki (https://github.com/rsyrnicki)
 - Commit used by the original integration: `7319b5da4d0df88f8d74b3196163cbe40b0d6043`
 - License: GPL-3.0
 - Included: `plugins/carplay/runtime/video/avdecode.py`, unchanged from that source snapshot.
 - License text: `LICENSE`.
 
-`plugins/carplay/runtime/video/h264.py` contains the streaming parser extracted from our existing integration. The unrelated MirrorLink server is not required by this launcher.
+`plugins/carplay/runtime/video/h264.py` contains the streaming parser extracted from our existing integration.
 
 ## Installed dependencies
 

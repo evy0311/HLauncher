@@ -21,7 +21,7 @@ sudo systemctl stop civic-hdmi-pi4-v42.service
 sudo systemctl disable --now civic-bt-bench.service civic-bt-connect.service
 ```
 
-Those commands apply only if those old units exist. The separate MirrorLink server is not needed for HLauncher; stop it if it is opening the same dongle or framebuffer. Keep the old files for rollback.
+Those commands apply only if those old units exist. Stop any other application that is opening the same dongle or framebuffer. Keep the old files for rollback.
 
 ## Bluetooth
 

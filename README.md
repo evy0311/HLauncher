@@ -52,7 +52,7 @@ The tests use simulated plugins and a video fixture. They do not open a dongle, 
 
 CarPlay dongle communication uses **[node-CarPlay by Rhys Morgan](https://github.com/rhysmorgan134/node-CarPlay)**. The vendored source and built modules retain its MIT license.
 
-The FFmpeg decoder comes from **[MirrorLink-Pi by rsyrnicki](https://github.com/rsyrnicki/mirror-link-pi)**, licensed under GPL-3.0. HLauncher uses that decoder without the MirrorLink network/video transport. FFmpeg, BlueZ and BlueALSA provide the underlying video and Bluetooth support.
+The FFmpeg decoder helper is by **[rsyrnicki](https://github.com/rsyrnicki)** and is licensed under GPL-3.0. FFmpeg, BlueZ and BlueALSA provide the underlying video and Bluetooth support.
 
 See [third-party notices](THIRD_PARTY_NOTICES.md) for source versions and licenses. HLauncher is GPL-3.0; vendored node-CarPlay files retain their MIT license.
 

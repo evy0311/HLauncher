@@ -69,7 +69,7 @@ The address must match the paired peer: the listener rejects connections from ot
 
 ## HDMI
 
-Use the Pi 4's HDMI0 connector, the micro-HDMI connector nearest USB-C power, and connect it to the radio's HDMI input. The panel is **800x480**. The radio advertises 720x480 and 640x480 over HDMI, so automatic mode selection originally produced 720x480. Forcing **800x480 at approximately 60Hz** was verified on the development Pi: DRM and the RGB565 framebuffer both reported 800x480, and the owner confirmed the radio displayed the picture correctly. Touch coordinates are scaled to the actual framebuffer size.
+Use the Pi 4's HDMI0 connector, the micro-HDMI connector nearest USB-C power, and connect it to the radio's HDMI input. The panel is **800x480**, but the radio advertises **720x480 and 640x480 over HDMI**. The working setup uses 720x480. A forced 800x480 signal appeared on the radio and was confirmed at the Pi framebuffer, but later testing showed that its right side was cropped. It was reverted. Accepting a signal does not mean the radio displays its entire active area correctly. Touch coordinates are scaled to the actual framebuffer size.
 
 The renderer requires RGB565, 16 bits per pixel. The launcher unit sets this before starting:
 
@@ -81,13 +81,13 @@ sudo python3 /opt/hlauncher/scripts/check.py --display
 
 Expect `rgba 5/11,6/5,5/0,0/0`. The check inspects the framebuffer without drawing to it. A framebuffer with a different layout is rejected rather than displaying corrupt pixels.
 
-Use the default Bookworm KMS display driver (`dtoverlay=vc4-kms-v3d`). If HDMI isn't detected at boot, first check the cable, HDMI connector and radio input. To use the verified 800x480 output on this Civic radio, append this to the existing **single line** in `/boot/firmware/cmdline.txt`:
+Use the default Bookworm KMS display driver (`dtoverlay=vc4-kms-v3d`). If HDMI isn't detected at boot, first check the cable, HDMI connector and radio input. To force the working 720x480 output on this Civic radio, append this to the existing **single line** in `/boot/firmware/cmdline.txt`:
 
 ```text
-video=HDMI-A-1:800x480M@60D
+video=HDMI-A-1:720x480@60D
 ```
 
-Back up that file first and retain its existing root/PARTUUID and other arguments. Reboot after changing it. HLauncher does not edit boot settings automatically. The `M` requests generated CVT timings and `D` forces digital output, since this resolution is absent from the radio's advertised modes. Other radios may not accept it; restore your backup if the picture disappears. A 60Hz HDMI mode does not guarantee a 60fps CarPlay stream.
+Back up that file first and retain its existing root/PARTUUID and other arguments. Reboot after changing it. HLauncher does not edit boot settings automatically. The `D` forces digital output. Use the advertised mode rather than forcing the panel resolution; the tested 800x480 input cropped the picture. A 60Hz HDMI mode does not guarantee a 60fps CarPlay stream.
 
 The launcher switches tty1 to graphics mode while it is running, hiding the login cursor. It restores the previous console mode on a normal exit.
 

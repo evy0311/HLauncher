@@ -2,9 +2,11 @@
 
 import json, os, pathlib, struct, subprocess, sys, threading, time
 from collections import deque
-from settings import ROOT, LOG_DIR
 
-RUNTIME = ROOT / "runtime/carplay"
+RUNTIME = pathlib.Path(__file__).resolve().parent / "runtime/usb"
+LOG_DIR = pathlib.Path(
+    os.environ.get("HLAUNCHER_LOG_DIR", "/var/log/hlauncher/carplay")
+)
 
 
 def read_packet(stream):
@@ -162,7 +164,9 @@ class CarplayHDMI:
         decoder = None
         proc = None
         try:
-            sys.path.insert(0, str(ROOT / "runtime/video"))
+            sys.path.insert(
+                0, str(pathlib.Path(__file__).resolve().parent / "runtime/video")
+            )
             from h264 import H264StreamDecoder
 
             decoder = H264StreamDecoder(w, h)

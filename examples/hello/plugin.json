@@ -1,0 +1,8 @@
+{
+  "api_version": 1,
+  "id": "hello",
+  "name": "Hello plugin",
+  "entrypoint": ["python3", "worker.py"],
+  "capabilities": ["display", "touch", "session"],
+  "color": "#5b477c"
+}

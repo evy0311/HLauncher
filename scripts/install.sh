@@ -24,11 +24,11 @@ stamp=$(date +%Y%m%d-%H%M%S)
 if [[ -d $root ]]; then
   cp -a "$root" "/opt/hlauncher.backup-$stamp"
 fi
-install -d "$root" /var/log/hlauncher /etc/systemd/system/bluetooth.service.d
-for path in app runtime bluetooth scripts packaging docs tests third_party LICENSE README.md THIRD_PARTY_NOTICES.md; do
+install -d "$root" /var/log/hlauncher /var/lib/hlauncher /etc/systemd/system/bluetooth.service.d
+for path in hlauncher sdk plugins examples bluetooth scripts packaging docs tests third_party LICENSE README.md THIRD_PARTY_NOTICES.md; do
   cp -a "$path" "$root/"
 done
-npm ci --prefix "$root/runtime/carplay" --omit=dev --ignore-scripts --no-audit --no-fund
+npm ci --prefix "$root/plugins/carplay/runtime/usb" --omit=dev --ignore-scripts --no-audit --no-fund
 if [[ ! -f /etc/hlauncher.env ]]; then
   install -m 600 hlauncher.env.example /etc/hlauncher.env
 fi

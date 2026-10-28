@@ -1,7 +1,7 @@
 """Bounded local HFP call-state probe. Never dials a number or uses a phone."""
 
 import argparse, json, select, signal, socket, threading, time
-from settings import RFCOMM_PATH
+from .config import RFCOMM_PATH
 
 BEGIN = ("+CIEV:1,1", "+CIEV:5,5", "+CIEV:2,1")
 END = ("+CIEV:2,0", "+CIEV:5,0", "+CIEV:1,0")

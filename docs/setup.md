@@ -105,16 +105,18 @@ For a manual two-hour run instead of the installed launcher service:
 
 ```bash
 sudo systemctl stop hlauncher
-sudo bash -c 'set -a; . /etc/hlauncher.env; set +a; cd /opt/hlauncher/app; exec /usr/bin/python3 listener_honda_pi4_v42.py --seconds 7200'
+sudo bash -c 'set -a; . /etc/hlauncher.env; set +a; cd /opt/hlauncher; exec /usr/bin/python3 -m hlauncher run --seconds 7200'
 ```
 
 Start the installed service again afterward with `sudo systemctl start hlauncher`. Never run both listeners at once.
 
-## Microphone
+## Plugins and preferences
 
-Select Microphone, then **Enable mic (60s)**. The radio may show its phone screen because this test sends a local simulated HFP call-state sequence. Use the radio's Home control and reopen HondaLink to return to the meter. No phone number is dialed and microphone PCM is not saved or forwarded to CarPlay.
+Settings is built into the launcher. It lists every installed plugin and lets you enable or disable it. Tap **Start with** to cycle between Launcher and the enabled plugins. Changes are saved in `/var/lib/hlauncher/settings.json`. Disabling the default plugin resets the default to Launcher. Returning with CarPlay's Honda icon always goes to the launcher, even when CarPlay is the default.
 
-The test requests call-state cleanup on timeout or when leaving the microphone page. Bluetooth loss or a forced process kill can prevent cleanup reaching the radio.
+CarPlay is bundled and enabled initially. Android Auto and OBD gauges are planned integrations, not installed apps. See [plugins](plugins.md) for installing an external plugin or writing one.
+
+The core exposes an opt-in microphone capture API. The radio still gates live microphone samples behind its hands-free call state. This refactor does not add CarPlay audio or automatic call simulation; the earlier microphone experiment remains documented in Git history.
 
 ## Logs and recovery
 
@@ -123,7 +125,7 @@ sudo systemctl status hlauncher hlauncher-audio hlauncher-connect --no-pager
 sudo journalctl -u hlauncher -n 100 --no-pager
 sudo journalctl -u hlauncher-connect -n 50 --no-pager
 lsusb -d 1314:
-sudo node /opt/hlauncher/runtime/carplay/bridge.mjs --check
+sudo node /opt/hlauncher/plugins/carplay/runtime/usb/bridge.mjs --check
 ```
 
 Protocol and bridge logs are written to `/var/log/hlauncher`. They can contain device identifiers and packet contents; review them before sharing. Log rotation is not implemented in this snapshot.

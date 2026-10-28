@@ -1,0 +1,10 @@
+{
+  "api_version": 1,
+  "id": "carplay",
+  "name": "CarPlay",
+  "entrypoint": ["python3", "worker.py"],
+  "capabilities": ["display", "touch", "session", "audio.status"],
+  "default_enabled": true,
+  "keep_alive": true,
+  "color": "#246b48"
+}

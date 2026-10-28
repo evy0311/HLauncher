@@ -9,7 +9,7 @@ import subprocess
 import sys
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path[:0] = [str(ROOT / "app"), str(ROOT / "runtime/video")]
+sys.path[:0] = [str(ROOT), str(ROOT / "plugins/carplay/runtime/video")]
 
 
 def packet(stream):
@@ -33,9 +33,9 @@ def main():
         "--display", action="store_true", help="also inspect /dev/fb0 read-only"
     )
     args = parser.parse_args()
-    for module in ["PIL", "dbus", "gi", "settings", "launcher_hdmi_v42"]:
+    for module in ["PIL", "dbus", "gi", "hlauncher.config", "hlauncher.launcher"]:
         importlib.import_module(module)
-    runtime = ROOT / "runtime/carplay"
+    runtime = ROOT / "plugins/carplay/runtime/usb"
     subprocess.run(
         ["node", "--input-type=module", "-e", "await import('usb')"],
         cwd=runtime,
@@ -61,7 +61,7 @@ def main():
     decoder = H264StreamDecoder(720, 480)
     count = 0
     try:
-        data = (ROOT / "runtime/carplay/test-pattern.h264").read_bytes()
+        data = (ROOT / "plugins/carplay/runtime/usb/test-pattern.h264").read_bytes()
         for offset in range(0, len(data), 211):
             for frame in decoder.feed(data[offset : offset + 211]):
                 if len(frame) != 720 * 480 * 2:

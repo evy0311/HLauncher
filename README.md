@@ -2,25 +2,23 @@
 
 A Raspberry Pi launcher for the original HondaLink head unit in my 2014 Civic.
 
-The Pi acts as the phone side of the older HondaLink connection. Video goes over HDMI; the radio sends touch input back over Bluetooth. No desktop environment is needed. This path uses the radio's existing HondaLink feature, without a custom radio firmware image.
+The Pi acts as the phone side of the older HondaLink connection. Video goes over HDMI; the radio sends touch input back over Bluetooth. No desktop environment or custom radio firmware is needed.
 
-This is the working Pi 4 implementation from the V42 bench setup. It has a CarPlay page and a microphone test page. A plugin-based launcher is the next step; that refactor is not in this version.
+The launcher owns the HondaLink connection, display, touch routing and radio audio access. Apps run as separate plugin processes. Settings is built in; CarPlay is the first bundled plugin.
 
-## What works
+## Current features
 
-- Opening the launcher from the radio's HondaLink icon.
-- HDMI video and touchscreen input over the HondaLink Bluetooth connection.
-- CarPlay through a supported Carlinkit USB dongle, including taps and swipes.
-- Returning to the Pi launcher with CarPlay's Honda icon.
-- A microphone level meter, with capture in a separate worker process.
+- Six tile positions per page, arranged three across and two high.
+- Settings to enable installed plugins and choose what opens when HondaLink starts.
+- CarPlay through a supported Carlinkit USB dongle, using node-CarPlay.
+- Taps and swipes, with CarPlay's Honda icon returning to the launcher.
+- Separate plugin workers and bounded frame buffers, so an app failure can return to the launcher.
 
-CarPlay requests 60fps. That is the requested stream rate, not a guarantee for every phone, dongle or Pi. CarPlay audio and microphone forwarding are **not implemented**. The microphone test is separate and currently needs a short simulated hands-free call state to make the radio send microphone PCM. It does not dial a number.
+CarPlay requests 60fps. Actual performance depends on the phone, dongle and Pi. CarPlay audio and microphone forwarding are not implemented. Android Auto and OBD gauges are future plugins.
 
-## Hardware and setup
+## Setup
 
-Tested with a Raspberry Pi 4, Raspberry Pi OS Lite Bookworm **64-bit**, and the HDMI-equipped 2014 Civic HondaLink radio. The Carlinkit dongle plugs directly into the Pi's USB host port. Pair the Pi with HandsFreeLink and connect HDMI to the radio. The Pi does not need a USB gadget connection to the radio for this HondaLink path.
-
-See [setup](docs/setup.md) for dependencies, pairing, display setup and services. Other Honda models and newer Pi OS releases have not been verified.
+Tested with a Raspberry Pi 4, Raspberry Pi OS Lite Bookworm **64-bit**, and the HDMI-equipped 2014 Civic HondaLink radio. Connect HDMI and pair Bluetooth with the radio. Plug the Carlinkit dongle directly into the Pi's USB host port.
 
 ```bash
 git clone https://github.com/evy0311/HLauncher.git
@@ -28,31 +26,34 @@ cd HLauncher
 sudo bash scripts/install.sh
 ```
 
-The installer copies the application to `/opt/hlauncher` and installs service definitions. It does not start HLauncher or change HDMI boot settings. Finish the steps in the setup guide before enabling the launcher.
+Finish [setup](docs/setup.md) before starting the service. The installer does not start HLauncher or edit HDMI boot settings. Other radio models and OS releases have not been verified.
+
+## Plugins
+
+Bundled plugins live in `plugins/`. You can install another plugin from a folder or Git repository, or submit it as a pull request. External plugins are disabled until enabled in Settings. Settings itself cannot be disabled.
+
+See the [plugin API and installation guide](docs/plugins.md) and the small [example plugin](examples/hello). Plugins are trusted code running under the launcher's account; process isolation is for failure recovery, not a security sandbox.
 
 ## Source
 
-- `app/` — the current HondaLink protocol, launcher, touch and microphone code.
-- `runtime/carplay/` — the Node USB bridge and vendored node-CarPlay modules.
-- `runtime/video/` — H.264 parsing, decoding and RGB565 output.
-- `bluetooth/` — background reconnect support.
-- `packaging/` — systemd units and the Bluetooth workaround used by the bench setup.
-
-The versioned Python filenames are retained from the working setup. Changes for this repo are limited to install paths, configurable radio address, per-Pi serial identity, the launcher title and an unlimited service runtime option.
+- `hlauncher/` — core launcher, settings, framebuffer, radio protocol, touch and audio broker.
+- `plugins/carplay/` — CarPlay worker, USB bridge and video decoder.
+- `sdk/hlauncher_sdk/` — two-way plugin transport and shared frame buffers.
+- `bluetooth/` and `packaging/` — reconnect support and system services.
 
 ```bash
 bash scripts/test.sh
 python3 scripts/check.py
 ```
 
-The first command runs protocol, launcher and bridge tests without hardware. The second checks the installed Linux runtime and decodes a test stream. Neither launches CarPlay on the radio or claims the dongle.
+The tests use simulated plugins and a video fixture. They do not open a dongle, register Bluetooth profiles or draw on the radio. See [development](docs/development.md) for more.
 
 ## Credits
 
-CarPlay dongle communication uses **[node-CarPlay by Rhys Morgan](https://github.com/rhysmorgan134/node-CarPlay)**. The vendored source and built modules retain its MIT license. This project is not a reimplementation of that USB driver.
+CarPlay dongle communication uses **[node-CarPlay by Rhys Morgan](https://github.com/rhysmorgan134/node-CarPlay)**. The vendored source and built modules retain its MIT license.
 
 The FFmpeg decoder comes from **[MirrorLink-Pi by rsyrnicki](https://github.com/rsyrnicki/mirror-link-pi)**, licensed under GPL-3.0. HLauncher uses that decoder without the MirrorLink network/video transport. FFmpeg, BlueZ and BlueALSA provide the underlying video and Bluetooth support.
 
-See [third-party notices](THIRD_PARTY_NOTICES.md) for source versions and licenses. HLauncher is distributed under GPL-3.0; the vendored node-CarPlay files retain their MIT license.
+See [third-party notices](THIRD_PARTY_NOTICES.md) for source versions and licenses. HLauncher is GPL-3.0; vendored node-CarPlay files retain their MIT license.
 
 This is an independent project, not affiliated with Honda, Apple or Carlinkit. No Honda firmware images, proprietary radio assets, pairing keys or device captures are included.

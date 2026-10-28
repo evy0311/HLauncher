@@ -1,9 +1,9 @@
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "app"))
-from iap_honda_start_pi4_v32 import StartProbe, packet
-from honda_frames import Frames, frame
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from hlauncher.protocol.session import StartProbe, packet
+from hlauncher.protocol.frames import Frames, frame
 
 # Golden fields follow the traced consumer:08/01 -> record+c -> ACBAC ->
 # B4EAC launcher comparison. Actual captured09/02 request must get display text.

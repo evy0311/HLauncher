@@ -3,7 +3,7 @@
 import os, fcntl, struct, time
 from array import array
 from PIL import Image, ImageDraw
-from honda_touch_v28 import pixels
+from .touch import pixels
 
 
 class TouchOverlay:

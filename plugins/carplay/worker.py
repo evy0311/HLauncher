@@ -1,0 +1,61 @@
+"""CarPlay plugin. Radio transport and display ownership belong to HLauncher."""
+
+import time
+import json
+from hlauncher_sdk import Client
+from backend import CarplayHDMI
+
+
+def main():
+    client = Client()
+    backend = CarplayHDMI(lambda **event: print(json.dumps(event), flush=True))
+    active = False
+    last_frame = -1
+    last_status = -1
+    heartbeat = 0
+    last_video = None
+    try:
+        while True:
+            while message := client.receive(0):
+                kind = message["type"]
+                if kind == "host.activate":
+                    active = True
+                    last_frame = last_status = -1
+                    backend.start(client.width, client.height)
+                elif kind in ("host.deactivate", "touch.cancel"):
+                    backend.touch({"action": "unused", "has_position": False})
+                    if kind == "host.deactivate":
+                        active = False
+                elif kind == "touch" and active:
+                    contacts = message.get("contacts", [])
+                    backend.touch(
+                        contacts[0]
+                        if contacts
+                        else {"action": "unused", "has_position": False}
+                    )
+                elif kind == "host.stop":
+                    return
+            if backend.take_host_ui_request():
+                client.home()
+                active = False
+            version, frame, status_version, status = backend.snapshot()
+            if status_version != last_status or (frame is not None) != last_video:
+                if client.status(status, video_available=frame is not None):
+                    last_status = status_version
+                    last_video = frame is not None
+            if active and frame is not None and version != last_frame:
+                if client.present(frame):
+                    last_frame = version
+            if time.monotonic() - heartbeat > 2:
+                client.send(type="health")
+                heartbeat = time.monotonic()
+            time.sleep(0.005)
+    except (EOFError, BrokenPipeError, ConnectionResetError):
+        pass
+    finally:
+        backend.stop()
+        client.close()
+
+
+if __name__ == "__main__":
+    main()

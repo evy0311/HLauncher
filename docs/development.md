@@ -1,9 +1,11 @@
 # Development
 
-This first import preserves the Pi 4 V42 runtime. Keep protocol changes separate from UI or packaging changes so regressions can be narrowed down without reflashing the radio.
+The launcher and its plugins live in one repository. Keep changes to the traced HondaLink protocol separate from display or plugin changes so regressions can be narrowed down without reflashing the radio.
 
-Run `bash scripts/test.sh` for protocol fragmentation, app-launch routing, UI navigation, microphone-worker failure handling, and the Node touch/Home-event self-test. On Bookworm, `python3 scripts/check.py` also checks native USB loading and decodes the included H.264 fixture. Tests do not register Bluetooth profiles, open a dongle or draw on the radio.
+`python3 -m hlauncher run --seconds 0` runs the core. `hlauncher.service` is the installed service name. Settings are saved atomically outside the code tree; plugin manifests are discovered at startup. See [plugins](plugins.md) for the process interface and installing external source.
 
-The next refactor should separate the HondaLink connection, launcher/display ownership and app workers. CarPlay is the first worker to extract. Keep the Bluetooth event loop independent of app rendering, and use a bounded latest-frame buffer rather than serializing video through JSON. The existing microphone subprocess is useful precedent for isolating failures.
+Run `bash scripts/test.sh` for protocol fragmentation, launch routing, settings persistence, manifest validation, real worker frame leases, failure recovery and the Node touch/Home-event self-test. On Bookworm, `python3 scripts/check.py --display` also checks native USB loading, decodes the H.264 fixture and inspects framebuffer geometry read-only. These checks do not register Bluetooth profiles, open the dongle or draw on the radio.
 
-Plugin discovery, a default-app preference, Android Auto integration and OBD gauges are not implemented yet.
+The plugin host uses a bounded control socket and three leased shared frame buffers. It polls workers from the same short GLib timer used by the original launcher. Worker termination and subprocess cleanup happen outside that loop. CarPlay owns its USB bridge and decoder; the core owns display presentation and radio input. Preserve that boundary when adding apps.
+
+The original V42 source is preserved in the first Git import. `docs/baseline.json` records its source hashes. Live migration should retain that installation until the new service is tested. Never run both listeners or two CarPlay bridges at the same time.

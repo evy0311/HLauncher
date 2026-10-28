@@ -1,9 +1,9 @@
 """iAP identification and HondaLink application-session state machine."""
 
-from honda_frames import frame as honda_frame, Frames as HondaFrames
+from .frames import frame as honda_frame, Frames as HondaFrames
 import subprocess
-from settings import serial_number
-from iap_auth_crypto import AccessoryProof
+from hlauncher.config import serial_number
+from .auth import AccessoryProof
 
 
 def packet(payload):

@@ -1,0 +1,51 @@
+--- a/src/modules/DongleDriver.ts
++++ b/src/modules/DongleDriver.ts
+@@ -9,6 +9,7 @@
+   SendBoolean,
+   SendString,
+   SendBoxSettings,
++  SendIconConfig,
+   SendCommand,
+   HeartBeat,
+ } from './messages/sendable.js'
+@@ -198,6 +199,10 @@
+           extraData = Buffer.from(extraDataRes)
+         }
+ 
++        this.emit('protocol_message', {
++          type: header.type, length: header.length,
++          subtype: header.type === 0x2a && extraData && extraData.length >= 4 ? extraData.readUInt32LE(0) : null,
++        });
+         const message = header.toMessage(extraData)
+         if (message) this.emit('message', message)
+       } catch (error) {
+@@ -228,6 +233,7 @@
+       wifiType,
+       micType,
+     } = config
++    await this.send(new SendIconConfig({ label: 'HLauncher' }));
+     const initMessages = [
+       new SendNumber(_dpi, FileAddress.DPI),
+       new SendOpen(config),
+--- a/src/modules/messages/readable.ts
++++ b/src/modules/messages/readable.ts
+@@ -227,7 +227,7 @@
+     } else if (amount === 4) {
+       this.volumeDuration = data.readFloatLE(12)
+     } else {
+-      this.data = new Int16Array(data.buffer, 12)
++      this.data = Int16Array.from({length: Math.floor(amount / 2)}, (_, i) => data.readInt16LE(12 + i * 2))
+     }
+   }
+ }
+--- a/src/modules/messages/sendable.ts
++++ b/src/modules/messages/sendable.ts
+@@ -273,6 +273,8 @@
+     return Buffer.from(
+       JSON.stringify({
+         mediaDelay: this.config.mediaDelay,
++        // Request media/dashboard reporting during session identification.
++        DashboardInfo: 1,
+         syncTime: this.syncTime ?? getCurrentTimeInMs(),
+         androidAutoSizeW: this.config.width,
+         androidAutoSizeH: this.config.height,

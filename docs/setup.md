@@ -118,9 +118,9 @@ Start the installed service again afterward with `sudo systemctl start hlauncher
 
 Settings is built into the launcher. It lists every installed plugin and lets you enable or disable it. Tap **Start with** to cycle between Launcher and the enabled plugins. Changes are saved in `/var/lib/hlauncher/settings.json`. Disabling the default plugin resets the default to Launcher. Returning with CarPlay's Honda icon always goes to the launcher, even when CarPlay is the default.
 
-CarPlay is bundled and enabled initially. Android Auto and OBD gauges are planned integrations, not installed apps. See [plugins](plugins.md) for installing an external plugin or writing one.
+CarPlay, Android Auto and OBD Gauges are included and enabled initially. The gauges currently use simulated values and do not connect to an OBD adapter. Android Auto requires the separately built OpenAuto engine: run `sudo bash scripts/install_android_auto.sh`, then connect an Android phone directly to the Pi USB port. It is experimental pending phone testing. See [plugins](plugins.md) for installing an external plugin or writing one.
 
-The core exposes an opt-in microphone capture API. The radio still gates live microphone samples behind its hands-free call state. This refactor does not add CarPlay audio or automatic call simulation; the earlier microphone experiment remains documented in Git history.
+The core exposes an opt-in microphone capture API. The radio still gates live microphone samples behind its hands-free call state. CarPlay output PCM is routed through HDMI; audible playback inside HondaLink is pending confirmation. No automatic call simulation is added; the earlier microphone experiment remains documented in Git history.
 
 ## Logs and recovery
 
@@ -149,3 +149,116 @@ sudo systemctl disable --now hlauncher hlauncher-connect hlauncher-audio
 ```
 
 The BlueZ workaround is `/etc/systemd/system/bluetooth.service.d/90-hlauncher.conf`. Remove that file and restart Bluetooth only if you also want to undo the workaround. Keep your pairing records.
+
+
+### HDMI audio
+
+CarPlay PCM goes through the plugin API to a core-owned mixer and one `aplay` worker. The mixer converts simultaneous streams
+to 48 kHz stereo; `config/alsa-hdmi.conf` selects `vc4hdmi0`
+(the HDMI connector nearest the Pi 4 power connector). The mixer uses Python 3.11 audioop to convert each incoming stream;
+ALSA performs HDMI IEC958 framing. System-wide audio defaults are
+unchanged. Music, prompts and received call audio use this output; microphone
+capture remains separate. Audio control/volume messages are logged; automatic
+media ducking is not implemented yet.
+
+`audio_hdmi_open`, `audio_hdmi_progress` and `audio_hdmi_alsa` in the launcher journal
+show device selection, PCM writes/drops and ALSA diagnostics. Successful writes
+verify software delivery, not that HondaLink selected that physical input.
+Use `HLAUNCHER_AUDIO_DEVICE` to override the ALSA endpoint for diagnosis.
+Playback failures retry after five seconds and do not stop video or HondaLink.
+
+### CarPlay picture controls
+
+Open **Settings → CarPlay color** for saturation, contrast and brightness sliders.
+The changes affect only decoded CarPlay video; launcher colors and HDMI mode/range
+remain unchanged. **Reset** restores saturation 100%, contrast 100%, brightness 0.
+**Preview CarPlay** returns to the plugin with the new values.
+
+For adjustment while CarPlay remains visible, SSH to the Pi and run:
+
+```bash
+cd /opt/hlauncher
+sudo python3 -m hlauncher colors --interactive
+```
+
+Up/Down selects a slider, Left/Right adjusts it, R resets, Q exits. A one-shot edit:
+
+```bash
+sudo python3 -m hlauncher colors --saturation 85
+sudo python3 -m hlauncher colors --contrast 95 --brightness 0
+sudo python3 -m hlauncher colors --reset
+```
+
+These controls share `/var/lib/hlauncher/carplay-color.json`. Writes are atomic,
+values are validated, and the video worker checks for changes every 100 ms.
+A retained decoder frame allows adjustments to redraw even when the phone is not
+sending new pictures. No plugin restart or radio firmware change is needed.
+Changes are applied by libswscale during its existing YUV-to-RGB conversion;
+there is no extra full-frame Python pixel filter. The decoder honors declared H.264 color matrix and input range metadata.
+When metadata is unspecified, the original conversion defaults are retained.
+HDMI output range and launcher colors are unchanged. Logs include `carplay_picture_applied`.
+
+`carplay_color_conversion` records the declared codec color space/range and the
+selected conversion. Matrix code 1 is BT.709; source-range 1 is full and 0 limited.
+Unspecified codec metadata is logged and does not trigger a guessed conversion.
+
+Picture-control regression check (no radio or dongle access):
+
+```bash
+python3 scripts/check_picture.py
+```
+
+This exercises successive legacy full-range YUVJ frames. Their converter context
+can be rebuilt at the same address, so pointer identity alone cannot establish
+that color controls remain configured. The decoder normalizes the equivalent
+YUV layout, retains full-range semantics, and reasserts controls after every
+context acquisition. This also avoids repeated full-range context allocations.
+
+
+### HDMI color range
+
+HLauncher sets HDMI Broadcast RGB to **Limited (16–235)** whenever its DRM display
+opens. On the tested Civic receiver, Automatic/Full lost distinctions between
+pale map colors; Limited restored them with neutral CarPlay picture controls.
+This is an HDMI output setting, separate from the decoder and CarPlay sliders.
+Failures are logged and do not prevent the launcher from opening.
+
+Settings → CarPlay color → HDMI test pattern compares Auto, Full and Limited.
+Leaving the test restores the range that was active when it opened, normally
+Limited. For other displays, `HLAUNCHER_HDMI_RGB=auto` or `full` overrides the
+default through the service environment. No radio firmware change is involved.
+
+### Watch song metadata over SSH
+
+With CarPlay open and music playing:
+
+```bash
+cd /opt/hlauncher
+python3 scripts/now_playing.py
+```
+
+Press Ctrl+C to stop the viewer; playback continues. For one snapshot or streaming
+JSON, use `python3 -m hlauncher now-playing` or
+`python3 -m hlauncher now-playing --watch --json`. Missing reports show a waiting
+message, never invented song data. This does not forward anything to the radio.
+
+
+### Background audio and gauges
+
+Start CarPlay and play music, then tap its Honda-logo return item (labelled
+HLauncher) to return to the launcher. Open OBD Gauges; CarPlay audio continues.
+The four Civic Si-style gauges show simulated coolant/oil temperature (°F), RPM
+and battery voltage. The demo label is hidden by request; these are still simulated values, not live vehicle data.
+
+Settings → CarPlay → Background On/Off controls whether it survives leaving the
+screen. Background On is the default. Turning it off closes a background CarPlay
+worker immediately, or closes it when leaving if it is currently foreground.
+Video RGB conversion and presentation pause in the background; compressed video
+is still decoded to preserve reference frames and resume a current picture.
+USB traffic, PCM audio, keepalives and media messages continue. No second CarPlay
+process is started when returning. OBD Gauges has no background mode and closes
+on Back or when another plugin replaces it. Disabling CarPlay stops its audio.
+
+The return-item label is sent through the adapter's standard icon configuration
+before Open; the existing OEM icon PNG is not replaced. A phone reconnection may
+be needed for the label change to appear.

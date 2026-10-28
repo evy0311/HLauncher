@@ -1,8 +1,10 @@
 """Reuse installed node-carplay bridge/H264 decoder; bounded asynchronous input."""
 
-import json, os, pathlib, struct, subprocess, sys, threading, time
+import json, os, pathlib, struct, subprocess, sys, threading, time, select
+from hlauncher_sdk.picture import PictureSettings
 from collections import deque
 from input import TouchRouter
+from media import normalize
 
 RUNTIME = pathlib.Path(__file__).resolve().parent / "runtime/usb"
 LOG_DIR = pathlib.Path(
@@ -21,13 +23,14 @@ def read_packet(stream):
         return bytes(b)
 
     kind, n = struct.unpack("!BI", exact(5))
-    if kind not in (1, 2) or n > 8 * 1024 * 1024:
+    if kind not in (1, 2, 3) or n > 8 * 1024 * 1024:
         raise ValueError("invalid bridge packet")
     return kind, exact(n)
 
 
 class CarplayHDMI:
-    def __init__(self, event=lambda **kw: None):
+    def __init__(self, event=lambda **kw: None, audio=lambda *args: None):
+        self.audio = audio
         self.event = event
         self.lock = threading.RLock()
         self.cond = threading.Condition()
@@ -42,9 +45,14 @@ class CarplayHDMI:
         self.touch_router = TouchRouter()
         self.frames = 0
         self.host_ui_requested = False
+        self.audio_forwarded = self.audio_dropped = 0
         self.decode_packets = 0
         self.decode_seconds = 0.0
         self.decode_max_ms = 0.0
+        self.media_pending = {}
+        self.media_clear = False
+        self.visible = threading.Event()
+        self.background_video_packets = 0
 
     def notify(self, state, **extra):
         self.event(state=state, **extra)
@@ -147,12 +155,41 @@ class CarplayHDMI:
         with self.lock:
             return {
                 "decoded_frames": self.frames,
+                "audio_packets_forwarded": self.audio_forwarded,
+                "audio_packets_dropped": self.audio_dropped,
                 "input_packets": self.decode_packets,
+                "video_visible": self.visible.is_set(),
+                "background_video_packets": self.background_video_packets,
                 "decode_ms_avg": round(
                     self.decode_seconds * 1000 / max(1, self.decode_packets), 3
                 ),
                 "decode_ms_max": round(self.decode_max_ms, 3),
             }
+
+    def set_visible(self, visible):
+        if visible:
+            self.visible.set()
+        else:
+            self.visible.clear()
+            with self.lock:
+                self.frame = None
+                self.version += 1
+        self.notify('carplay_visibility', visible=visible)
+
+    def take_media(self):
+        with self.lock:
+            if not self.media_pending and not self.media_clear:
+                return None
+            fields, clear = self.media_pending, self.media_clear
+            self.media_pending, self.media_clear = {}, False
+            return fields, clear
+
+    def queue_media(self, fields=None, clear=False):
+        with self.lock:
+            if clear:
+                self.media_pending = {}
+                self.media_clear = True
+            self.media_pending.update(fields or {})
 
     def snapshot(self):
         with self.lock:
@@ -168,6 +205,10 @@ class CarplayHDMI:
             from h264 import H264StreamDecoder
 
             decoder = H264StreamDecoder(w, h)
+            picture = PictureSettings()
+            decoder.decoder.picture = dict(picture.values)
+            picture_check = 0
+            last_color_metadata = None
             logdir = LOG_DIR
             logdir.mkdir(parents=True, exist_ok=True)
             with (logdir / f"carplay-hdmi-node-{time.time_ns()}.log").open("wb") as err:
@@ -193,12 +234,38 @@ class CarplayHDMI:
                     "phone_disconnected": "iPhone disconnected",
                     "usb_failure": "USB dongle connection lost",
                 }
+                last_visible = False
                 while not self.stop_event.is_set():
+                    visible = self.visible.is_set()
+                    if visible and not last_visible:
+                        preview = decoder.decoder.redraw()
+                        if preview is not None:
+                            with self.lock:
+                                self.frame = preview
+                                self.version += 1
+                    last_visible = visible
+                    if time.monotonic() - picture_check > .1:
+                        picture_check = time.monotonic()
+                        if picture.refresh():
+                            decoder.decoder.picture = dict(picture.values)
+                            preview = decoder.decoder.redraw() if visible else None
+                            if preview is not None:
+                                with self.lock:
+                                    self.frame = preview
+                                    self.version += 1
+                            self.notify('carplay_picture_applied', **picture.values)
+                    if not select.select([proc.stdout], [], [], .05)[0]:
+                        continue
                     kind, data = read_packet(proc.stdout)
                     if kind == 1:
                         began = time.perf_counter()
-                        pictures = decoder.feed(data)
+                        pictures = decoder.feed(data, render=visible)
+                        if not visible:
+                            self.background_video_packets += 1
                         elapsed = time.perf_counter() - began
+                        if pictures and decoder.decoder.conversion_color != last_color_metadata:
+                            last_color_metadata = dict(decoder.decoder.conversion_color)
+                            self.notify('carplay_color_conversion', **last_color_metadata)
                         with self.lock:
                             self.decode_packets += 1
                             self.decode_seconds += elapsed
@@ -215,17 +282,34 @@ class CarplayHDMI:
                                     width=w,
                                     height=h,
                                 )
-                        if self.frames and self.frames % 30 == 0:
+                        if pictures and self.frames and self.frames % 30 == 0:
                             self.notify("carplay_hdmi_frame_count", frames=self.frames)
+                    elif kind == 3:
+                        if len(data) < 12:
+                            self.notify("carplay_audio_invalid", bytes=len(data))
+                            continue
+                        decode_type, stream, volume = struct.unpack("<IIf", data[:12])
+                        formats = {1:(44100,2), 2:(44100,2), 3:(8000,1), 4:(48000,2), 5:(16000,1), 6:(24000,1), 7:(16000,2)}
+                        if decode_type in formats and 0 <= stream <= 255:
+                            try:
+                                if self.audio(data[12:], *formats[decode_type], stream):
+                                    self.audio_forwarded += 1
+                                else:
+                                    self.audio_dropped += 1
+                            except Exception as exc:
+                                self.notify("carplay_audio_forward_error", error=str(exc))
                     else:
                         state = json.loads(data)
                         self.notify("carplay_hdmi_status", bridge=state)
+                        if state.get('state') == 'media_metadata':
+                            self.queue_media(normalize(state.get('media')))
                         if state.get("state") == "host_ui_requested":
                             with self.lock:
                                 self.host_ui_requested = True
                         if state.get("state") in titles:
                             self.set_status(titles[state["state"]])
                             if state["state"] in ("phone_disconnected", "usb_failure"):
+                                self.queue_media(clear=True)
                                 with self.lock:
                                     self.frame = None
                                     self.version += 1
@@ -234,6 +318,7 @@ class CarplayHDMI:
                 with self.lock:
                     self.frame = None
                     self.version += 1
+                self.queue_media(clear=True)
                 self.set_status("CarPlay stopped: " + str(exc)[:90])
                 self.notify("carplay_hdmi_error", error=repr(exc))
         finally:

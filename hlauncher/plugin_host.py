@@ -143,7 +143,7 @@ class Worker:
             message = decode(raw)
             self.last_message = time.monotonic()
             if message["type"] == "audio.pcm":
-                raise ValueError("plugin audio playback is not supported")
+                raise ValueError("capture PCM cannot be submitted as playback")
             if message["type"] == "frame.ready":
                 if "display" not in self.manifest.capabilities:
                     raise ValueError("display capability missing")
@@ -215,16 +215,19 @@ class Worker:
 
 
 class PluginHost:
-    def __init__(self, manifests, width, height, event, home, audio):
+    def __init__(self, manifests, width, height, event, home, audio, background_allowed=None):
         self.manifests = manifests
         self.width = width
         self.height = height
         self.event = event
         self.home = home
         self.audio = audio
+        self.background_allowed = background_allowed or (lambda m: m.keep_alive)
         self.workers = {}
         self.active = None
         self.session = {"connected": False, "authenticated": False}
+        from .media import NowPlaying
+        self.media = NowPlaying(event)
 
     def activate(self, plugin_id):
         if plugin_id not in self.manifests:
@@ -238,6 +241,7 @@ class PluginHost:
             self.workers[plugin_id] = worker
         self.active = plugin_id
         worker.active = True
+        worker.background_enabled = self.background_allowed(worker.manifest)
         worker.send(type="radio.session", **self.session)
         worker.send(type="host.activate")
         self.event(state="plugin_activated", plugin=plugin_id)
@@ -247,19 +251,28 @@ class PluginHost:
         self.active = None
         if plugin_id is None:
             return
-        self.audio.stop(plugin_id)
+        self.audio.stop_capture(plugin_id)
         if worker := self.workers.get(plugin_id):
             worker.active = False
             worker.send(type="touch.cancel")
-            worker.send(type="host.deactivate")
-            if not worker.manifest.keep_alive:
+            worker.background_enabled = self.background_allowed(worker.manifest)
+            worker.send(type="host.deactivate", background=worker.background_enabled)
+            if not worker.background_enabled:
                 self.stop(plugin_id)
         self.event(state="plugin_deactivated", plugin=plugin_id)
+
+    def background_changed(self, plugin_id):
+        worker = self.workers.get(plugin_id)
+        if worker:
+            worker.background_enabled = self.background_allowed(worker.manifest)
+            if not worker.active and not worker.background_enabled:
+                self.stop(plugin_id)
 
     def stop(self, plugin_id):
         if self.active == plugin_id:
             self.active = None
         self.audio.stop(plugin_id)
+        self.media.clear(plugin_id)
         if worker := self.workers.pop(plugin_id, None):
             worker.close()
 
@@ -302,6 +315,7 @@ class PluginHost:
                     elif kind == "launcher.home" and self.active == plugin_id:
                         self.deactivate()
                         self.home("")
+                        break
                     elif kind == "health":
                         if isinstance(message.get("metrics"), dict):
                             self.event(
@@ -312,12 +326,23 @@ class PluginHost:
                                 superseded=worker.frames_superseded,
                                 copied=worker.frames_copied,
                             )
+                    elif kind == 'media.now_playing':
+                        try:
+                            if 'media.publish' not in worker.manifest.capabilities:
+                                raise ValueError('media.publish capability missing')
+                            if type(message.get('clear', False)) is not bool:
+                                raise ValueError('invalid media clear flag')
+                            self.media.publish(plugin_id, message.get('fields'), clear=message.get('clear', False))
+                        except (ValueError, TypeError) as exc:
+                            self.event(state='plugin_media_rejected', plugin=plugin_id, error=str(exc))
                     elif kind.startswith("audio."):
                         self.audio.request(
                             worker, message, active=self.active == plugin_id
                         )
                     elif kind != "launcher.home":
                         raise ValueError("unsupported plugin message " + kind)
+                if plugin_id not in self.workers:
+                    continue
                 if worker.pending is not None and self.active != plugin_id:
                     slot, _ = worker.pending
                     worker.pending = None
@@ -326,6 +351,8 @@ class PluginHost:
                     raise RuntimeError(worker.manifest.name + " stopped responding")
             except (OSError, ValueError, RuntimeError, EOFError) as exc:
                 self.failed(plugin_id, exc)
+
+        self.media.flush()
 
     def frame(self):
         worker = self.workers.get(self.active)

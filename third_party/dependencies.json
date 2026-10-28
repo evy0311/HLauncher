@@ -1,0 +1,19 @@
+{
+  "node-carplay": {
+    "repository": "https://github.com/rhysmorgan134/node-CarPlay",
+    "commit": "670f19eda2a0b0047a5a538b9602b263f442433a",
+    "url": "https://codeload.github.com/rhysmorgan134/node-CarPlay/tar.gz/670f19eda2a0b0047a5a538b9602b263f442433a",
+    "sha256": "dd2a0cdef476b6138f22aab6eb0938fd5e6a864b30093ec96a3b1f1543fc47a3",
+    "license": "MIT",
+    "files": [
+      "src/modules/DongleDriver.ts",
+      "src/modules/index.ts",
+      "src/modules/messages/common.ts",
+      "src/modules/messages/index.ts",
+      "src/modules/messages/readable.ts",
+      "src/modules/messages/sendable.ts",
+      "src/modules/messages/utils.ts"
+    ],
+    "patch": "third_party/patches/node-carplay.patch"
+  }
+}

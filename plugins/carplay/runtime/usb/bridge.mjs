@@ -5,7 +5,7 @@ import fs from 'node:fs';
 import readline from 'node:readline';
 import { format } from 'node:util';
 import { DongleDriver, DEFAULT_CONFIG, VideoData, AudioData, Plugged, Unplugged,
-         SendTouch, SendMultiTouch, SendCommand, Command } from './vendor/node-carplay/dist/modules/index.js';
+         SendTouch, SendMultiTouch, SendCommand, Command, MediaData, SoftwareVersion, ManufacturerInfo, BoxInfo, Opened } from './vendor/node-carplay/dist/modules/index.js';
 const write = process.stdout.write.bind(process.stdout);
 for (const name of ['log','debug','info','warn','error']) {
   console[name] = (...args) => process.stderr.write(format(...args)+'\n');
@@ -28,6 +28,17 @@ let touchChain=Promise.resolve(), touchSequence=0;
 function handleCommand(value) {
   console.error(JSON.stringify({state:'dongle_command',value}));
   if(value===3) status('host_ui_requested');
+}
+function handleMedia(message) {
+    if(message.payload?.type===1 && message.payload.media && typeof message.payload.media==='object') {
+      const media={};
+      for(const key of ['MediaSongName','MediaArtistName','MediaAlbumName','MediaAPPName','MediaSongDuration','MediaSongPlayTime','MediaPlayStatus']) {
+        const value=message.payload.media[key];
+        if(value===null || typeof value==='number' && Number.isFinite(value)) media[key]=value;
+        else if(typeof value==='string') media[key]=value.slice(0,512);
+      }
+      status('media_metadata',{media});
+    }
 }
 function touch(m) {
   if (!m || !connected) return;
@@ -89,6 +100,8 @@ if (process.argv.includes('--self-test')) {
       multi.readUInt32LE(8)!==1 || multi.readUInt32LE(12)!==0 ||
       Math.abs(multi.readFloatLE(16)-.8)>.00001 || multi.readUInt32LE(28)!==1 ||
       sent[5].getPayload().readUInt32LE(24)!==0) throw Error('Multitouch serialization failed');
+  const mediaBody=Buffer.concat([Buffer.from([1,0,0,0]),Buffer.from(JSON.stringify({MediaSongName:'Metadata fixture',MediaSongDuration:180000,MediaSongPlayTime:12000})+'\0')]);
+  handleMedia(new MediaData({},mediaBody));
   handleCommand(3);
   if (sent.length!==6 || sent[0].getPayload().readUInt32LE(0)!==14 ||
       sent[0].getPayload().readUInt32LE(4)!==2500 ||
@@ -126,9 +139,32 @@ if(process.env.CIVIC_CARPLAY_RESET==='1') {
   device=await webusb.requestDevice({filters:DongleDriver.knownDevices});await device.open();
 }
 driver=new DongleDriver();
+const usbTypes={}, mediaSubtypes={};
+driver.on('protocol_message',m=>{
+  usbTypes[m.type]=(usbTypes[m.type]||0)+1;
+  if(m.type===0x2a) {
+    mediaSubtypes[m.subtype]=(mediaSubtypes[m.subtype]||0)+1;
+    if(mediaSubtypes[m.subtype]===1) console.error(JSON.stringify({state:'media_packet_seen',...m}));
+  }
+});
 driver.on('failure',()=>{status('usb_failure');process.exit(75);});
 driver.on('message',message=>{
   if(message instanceof Command) {handleCommand(message.value);}
+  else if(message instanceof SoftwareVersion) {
+    const version=String(message.version).replace(/\0/g,'');
+    console.error(JSON.stringify({state:'dongle_software_version',version}));
+    status('dongle_software_version',{version});
+  }
+  else if(message instanceof ManufacturerInfo) {
+    console.error(JSON.stringify({state:'dongle_manufacturer_info',a:message.a,b:message.b}));
+  }
+  else if(message instanceof BoxInfo) {
+    console.error(JSON.stringify({state:'dongle_box_info',settings:message.settings}));
+  }
+  else if(message instanceof Opened) {
+    console.error(JSON.stringify({state:'dongle_opened',width:message.width,height:message.height,fps:message.fps,iBox:message.iBox,phoneMode:message.phoneMode}));
+  }
+  else if(message instanceof MediaData) { handleMedia(message); }
   else if(message instanceof Plugged) { status('phone_connected',{phone_type:message.phoneType}); }
   else if(message instanceof Unplugged) { status('phone_disconnected'); }
   else if(message instanceof VideoData && message.data?.length) {
@@ -139,11 +175,18 @@ driver.on('message',message=>{
     const size=`${message.width}x${message.height}`;
     if(size!==lastSize) {lastSize=size;status('video_size',{width:message.width,height:message.height});}
     packet(1,message.data);
-  } else if(message instanceof AudioData) { audioPackets++; }
+  } else if(message instanceof AudioData) {
+    audioPackets++;
+    if(message.data?.length) {
+      const h=Buffer.alloc(12);h.writeUInt32LE(message.decodeType,0);
+      h.writeUInt32LE(message.audioType,4);h.writeFloatLE(message.volume,8);
+      packet(3,Buffer.concat([h,Buffer.from(message.data.buffer,message.data.byteOffset,message.data.byteLength)]));
+    } else status('audio_control',{command:message.command,decode_type:message.decodeType,audio_type:message.audioType,volume:message.volume,volume_duration:message.volumeDuration});
+  }
   const now=Date.now();
   if(now-lastStats>=1000) {
     const elapsed=lastStats ? now-lastStats : 0;
-    status('stream_stats',{video_packets:videoPackets,video_packets_delta:videoPackets-lastStatsVideo,window_ms:elapsed,video_gap_max_ms:maxVideoGap,audio_packets:audioPackets,audio_routed:false});
+    status('stream_stats',{video_packets:videoPackets,video_packets_delta:videoPackets-lastStatsVideo,window_ms:elapsed,video_gap_max_ms:maxVideoGap,audio_packets:audioPackets,audio_forwarding:'launcher_hdmi',usb_message_types:usbTypes,media_subtypes:mediaSubtypes});
     lastStats=now;lastStatsVideo=videoPackets;maxVideoGap=0;
   }
 });
@@ -151,7 +194,8 @@ const fps=Number(process.env.CIVIC_CARPLAY_FPS || 15);
 const config={...DEFAULT_CONFIG,width:800,height:480,fps:Number.isFinite(fps)?Math.max(5,Math.min(60,fps)):15,
   boxName:'CivicCarPlay',micType:'box',audioTransferMode:false};
 await driver.initialise(device);await driver.start(config);connected=true;
-status('dongle_ready',{width:800,height:480,fps:config.fps,audio_routed:false});
+status('metadata_requested',{DashboardInfo:1});
+status('dongle_ready',{width:800,height:480,fps:config.fps,audio_forwarding:'launcher_hdmi'});
 const keyframe=setInterval(()=>driver.send(new SendCommand('frame')),5000);
 setTimeout(()=>driver.send(new SendCommand('wifiPair')),15000).unref();
 process.on('exit',()=>clearInterval(keyframe));

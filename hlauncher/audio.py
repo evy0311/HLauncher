@@ -1,6 +1,7 @@
 """Core-owned HFP capture. PCM is delivered only to the requesting plugin."""
 
 import array, math, os, select, subprocess, threading, time, sys
+from .playback import Playback
 from .config import RADIO_ADDRESS as DEVICE, RADIO_PATH as PATH
 
 
@@ -222,10 +223,11 @@ class Capture:
 
 
 class AudioBroker:
-    """Shared radio audio resources. PCM capture is opt-in; playback is not exposed."""
+    """Shared radio audio resources. PCM capture is opt-in; playback is routed to HDMI."""
 
     def __init__(self, event):
         self.event = event
+        self.playback = Playback(event)
         self.owner = None
         self.capture = None
         self.worker = None
@@ -234,6 +236,10 @@ class AudioBroker:
         self.generation = 0
 
     def stop(self, plugin_id):
+        self.playback.stop(plugin_id)
+        self.stop_capture(plugin_id)
+
+    def stop_capture(self, plugin_id):
         if self.owner != plugin_id:
             return
         self.generation += 1
@@ -248,6 +254,14 @@ class AudioBroker:
         request_id = message.get("request_id")
         kind = message["type"]
         allowed = "audio.capture" in worker.manifest.capabilities
+        if kind == "audio.playback.pcm":
+            if "audio.playback" not in worker.manifest.capabilities or not (active or getattr(worker, "background_enabled", False)):
+                return
+            try:
+                self.playback.feed(worker.manifest.id, message)
+            except Exception as exc:
+                self.event(state="audio_playback_rejected", error=str(exc))
+            return
         if kind == "audio.status" and (
             allowed or "audio.status" in worker.manifest.capabilities
         ):
@@ -255,7 +269,8 @@ class AudioBroker:
                 type="audio.status",
                 request_id=request_id,
                 capture_supported=True,
-                playback_supported=False,
+                playback_supported=True,
+                playback_route="hdmi",
                 microphone_gated_by_radio=True,
                 capturing=self.owner == worker.manifest.id,
             )

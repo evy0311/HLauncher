@@ -99,9 +99,10 @@ class Architecture(unittest.TestCase):
         try:
             self.assertEqual(ui.mode, "home")
             self.assertEqual(len(ui.actions), 2)
-            settings_box, callback = ui.actions[0]
-            carplay_box, _ = ui.actions[1]
-            self.assertEqual(settings_box[1], carplay_box[1])
+            carplay_box, _ = ui.actions[0]
+            settings_box, callback = ui.actions[1]
+            self.assertGreater(settings_box[0], carplay_box[0])
+            self.assertGreater(settings_box[1], carplay_box[1])
             callback()
             self.assertEqual(ui.mode, "settings")
             ui.cycle_default()
@@ -209,7 +210,8 @@ class Architecture(unittest.TestCase):
         self.assertEqual(worker.messages[-1]["type"], "audio.error")
         self.assertIsNone(broker.capture)
         broker.request(worker, {"type": "audio.status"}, active=True)
-        self.assertFalse(worker.messages[-1]["playback_supported"])
+        self.assertTrue(worker.messages[-1]["playback_supported"])
+        self.assertEqual(worker.messages[-1]["playback_route"], "hdmi")
 
     def test_video_status_does_not_draw_over_live_frame(self):
         ui = Launcher(

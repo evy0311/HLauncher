@@ -14,3 +14,7 @@ logs/
 *.pem
 *.key
 .DS_Store
+
+# Generated upstream dependencies
+.dependency-cache/
+plugins/carplay/runtime/usb/vendor/node-carplay/

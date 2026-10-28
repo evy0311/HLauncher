@@ -11,9 +11,9 @@ if [[ ${VERSION_CODENAME:-} != bookworm || $(uname -m) != aarch64 ]]; then
   exit 1
 fi
 apt-get update
-apt-get install -y python3 python3-pil python3-dbus python3-gi \
+apt-get install -y python3 python3-pil python3-numpy python3-dbus python3-gi python3-bleak \
   bluez bluez-alsa-utils libasound2-plugin-bluez alsa-utils openssl \
-  nodejs npm libudev-dev libusb-1.0-0 libdrm2 libavcodec59 libavutil57 libswscale6 \
+  nodejs npm patch libudev-dev libusb-1.0-0 libdrm2 libavcodec59 libavutil57 libswscale6 \
   fonts-dejavu-core fbset usbutils
 root=/opt/hlauncher
 if [[ $(pwd -P) == "$root" ]]; then
@@ -25,9 +25,10 @@ if [[ -d $root ]]; then
   cp -a "$root" "/opt/hlauncher.backup-$stamp"
 fi
 install -d "$root" /var/log/hlauncher /var/lib/hlauncher /etc/systemd/system/bluetooth.service.d
-for path in hlauncher sdk plugins examples bluetooth scripts packaging docs tests third_party LICENSE README.md THIRD_PARTY_NOTICES.md; do
+for path in hlauncher sdk plugins examples bluetooth scripts packaging config docs tests third_party LICENSE NOTICE README.md THIRD_PARTY_NOTICES.md; do
   cp -a "$path" "$root/"
 done
+python3 "$root/scripts/fetch_dependencies.py"
 npm ci --prefix "$root/plugins/carplay/runtime/usb" --omit=dev --ignore-scripts --no-audit --no-fund
 if [[ ! -f /etc/hlauncher.env ]]; then
   install -m 600 hlauncher.env.example /etc/hlauncher.env

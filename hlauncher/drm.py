@@ -168,6 +168,21 @@ class KMSDisplay:
                 self.buffers.append(self.allocate())
             self.set_crtc(self.buffers[0]["fb"])
             self.changed = True
+            # The Civic HDMI receiver preserves pale shades with limited RGB.
+            # Apply on every display open, including after a Pi reboot.
+            from .hdmi_calibration import broadcast_rgb
+            range_name = os.environ.get('HLAUNCHER_HDMI_RGB', 'limited').lower()
+            ranges = {'auto': 0, 'full': 1, 'limited': 2}
+            try:
+                if range_name not in ranges:
+                    raise ValueError('HLAUNCHER_HDMI_RGB must be auto, full or limited')
+                broadcast_rgb(self, ranges[range_name])
+                actual_range = broadcast_rgb(self)
+                if actual_range != ranges[range_name]:
+                    raise RuntimeError('HDMI range readback did not match')
+                self.event(state='hdmi_rgb_range', mode=range_name, value=actual_range)
+            except (OSError, RuntimeError, ValueError) as exc:
+                self.event(state='hdmi_rgb_range_failed', error=str(exc))
             self.thread = threading.Thread(
                 target=self.run, name="kms-present", daemon=True
             )

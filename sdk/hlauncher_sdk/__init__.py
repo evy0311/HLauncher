@@ -4,6 +4,7 @@ import collections
 import json
 import mmap
 import os
+import struct
 import select
 import socket
 import threading
@@ -23,6 +24,11 @@ def encode(message):
 def decode(raw):
     if not raw or len(raw) > MAX_PACKET:
         raise ValueError("invalid packet size")
+    if raw[:1] == b"P":
+        if len(raw) < 8:
+            raise ValueError("short playback packet")
+        rate, channels, stream = struct.unpack("!IBB", raw[1:7])
+        return dict(type="audio.playback.pcm", sample_rate=rate, channels=channels, stream=stream, pcm=raw[7:])
     if raw[:1] == b"A":
         return {"type": "audio.pcm", "pcm": raw[1:]}
     if raw[:1] != b"J":
@@ -55,6 +61,22 @@ class Client:
                 return self.socket.send(raw) == len(raw)
             except BlockingIOError:
                 return False
+
+    def now_playing(self, *, clear=False, **fields):
+        """Publish a partial media update. Times are milliseconds; None clears a field."""
+        return self.send(type='media.now_playing', fields=fields, clear=clear)
+
+    def playback(self, pcm, rate, channels, stream=0):
+        """Nonblocking PCM submission; False means backpressure, never retry stale audio."""
+        ok = True
+        for at in range(0, len(pcm), 4096):
+            raw = b"P" + struct.pack("!IBB", rate, channels, stream) + pcm[at:at+4096]
+            with self.lock:
+                try:
+                    ok = (self.socket.send(raw) == len(raw)) and ok
+                except BlockingIOError:
+                    return False
+        return ok
 
     def receive(self, timeout=0):
         if not select.select([self.socket], [], [], timeout)[0]:

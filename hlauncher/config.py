@@ -16,6 +16,9 @@ RADIO_PATH = "/org/bluez/hci0/dev_" + RADIO_ADDRESS.replace(":", "_")
 RFCOMM_PATH = "/org/bluealsa/hci0/dev_" + RADIO_ADDRESS.replace(":", "_") + "/rfcomm"
 
 
+from sdk.hlauncher_sdk.theme import PALETTE as TILE_COLORS
+
+
 def serial_number():
     if value := os.environ.get("HLAUNCHER_SERIAL"):
         return value.encode("ascii")[:32]
@@ -28,7 +31,7 @@ def serial_number():
 class Preferences:
     def __init__(self, path=None):
         self.path = Path(path) if path else STATE_DIR / "settings.json"
-        self.data = {"enabled": {}, "default_plugin": None}
+        self.data = {"enabled": {}, "background": {}, "default_plugin": None, "tile_color": "Blue"}
         try:
             loaded = json.loads(self.path.read_text())
             if not isinstance(loaded, dict) or not isinstance(
@@ -40,6 +43,11 @@ class Preferences:
                 for k, v in loaded.get("enabled", {}).items()
                 if isinstance(k, str) and isinstance(v, bool)
             }
+            background = loaded.get('background', {})
+            if isinstance(background, dict):
+                self.data['background'] = {k:v for k,v in background.items() if isinstance(k,str) and type(v) is bool}
+            if isinstance(loaded.get("tile_color"), str) and loaded["tile_color"] in TILE_COLORS:
+                self.data["tile_color"] = loaded["tile_color"]
             value = loaded.get("default_plugin")
             if value is None or isinstance(value, str):
                 self.data["default_plugin"] = value
@@ -53,6 +61,35 @@ class Preferences:
         return self.data["enabled"].get(
             manifest.id, manifest.bundled and manifest.default_enabled
         )
+
+    def background_enabled(self, manifest):
+        if manifest.id in ("carplay", "android-auto"):
+            return manifest.keep_alive
+        return manifest.keep_alive and self.data['background'].get(manifest.id, True)
+
+    def set_background(self, manifest, enabled):
+        if manifest.id in ("carplay", "android-auto"):
+            raise ValueError("Background mode is automatic for this plugin")
+        if not manifest.keep_alive:
+            raise ValueError('Plugin does not support background mode')
+        before = dict(self.data['background'])
+        self.data['background'][manifest.id] = bool(enabled)
+        try:
+            self.save()
+        except OSError:
+            self.data['background'] = before
+            raise
+
+    def set_tile_color(self, name):
+        if name not in TILE_COLORS:
+            raise ValueError("Unknown tile color")
+        before = self.data['tile_color']
+        self.data['tile_color'] = name
+        try:
+            self.save()
+        except OSError:
+            self.data['tile_color'] = before
+            raise
 
     def save(self):
         self.path.parent.mkdir(parents=True, exist_ok=True)

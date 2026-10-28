@@ -1,5 +1,5 @@
 {
   "repository": "https://github.com/evy0311/HLauncher",
-  "bundled": ["carplay"],
-  "planned": ["android-auto", "obd-gauges"]
+  "bundled": ["carplay", "android-auto", "obd"],
+  "planned": []
 }

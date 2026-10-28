@@ -29,8 +29,9 @@ CarPlay requests **60fps**. That is the requested stream rate, not a guarantee f
 
 What is still missing:
 
-- **CarPlay audio and microphone forwarding.** The video and touch path works, but this is not yet a complete CarPlay replacement.
-- Android Auto and OBD gauges. These are planned plugins, not included working apps.
+- **Microphone forwarding.** CarPlay output audio now has an HDMI playback path; audible playback inside HondaLink still needs hardware confirmation. Microphone input is not forwarded to CarPlay.
+- **Android Auto video/session completion.** The experimental OpenAuto plugin now gets past the phone's compatibility error and reaches initial setup; on-screen video still needs confirmation. This development build hard-codes a parked state for bench testing. See [Android Auto limits](plugins/android-auto/README.md#bench-parking-state).
+- **OBD hardware validation.** BLE discovery, connection handling and live-data decoding are implemented, but the real adapter/vehicle connection still needs testing. Gauges show no simulated values.
 - A microphone test page in the new launcher. Earlier experiments received microphone PCM through Bluetooth HFP, but the radio required a hands-free call state. The core retains capture support; CarPlay does not use it yet.
 - Verification on other Honda radios, Pi models and OS releases.
 
@@ -100,17 +101,17 @@ Stop any older launcher or application using the same framebuffer, Bluetooth pro
 sudo systemctl enable --now hlauncher-audio hlauncher-connect hlauncher
 ```
 
-Open **HondaLink** on the radio. You should see Settings and CarPlay in the launcher. Open CarPlay and connect the iPhone to the dongle. The Honda icon in CarPlay returns to HLauncher; the waiting-for-phone screen also has a Home button.
+Open **HondaLink** on the radio. You should see CarPlay, Android Auto, OBD Gauges and Settings in the launcher. Android Auto requires its separate engine build. Open CarPlay and connect the iPhone to the dongle. The Honda icon in CarPlay returns to HLauncher; the waiting-for-phone screen also has a Back button.
 
 ### 5. Choose your apps
 
-In **Settings**, enable or disable installed plugins. Tap **Start with** to cycle between Launcher and an enabled plugin. Settings are saved to `/var/lib/hlauncher/settings.json` and survive a service restart.
+In **Settings → Plugins**, enable or disable installed plugins. Tap **Start with** to cycle between Launcher and an enabled plugin. Settings are saved to `/var/lib/hlauncher/settings.json` and survive a service restart.
 
 Launcher is the initial default. Disabling the selected default plugin resets it to Launcher. Returning through CarPlay's Honda icon always opens the launcher, even if CarPlay is the startup default.
 
 ## Plugins
 
-Bundled plugins live in `plugins/`. CarPlay is included and enabled initially. You can install an external plugin from a local folder or Git repository, or submit one as a pull request to include it here.
+Bundled plugins live in `plugins/`. CarPlay, Android Auto and OBD Gauges are included and enabled initially. Android Auto needs the optional engine build, and OBD Gauges needs a compatible BLE ELM327 connection. You can install an external plugin from a local folder or Git repository, or submit one as a pull request to include it here.
 
 ```bash
 cd /opt/hlauncher
@@ -135,14 +136,16 @@ sudo journalctl -u hlauncher -n 100 --no-pager
 sudo systemctl restart hlauncher
 ```
 
-Protocol logs are in `/var/log/hlauncher`; plugin logs are under `/var/log/hlauncher/plugins/ID`. Logs can contain device identifiers and packet data. Log rotation is not implemented yet.
+Protocol logs are in `/var/log/hlauncher`; plugin logs are under `/var/log/hlauncher/plugins/ID`. Logs can contain device identifiers and packet data. Android Auto and BLE OBD logs rotate; other logs may still need manual cleanup.
 
 If the radio cannot open HondaLink, check Bluetooth pairing, `/etc/hlauncher.env`, and the audio/reconnect services. After a Bluetooth daemon restart, restart HLauncher to register its profiles again. If the Linux console appears over HDMI, check the launcher journal and framebuffer format. See [setup and recovery](docs/setup.md#logs-and-recovery) for dongle checks and other failure cases.
 
 ## Development
 
 - `hlauncher/` — launcher, Settings, radio protocol, display, touch and audio broker.
-- `plugins/carplay/` — CarPlay worker, Node USB bridge and video decoder.
+- `plugins/carplay/` — CarPlay worker and Node USB bridge.
+- `plugins/android-auto/` — experimental OpenAuto adapter and plugin worker.
+- `plugins/obd/` — live BLE ELM327 gauges with radio-first connection management.
 - `sdk/hlauncher_sdk/` — plugin control transport and shared frame buffers.
 - `bluetooth/` — background reconnect support.
 - `packaging/` — systemd service definitions.
@@ -162,4 +165,46 @@ CarPlay dongle communication uses **[node-CarPlay by Rhys Morgan](https://github
 
 The FFmpeg decoder helper is by **[rsyrnicki](https://github.com/rsyrnicki)** and is GPL-3.0. FFmpeg, BlueZ, BlueALSA and ALSA provide the underlying video and Bluetooth support. See [third-party notices](THIRD_PARTY_NOTICES.md) for versions and licenses.
 
-HLauncher is GPL-3.0. This is an independent project, not affiliated with Honda, Apple or Carlinkit. No Honda firmware images, proprietary radio assets, pairing keys or device captures are included.
+HLauncher is GPL-3.0, with preservation of the original author attribution under GPLv3 section 7(b). HLauncher and its HondaLink reverse engineering are by **Evan Horsley (evy0311)**. Distributions using that original code must retain the notices in [NOTICE](NOTICE); third-party credits remain separate. This is an independent project, not affiliated with Honda, Apple or Carlinkit. No Honda firmware images, proprietary radio assets, pairing keys or device captures are included.
+
+### Android Auto (experimental)
+
+The **Android Auto** plugin uses OpenAuto directly with an Android phone connected
+to the Pi's USB port; a Carlinkit dongle is not needed. HLauncher continues to own
+HondaLink, display, audio and touch. Build the separately fetched engine with
+`sudo bash scripts/install_android_auto.sh`; see
+[Android Auto setup and current limits](plugins/android-auto/README.md).
+
+Upstream node-CarPlay is now fetched at install time as well. A source checkout
+needs `python3 scripts/fetch_dependencies.py` before the CarPlay bridge checks.
+The upstream source is not committed here; our fixes are tracked as a small patch.
+
+Launcher tiles share a glass-style finish with centered app glyphs. Choose Blue,
+Red, Green, Amber, Purple or Graphite under **Settings → Tile color**; the choice
+is saved across restarts. This changes launcher tiles, not the projected phone UI.
+
+Settings, projection waiting screens and gauge chrome share the selected accent.
+Tile tint is nearly uniform, with edge highlights instead of broad gradients.
+Launcher-owned UI uses static RGB565 dithering to reduce banding; projected phone
+video and HDMI calibration patterns are unchanged.
+
+### System diagnostics
+
+Settings groups plugin controls, tile color, the startup app and diagnostics into
+separate entries. **Settings → System diagnostics** shows live HondaLink status,
+HDMI output, dongle detection and audio sources. Its System view shows Pi model,
+temperature, current/historical power warnings, memory, free storage and uptime.
+Sampling runs off the UI thread and refreshes every two seconds.
+
+**Save report** writes a JSON snapshot under `/var/lib/hlauncher/diagnostics/`.
+Reports include plugin status and audio counters; they do not contain pairing keys
+or Bluetooth addresses. This saves locally on the Pi, not automatically to USB.
+
+Launcher and plugin UI share bundled Roboto fonts, including large gauge readouts.
+The font license is in `sdk/hlauncher_sdk/assets/fonts/OFL.txt`.
+
+OBD connection setup is under **Settings > OBD Gauges > Scan**.
+The plugin uses live data only; unavailable sensors show a dash. See
+[OBD Gauges](plugins/obd/README.md) for supported BLE transports, connection
+priority and logs. BLE hardware/vehicle compatibility still needs testing with
+your adapter.

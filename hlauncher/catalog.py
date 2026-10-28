@@ -6,7 +6,7 @@ from pathlib import Path
 import re
 from .config import ROOT, STATE_DIR
 
-CAPABILITIES = {"display", "touch", "session", "audio.status", "audio.capture"}
+CAPABILITIES = {"display", "touch", "session", "audio.status", "audio.capture", "audio.playback", "media.publish"}
 
 
 @dataclass

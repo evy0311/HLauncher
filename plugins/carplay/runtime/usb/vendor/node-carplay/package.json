@@ -1,6 +1,0 @@
-{
-  "name": "civic-vendored-node-carplay-modules",
-  "type": "module",
-  "private": true,
-  "upstream_commit": "670f19eda2a0b0047a5a538b9602b263f442433a"
-}

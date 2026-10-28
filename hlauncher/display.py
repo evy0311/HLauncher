@@ -2,6 +2,10 @@
 
 import os, fcntl, struct
 from array import array
+try:
+    import numpy as np
+except ImportError:
+    np = None
 
 
 class Framebuffer:
@@ -103,6 +107,10 @@ class Framebuffer:
 
 
 def encode(im):
+    if np is not None:
+        rgb = np.asarray(im.convert('RGB'), dtype=np.uint16)
+        packed = ((rgb[:, :, 0] >> 3) << 11) | ((rgb[:, :, 1] >> 2) << 5) | (rgb[:, :, 2] >> 3)
+        return packed.astype('<u2', copy=False).tobytes()
     a = array(
         "H",
         (

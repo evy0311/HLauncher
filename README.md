@@ -2,6 +2,10 @@
 
 A Raspberry Pi app launcher for the original HondaLink head unit in my 2014 Civic.
 
+Honda never released a factory CarPlay update for this generation of Civic radio. HLauncher is my first step toward bringing it to the original hardware. Using a Pi through the existing HondaLink connection is the least invasive approach I've tested so far: the radio firmware stays intact, and we can run our own software and plugins on the Pi. It also gives us the flexibility to try things beyond CarPlay.
+
+Future experiments will focus on getting CarPlay running **natively on the head unit itself**. For more on the reverse engineering, experiments and progress, check out [my blog](https://www.evanhorsley.com/blog/).
+
 The radio thinks the Pi is a phone running the older HondaLink app. The Pi sends video over HDMI, while Bluetooth carries the HondaLink handshake and touchscreen input. Opening HondaLink on the radio opens HLauncher. No desktop environment or radio firmware patch is required for this connection.
 
 HLauncher handles the radio connection and provides a home screen for plugins. CarPlay is the first working plugin, using a Carlinkit USB dongle and node-CarPlay.

@@ -1,0 +1,19 @@
+[Unit]
+Description=HLauncher HDMI and HondaLink control
+Wants=bluetooth.service hlauncher-audio.service hlauncher-connect.service
+After=bluetooth.service hlauncher-audio.service
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+EnvironmentFile=/etc/hlauncher.env
+Environment=PYTHONUNBUFFERED=1
+WorkingDirectory=/opt/hlauncher/app
+ExecStartPre=/usr/bin/fbset -depth 16
+ExecStart=/usr/bin/python3 /opt/hlauncher/app/listener_honda_pi4_v42.py --seconds 0
+Restart=on-failure
+RestartSec=3
+TimeoutStopSec=10
+
+[Install]
+WantedBy=multi-user.target

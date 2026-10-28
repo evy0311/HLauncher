@@ -1,0 +1,28 @@
+{
+  "baseline": "Working Pi 4 HDMI/HondaLink V42 service",
+  "platform": "Raspberry Pi OS Bookworm, aarch64",
+  "original_entrypoint": "listener_honda_pi4_v42.py --seconds 7200",
+  "repo_changes": [
+    "Configurable peer and deployment paths",
+    "Pi serial read from device tree rather than the development board serial",
+    "Extract streaming decoder from the old MirrorLink runtime",
+    "Launcher title changed to HLauncher",
+    "Allow --seconds 0 for an unlimited service"
+  ],
+  "live_service_modified": false,
+  "original_source_sha256": {
+    "audio_meter_v39.py": "16f965378174118f483c3127f49dc254b6ded57646010b5b7d4afaf6caa55e20",
+    "audio_meter_v41.py": "39fc83d0c2273aea7b7a4a7e64ee6e6afef4a38ee6a731c804d2e926c3b1916d",
+    "carplay_hdmi_v35.py": "f4286e96c9f22c55686ac85b4a56d46c557fc61ca3c52977bc2094f691a1f7e5",
+    "honda_frames.py": "d457bba6c3a84e6c30099edf114c7a857ba3bc448c07b738f7903c8f3f67580e",
+    "honda_touch_v28.py": "c7784c38b18b4f418bc59e7382e73ba2ae9101ca4c9d59f8700504a6919eea79",
+    "iap_auth_crypto.py": "3ef9e0b1349cbb7f2757bbb63b13f72fc708cf8c12237a572b4a11ecc9a2b6b0",
+    "iap_honda_start_pi4_v32.py": "6dd956a5985655927b22dda06267e5507443deca0b8cb55f160f51362daac98f",
+    "launcher_hdmi_v42.py": "90f586699f173ff02447ceff34828ac92a24636723dd29d8b8ece5759521e4ae",
+    "listener_honda_pi4_v42.py": "e6042eee233987a36c33712953fb58a6d9ec8e26b4dac6226fd88b9642eead72",
+    "touch_overlay_v28.py": "06b436c2facee96cd6a14268dd1f93c2457cf28f971a82c4565979b9a935ca13",
+    "mic_worker_v39.py": "f082fb001c314d1d48b1ef9cc5de30a26638fe2f55dc5163ac90e42f92ff4e43",
+    "audio_meter_v37.py": "a5ab10938432204c1dd38fb5340727b1352fd55e95ebaeb7f3131e5fd355a1b9",
+    "hfp_test_call_v41.py": "b99d1d970f7be9876dca38f7d300991abd3bf0108f723bdad028d966c79eca47"
+  }
+}

@@ -1,0 +1,15 @@
+[Unit]
+Description=Reconnect the paired HandsFreeLink radio
+Wants=bluetooth.service hlauncher-audio.service
+After=bluetooth.service hlauncher-audio.service
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+EnvironmentFile=/etc/hlauncher.env
+ExecStart=/usr/bin/python3 /opt/hlauncher/bluetooth/reconnect.py
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

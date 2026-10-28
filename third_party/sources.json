@@ -1,0 +1,16 @@
+{
+  "node-CarPlay": {
+    "url": "https://github.com/rhysmorgan134/node-CarPlay",
+    "commit": "670f19eda2a0b0047a5a538b9602b263f442433a",
+    "license": "MIT",
+    "path": "runtime/carplay/vendor/node-carplay",
+    "note": "Vendored source and built modules from the working Pi installation."
+  },
+  "mirror-link-pi": {
+    "url": "https://github.com/rsyrnicki/mirror-link-pi",
+    "commit": "7319b5da4d0df88f8d74b3196163cbe40b0d6043",
+    "license": "GPL-3.0",
+    "path": "runtime/video/avdecode.py",
+    "note": "avdecode.py matches the pinned upstream source. The streaming parser in h264.py was extracted from our installed integration."
+  }
+}

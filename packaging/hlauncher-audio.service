@@ -1,0 +1,15 @@
+[Unit]
+Description=HLauncher Bluetooth audio profiles
+Wants=bluetooth.service
+After=bluetooth.service
+Conflicts=bluealsa.service
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/bluealsa -p a2dp-source -p hfp-ag
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

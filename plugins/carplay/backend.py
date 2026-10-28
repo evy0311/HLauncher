@@ -42,6 +42,9 @@ class CarplayHDMI:
         self.touch_router = TouchRouter()
         self.frames = 0
         self.host_ui_requested = False
+        self.decode_packets = 0
+        self.decode_seconds = 0.0
+        self.decode_max_ms = 0.0
 
     def notify(self, state, **extra):
         self.event(state=state, **extra)
@@ -140,6 +143,17 @@ class CarplayHDMI:
             self.host_ui_requested = False
             return requested
 
+    def metrics(self):
+        with self.lock:
+            return {
+                "decoded_frames": self.frames,
+                "input_packets": self.decode_packets,
+                "decode_ms_avg": round(
+                    self.decode_seconds * 1000 / max(1, self.decode_packets), 3
+                ),
+                "decode_ms_max": round(self.decode_max_ms, 3),
+            }
+
     def snapshot(self):
         with self.lock:
             return self.version, self.frame, self.status_version, self.status
@@ -182,7 +196,14 @@ class CarplayHDMI:
                 while not self.stop_event.is_set():
                     kind, data = read_packet(proc.stdout)
                     if kind == 1:
-                        for frame in decoder.feed(data):
+                        began = time.perf_counter()
+                        pictures = decoder.feed(data)
+                        elapsed = time.perf_counter() - began
+                        with self.lock:
+                            self.decode_packets += 1
+                            self.decode_seconds += elapsed
+                            self.decode_max_ms = max(self.decode_max_ms, elapsed * 1000)
+                        for frame in pictures:
                             with self.lock:
                                 self.frame = frame
                                 self.version += 1

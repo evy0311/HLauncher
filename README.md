@@ -23,7 +23,7 @@ What has been tested:
 - Returning to HLauncher with the Honda icon inside CarPlay.
 - HDMI output without a Linux desktop or login cursor over the app.
 
-The touch path now retains both contacts through the plugin API, and the CarPlay bridge forwards two-finger gestures using node-CarPlay's multi-touch messages. Display presentation uses offscreen buffers and synchronized DRM page flips to address horizontal tearing. See the [plugin API](docs/plugins.md) and [display setup](docs/setup.md#hdmi) for details.
+The touch path now retains both contacts through the plugin API, and the CarPlay bridge forwards two-finger gestures using node-CarPlay's multi-touch messages. Maps pinch-to-zoom was confirmed on the bench. Display presentation uses offscreen buffers and synchronized DRM page flips; the owner confirmed the previous horizontal tearing was gone. See the [plugin API](docs/plugins.md) and [display setup](docs/setup.md#hdmi) for details.
 
 CarPlay requests **60fps**. That is the requested stream rate, not a guarantee for every phone, dongle or Pi. The panel is **800×480**, but the working **HDMI input is 720×480**. Forcing 800×480 produced a picture with the right side cropped, so the setup uses the radio's advertised 720×480 mode. The radio scales that input to its panel; HLauncher scales video and touch to the actual framebuffer. See [HDMI setup](docs/setup.md#hdmi).
 

@@ -11,7 +11,7 @@ for (const name of ['log','debug','info','warn','error']) {
   console[name] = (...args) => process.stderr.write(format(...args)+'\n');
 }
 let shutting = false, driver = null, connected = false, down = false, multiDown = false;
-let videoPackets = 0, audioPackets = 0, lastStats = 0, lastSize = '';
+let videoPackets = 0, audioPackets = 0, lastStats = 0, lastSize = '', lastStatsVideo = 0, lastVideoAt = 0, maxVideoGap = 0;
 function packet(type, payload) {
   if (shutting) return;
   const b = Buffer.isBuffer(payload) ? payload : Buffer.from(payload);
@@ -133,12 +133,19 @@ driver.on('message',message=>{
   else if(message instanceof Unplugged) { status('phone_disconnected'); }
   else if(message instanceof VideoData && message.data?.length) {
     videoPackets++;
+    const receivedAt=Date.now();
+    if(lastVideoAt) maxVideoGap=Math.max(maxVideoGap,receivedAt-lastVideoAt);
+    lastVideoAt=receivedAt;
     const size=`${message.width}x${message.height}`;
     if(size!==lastSize) {lastSize=size;status('video_size',{width:message.width,height:message.height});}
     packet(1,message.data);
   } else if(message instanceof AudioData) { audioPackets++; }
   const now=Date.now();
-  if(now-lastStats>=1000) {lastStats=now;status('stream_stats',{video_packets:videoPackets,audio_packets:audioPackets,audio_routed:false});}
+  if(now-lastStats>=1000) {
+    const elapsed=lastStats ? now-lastStats : 0;
+    status('stream_stats',{video_packets:videoPackets,video_packets_delta:videoPackets-lastStatsVideo,window_ms:elapsed,video_gap_max_ms:maxVideoGap,audio_packets:audioPackets,audio_routed:false});
+    lastStats=now;lastStatsVideo=videoPackets;maxVideoGap=0;
+  }
 });
 const fps=Number(process.env.CIVIC_CARPLAY_FPS || 15);
 const config={...DEFAULT_CONFIG,width:800,height:480,fps:Number.isFinite(fps)?Math.max(5,Math.min(60,fps)):15,

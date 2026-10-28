@@ -198,7 +198,8 @@ def main():
             event(state="touch_overlay_error", error=str(exc))
         return True
 
-    GLib.timeout_add(16, draw_tick)
+    # Availability sampling is faster than scanout; KMS still paces actual frames.
+    GLib.timeout_add(4, draw_tick)
     manager = dbus.Interface(
         bus.get_object("org.bluez", "/org/bluez"), "org.bluez.ProfileManager1"
     )

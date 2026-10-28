@@ -41,13 +41,29 @@ class TouchRouter:
                 output.append(self.single(self.single_slot, 16))
                 self.single_slot = None
             self.multi = True
+            # Start contacts in order even if both arrive in one Honda report.
+            # The dongle should see pointer zero before pointer one is added.
+            output.append(
+                {
+                    "type": "multitouch",
+                    "touches": [
+                        {"x": p["x"], "y": p["y"], "action": 1 if i == 0 else 0}
+                        for i, p in enumerate(self.points)
+                    ],
+                    "_motion": False,
+                }
+            )
         if self.multi:
             # Always transmit both slots. Array index is the dongle contact ID;
             # compacting the list when slot zero lifts would change finger IDs.
             touches = []
             for slot, p in enumerate(self.points):
                 action = (
-                    (1 if entering_multi or not before[slot] else 2)
+                    (
+                        2
+                        if entering_multi and slot == 0
+                        else 1 if entering_multi or not before[slot] else 2
+                    )
                     if after[slot]
                     else 0
                 )

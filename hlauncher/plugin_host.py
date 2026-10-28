@@ -42,6 +42,9 @@ class Worker:
         self.pending = None
         self.inflight = set()
         self.last_sequence = 0
+        self.frames_received = 0
+        self.frames_superseded = 0
+        self.frames_copied = 0
         self.video_available = False
         self.ready = False
         self.closed = False
@@ -158,9 +161,11 @@ class Worker:
                     or message.get("bytes") != self.frame_bytes
                 ):
                     raise ValueError("invalid video frame")
+                self.frames_received += 1
                 self.last_sequence = seq
                 self.inflight.add(slot)
                 if self.pending is not None:
+                    self.frames_superseded += 1
                     self.release(self.pending[0])
                 self.pending = (slot, seq)
             else:
@@ -174,6 +179,7 @@ class Worker:
         self.pending = None
         try:
             at = slot * self.frame_bytes
+            self.frames_copied += 1
             return self.memory[at : at + self.frame_bytes]
         finally:
             self.release(slot)
@@ -297,7 +303,15 @@ class PluginHost:
                         self.deactivate()
                         self.home("")
                     elif kind == "health":
-                        pass
+                        if isinstance(message.get("metrics"), dict):
+                            self.event(
+                                state="plugin_frame_stats",
+                                plugin=plugin_id,
+                                metrics=message["metrics"],
+                                received=worker.frames_received,
+                                superseded=worker.frames_superseded,
+                                copied=worker.frames_copied,
+                            )
                     elif kind.startswith("audio."):
                         self.audio.request(
                             worker, message, active=self.active == plugin_id

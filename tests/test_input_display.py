@@ -73,7 +73,8 @@ class InputDisplay(unittest.TestCase):
             {"contacts": [contact(0, "move", 0.2, 0.5), contact(1, "down", 0.8, 0.5)]}
         )
         self.assertEqual(two[0]["action"], 16)
-        self.assertEqual([c["action"] for c in two[1]["touches"]], [1, 1])
+        self.assertEqual([c["action"] for c in two[1]["touches"]], [1, 0])
+        self.assertEqual([c["action"] for c in two[2]["touches"]], [2, 1])
         moved = r.feed(
             {"contacts": [contact(0, "move", 0.1, 0.5), contact(1, "move", 0.9, 0.5)]}
         )
@@ -87,6 +88,17 @@ class InputDisplay(unittest.TestCase):
         self.assertEqual([c["action"] for c in cancel[0]["touches"]], [0, 0])
         self.assertEqual(r.cancel(), [])
         self.assertEqual(r.feed({"contacts": [contact(1, "down")]})[0]["action"], 14)
+
+    def test_simultaneous_contacts_are_started_in_order(self):
+        r = module.TouchRouter()
+        messages = r.feed(
+            {"contacts": [contact(0, "down", 0.2, 0.5), contact(1, "down", 0.8, 0.5)]}
+        )
+        self.assertEqual(len(messages), 2)
+        self.assertEqual([c["action"] for c in messages[0]["touches"]], [1, 0])
+        self.assertEqual([c["action"] for c in messages[1]["touches"]], [2, 1])
+        self.assertFalse(messages[0]["_motion"])
+        self.assertFalse(messages[1]["_motion"])
 
     def test_zero_contact_packet_releases_single(self):
         r = module.TouchRouter()

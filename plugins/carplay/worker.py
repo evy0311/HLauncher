@@ -14,6 +14,8 @@ def main():
     last_status = -1
     heartbeat = 0
     last_video = None
+    published_frames = 0
+    slot_backpressure = 0
     try:
         while True:
             while message := client.receive(0):
@@ -41,10 +43,20 @@ def main():
             if active and frame is not None and version != last_frame:
                 if client.present(frame):
                     last_frame = version
+                    published_frames += 1
+                else:
+                    slot_backpressure += 1
             if time.monotonic() - heartbeat > 2:
-                client.send(type="health")
+                client.send(
+                    type="health",
+                    metrics=dict(
+                        backend.metrics(),
+                        published_frames=published_frames,
+                        slot_backpressure=slot_backpressure,
+                    ),
+                )
                 heartbeat = time.monotonic()
-            time.sleep(0.005)
+            time.sleep(0.001 if active else 0.02)
     except (EOFError, BrokenPipeError, ConnectionResetError):
         pass
     finally:

@@ -23,3 +23,7 @@ For a stutter report, compare these counters during a continuous swipe test:
 - `display_pageflips`: completed synchronized flips and pending frames replaced before presentation.
 
 Compare differences between samples over the same active interval, not cumulative totals from different sessions. Large input gaps can precede the Pi decoder; long decode times identify Pi processing; publication or presentation counters identify later losses. A single idle CPU snapshot cannot establish performance during an animation.
+
+The ordered-start experiment did not fix simultaneous-finger behavior. Review found that the legacy-to-multitouch transition emitted a synthetic first-finger release, which could turn a short first contact into a tap. The next change uses one continuous `SendMultiTouch` stream for both single-finger and two-finger input; adding the second pointer emits first-pointer Move plus second-pointer Down, without an intervening Up.
+
+The owner confirmed that normal taps, swipes and pinches with both fingers placed together all worked after the continuous-contact change. The lower polling delays also made page swipes feel somewhat smoother. Recent timing samples showed roughly 40–56 incoming video packets per second, 50–76ms maximum packet gaps in some windows, and around 10ms mean decode time. All decoded frames reached the core without plugin backpressure or superseded host frames in those samples. These measurements do not establish a hard dongle limit or promise a constant 60fps.

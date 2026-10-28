@@ -68,13 +68,13 @@ class InputDisplay(unittest.TestCase):
     def test_single_to_pinch_and_one_finger_release_preserves_ids(self):
         r = module.TouchRouter()
         one = r.feed({"contacts": [contact(0, "down", 0.2, 0.5)]})
-        self.assertEqual(one[0]["action"], 14)
+        self.assertEqual([c["action"] for c in one[0]["touches"]], [1, 0])
         two = r.feed(
             {"contacts": [contact(0, "move", 0.2, 0.5), contact(1, "down", 0.8, 0.5)]}
         )
-        self.assertEqual(two[0]["action"], 16)
-        self.assertEqual([c["action"] for c in two[1]["touches"]], [1, 0])
-        self.assertEqual([c["action"] for c in two[2]["touches"]], [2, 1])
+        self.assertEqual(len(two), 1)
+        self.assertEqual(two[0]["type"], "multitouch")
+        self.assertEqual([c["action"] for c in two[0]["touches"]], [2, 1])
         moved = r.feed(
             {"contacts": [contact(0, "move", 0.1, 0.5), contact(1, "move", 0.9, 0.5)]}
         )
@@ -87,7 +87,13 @@ class InputDisplay(unittest.TestCase):
         cancel = r.cancel()
         self.assertEqual([c["action"] for c in cancel[0]["touches"]], [0, 0])
         self.assertEqual(r.cancel(), [])
-        self.assertEqual(r.feed({"contacts": [contact(1, "down")]})[0]["action"], 14)
+        self.assertEqual(
+            [
+                c["action"]
+                for c in r.feed({"contacts": [contact(1, "down")]})[0]["touches"]
+            ],
+            [0, 1],
+        )
 
     def test_simultaneous_contacts_are_started_in_order(self):
         r = module.TouchRouter()
@@ -103,7 +109,9 @@ class InputDisplay(unittest.TestCase):
     def test_zero_contact_packet_releases_single(self):
         r = module.TouchRouter()
         r.feed({"contacts": [contact(0, "down")]})
-        self.assertEqual(r.feed({"contacts": []})[0]["action"], 16)
+        self.assertEqual(
+            [c["action"] for c in r.feed({"contacts": []})[0]["touches"]], [0, 0]
+        )
         self.assertEqual(r.feed({"contacts": []}), [])
 
     def test_drm_abi_sizes(self):

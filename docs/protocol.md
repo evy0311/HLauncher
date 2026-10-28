@@ -8,7 +8,7 @@ The listener registers an authenticated serial profile on RFCOMM channel 10 and 
 
 The authentication helper checks that the radio can sign a challenge using a key from its supplied certificate. It does not implement Apple certificate-chain policy validation or make the Pi a certified Apple device.
 
-Video goes over HDMI. Honda touch messages travel back over the control connection, are decoded in `hlauncher/touch.py`, and are routed either to the launcher or to the CarPlay bridge. Both Honda contact slots are retained through the plugin API. The CarPlay adapter sends single-touch press/move/release packets for one finger and switches to stable two-slot multi-touch packets for a two-finger gesture.
+Video goes over HDMI. Honda touch messages travel back over the control connection, are decoded in `hlauncher/touch.py`, and are routed either to the launcher or to the CarPlay bridge. Both Honda contact slots are retained through the plugin API. The CarPlay adapter uses a stable two-slot multi-touch stream for both one- and two-finger gestures, retaining the first contact when the second is added.
 
 CarPlay's Honda icon produces a node-CarPlay host-UI request. The bridge exposes it as `host_ui_requested`, and the launcher returns to its home page while retaining the dongle session.
 

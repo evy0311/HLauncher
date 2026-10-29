@@ -1,5 +1,7 @@
 # OBD Gauges
 
+Confirmed working with a real BLE ELM327 connection on the project setup.
+
 Live coolant temperature (°F), oil temperature (°F), bank 1 long-term fuel trim
 (%) and mass airflow (g/s). There is no simulated data in the running plugin.
 Missing, unsupported or stale readings show a dash. When disconnected, the dials

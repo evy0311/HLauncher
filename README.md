@@ -8,7 +8,7 @@ Future experiments will focus on getting CarPlay running **natively on the head 
 
 The radio thinks the Pi is a phone running the older HondaLink app. The Pi sends video over HDMI, while Bluetooth carries the HondaLink handshake and touchscreen input. Opening HondaLink on the radio opens HLauncher. No desktop environment or radio firmware patch is required for this connection.
 
-HLauncher handles the radio connection and provides a home screen for plugins. CarPlay is the first working plugin, using a Carlinkit USB dongle and node-CarPlay.
+HLauncher handles the radio connection and provides a home screen for **plugins**. Working plugins now include **CarPlay**, **Android Auto** and **live OBD gauges**. You can enable the apps you want, choose a default, and add your own plugins without rebuilding the launcher.
 
 ## Current state
 
@@ -21,6 +21,9 @@ What has been tested:
 - Enabling/disabling installed plugins and saving a default startup app.
 - CarPlay video, taps and swipes through a Carlinkit dongle connected directly to the Pi.
 - Returning to HLauncher with the Honda icon inside CarPlay.
+- Android Auto through OpenAuto, with the Android phone connected directly to the Pi over USB.
+- Live OBD gauges over a Bluetooth LE ELM327 adapter: coolant temperature, oil temperature, long-term fuel trim and MAF, where supported by the vehicle.
+- Installing and managing plugins independently of the launcher.
 - HDMI output without a Linux desktop or login cursor over the app.
 
 The touch path now retains both contacts through the plugin API, and the CarPlay bridge forwards two-finger gestures using node-CarPlay's multi-touch messages. Normal taps, swipes and Maps pinch-to-zoom—including placing both fingers together—were confirmed on the bench. Display presentation uses offscreen buffers and synchronized DRM page flips; the owner confirmed the previous horizontal tearing was gone. See the [plugin API](docs/plugins.md) and [display setup](docs/setup.md#hdmi) for details.
@@ -30,10 +33,13 @@ CarPlay requests **60fps**. That is the requested stream rate, not a guarantee f
 What is still missing:
 
 - **Microphone forwarding.** CarPlay output audio now has an HDMI playback path; audible playback inside HondaLink still needs hardware confirmation. Microphone input is not forwarded to CarPlay.
-- **Android Auto video/session completion.** The experimental OpenAuto plugin now gets past the phone's compatibility error and reaches initial setup; on-screen video still needs confirmation. This development build hard-codes a parked state for bench testing. See [Android Auto limits](plugins/android-auto/README.md#bench-parking-state).
-- **OBD hardware validation.** BLE discovery, connection handling and live-data decoding are implemented, but the real adapter/vehicle connection still needs testing. Gauges show no simulated values.
 - A microphone test page in the new launcher. Earlier experiments received microphone PCM through Bluetooth HFP, but the radio required a hands-free call state. The core retains capture support; CarPlay does not use it yet.
 - Verification on other Honda radios, Pi models and OS releases.
+
+Android Auto and live OBD gauges are now confirmed working on the project setup.
+Android Auto's current build still hard-codes a parked state for bench testing;
+see [bench parking state](plugins/android-auto/README.md#bench-parking-state).
+OBD sensor availability depends on what the vehicle and adapter expose.
 
 ## Hardware
 
@@ -42,7 +48,9 @@ What is still missing:
 - A HondaLink radio with HDMI input and the older phone-app integration.
 - Micro-HDMI-to-HDMI connection from the Pi to the radio.
 - Bluetooth pairing between the Pi and HandsFreeLink.
-- A compatible Carlinkit USB dongle for the CarPlay plugin, plus an iPhone.
+- For CarPlay: a compatible Carlinkit USB dongle and an iPhone.
+- For Android Auto: an Android phone connected directly to a Pi USB host port.
+- For OBD Gauges: a compatible Bluetooth LE ELM327 adapter.
 - Suitable power for the Pi.
 
 Connect the display to the Pi 4's **HDMI0** port, nearest USB-C power. The Carlinkit dongle plugs into a **Pi USB host port**. HLauncher does not need a USB data connection from the Pi to the radio. USB/IP and VirtualHere are not needed for this setup.
@@ -111,7 +119,15 @@ Launcher is the initial default. Disabling the selected default plugin resets it
 
 ## Plugins
 
-Bundled plugins live in `plugins/`. CarPlay, Android Auto and OBD Gauges are included and enabled initially. Android Auto needs the optional engine build, and OBD Gauges needs a compatible BLE ELM327 connection. You can install an external plugin from a local folder or Git repository, or submit one as a pull request to include it here.
+Plugins are separate apps shown as tiles on the launcher. The bundled plugins live in `plugins/`:
+
+| Plugin | What it does | Connection |
+| --- | --- | --- |
+| CarPlay | iPhone projection using node-CarPlay | Carlinkit USB dongle |
+| Android Auto | Android phone projection using OpenAuto | Phone connected directly over USB |
+| OBD Gauges | Live coolant/oil temperature, long-term fuel trim and MAF readings | Bluetooth LE ELM327 adapter |
+
+All three are working and included in the default plugin catalog. Android Auto needs the optional engine build, and OBD Gauges needs a compatible BLE ELM327 connection. You can install an external plugin from a local folder or Git repository, or submit one as a pull request to include it here.
 
 ```bash
 cd /opt/hlauncher
@@ -144,7 +160,7 @@ If the radio cannot open HondaLink, check Bluetooth pairing, `/etc/hlauncher.env
 
 - `hlauncher/` — launcher, Settings, radio protocol, display, touch and audio broker.
 - `plugins/carplay/` — CarPlay worker and Node USB bridge.
-- `plugins/android-auto/` — experimental OpenAuto adapter and plugin worker.
+- `plugins/android-auto/` — OpenAuto adapter and Android Auto plugin worker.
 - `plugins/obd/` — live BLE ELM327 gauges with radio-first connection management.
 - `sdk/hlauncher_sdk/` — plugin control transport and shared frame buffers.
 - `bluetooth/` — background reconnect support.
@@ -167,7 +183,7 @@ The FFmpeg decoder helper is by **[rsyrnicki](https://github.com/rsyrnicki)** an
 
 HLauncher is GPL-3.0, with preservation of the original author attribution under GPLv3 section 7(b). HLauncher and its HondaLink reverse engineering are by **Evan Horsley (evy0311)**. Distributions using that original code must retain the notices in [NOTICE](NOTICE); third-party credits remain separate. This is an independent project, not affiliated with Honda, Apple or Carlinkit. No Honda firmware images, proprietary radio assets, pairing keys or device captures are included.
 
-### Android Auto (experimental)
+### Android Auto
 
 The **Android Auto** plugin uses OpenAuto directly with an Android phone connected
 to the Pi's USB port; a Carlinkit dongle is not needed. HLauncher continues to own
@@ -206,5 +222,5 @@ The font license is in `sdk/hlauncher_sdk/assets/fonts/OFL.txt`.
 OBD connection setup is under **Settings > OBD Gauges > Scan**.
 The plugin uses live data only; unavailable sensors show a dash. See
 [OBD Gauges](plugins/obd/README.md) for supported BLE transports, connection
-priority and logs. BLE hardware/vehicle compatibility still needs testing with
-your adapter.
+priority and logs. The live connection is working on the project setup; other
+adapters and vehicles may expose different BLE services or supported readings.

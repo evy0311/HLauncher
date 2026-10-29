@@ -3,7 +3,7 @@
 A wired Android Auto plugin using OpenAuto and aasdk. Connect the Android phone
 directly to a USB host port on the Pi; no Carlinkit dongle is involved. The Pi's
 HDMI output and HondaLink Bluetooth control connection remain the same as for
-CarPlay. This first integration is experimental until tested with a real phone.
+CarPlay. Android Auto is confirmed working on the project setup.
 
 ## Install the engine
 
@@ -81,7 +81,7 @@ adds OpenAuto's microphone source and a small session sensor service (seven
 unique channels total). It does not start an HFP call or reconfigure Bluetooth.
 `--check-services` constructs the actual service factory without USB/Bluetooth,
 and verifies unique IDs, microphone format, sensor types, video/audio and touch
-geometry. Actual phone acceptance remains a hardware test.
+geometry. The owner subsequently confirmed Android Auto working on the project setup.
 
 ## Bench parking state
 

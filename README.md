@@ -224,3 +224,12 @@ The plugin uses live data only; unavailable sensors show a dash. See
 [OBD Gauges](plugins/obd/README.md) for supported BLE transports, connection
 priority and logs. The live connection is working on the project setup; other
 adapters and vehicles may expose different BLE services or supported readings.
+
+## Disclaimer
+
+HLauncher is an independent community project, not an official Honda product or
+endorsed by Honda, Apple or Google. Using the radio's existing HondaLink connection
+does not mean this software has been tested or approved by those companies.
+It is provided **as is, without warranty**, under the terms of the [license](LICENSE).
+Use it at your own risk, verify compatibility with your setup, and perform setup
+and testing while parked. Do not rely on it for safety-critical vehicle functions.

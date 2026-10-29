@@ -34,6 +34,8 @@ def main():
                         backend.set_visible(False)
                 elif kind == "touch" and active:
                     backend.touch(message)
+                elif kind == "radio.button":
+                    print(json.dumps(dict(state="radio_button_received", **message)), flush=True)
                 elif kind == "host.stop":
                     return
             if backend.take_host_ui_request():

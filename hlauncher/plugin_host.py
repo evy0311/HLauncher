@@ -290,6 +290,19 @@ class PluginHost:
                 if not worker.send(type="touch", **touch):
                     self.failed(worker.manifest.id, "Input queue full")
 
+    def button(self, message):
+        # Exactly one recipient: foreground if capable, otherwise one background
+        # projection app. Never send a call command to two phone connections.
+        candidates = [self.workers.get(self.active)]
+        candidates += [w for key,w in self.workers.items() if key != self.active and
+                       w.background_enabled and w.manifest.id in ('carplay','android-auto')]
+        for worker in candidates:
+            if worker and 'input.buttons' in worker.manifest.capabilities:
+                if worker.send(type='radio.button', **message):
+                    self.event(state='radio_button_forwarded', plugin=worker.manifest.id,
+                               sequence=message['sequence'])
+                return
+
     def failed(self, plugin_id, error):
         foreground = self.active == plugin_id
         self.event(state="plugin_failed", plugin=plugin_id, error=str(error))

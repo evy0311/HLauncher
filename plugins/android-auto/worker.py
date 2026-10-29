@@ -142,6 +142,7 @@ def main():
                         engine.start();started=True
                 elif kind=='host.deactivate':
                     active=False;engine.visible.clear();engine.touch({'contacts':[]})
+                elif kind=='radio.button':print(json.dumps(dict(state='radio_button_received',**message)),flush=True)
                 elif kind=='host.stop':return
                 elif kind=='touch.cancel':engine.touch({'contacts':[]})
                 elif kind=='touch' and active:engine.touch(message)

@@ -1,6 +1,6 @@
 # Plugins
 
-Settings belongs to the launcher. Everything else is an installed plugin. CarPlay ships in `plugins/carplay`, and the simulated OBD Gauges demo ships in `plugins/obd`. Android Auto has not been implemented.
+Settings belongs to the launcher. CarPlay, Android Auto and live BLE OBD Gauges ship as plugins under `plugins/`.
 
 ## Install a plugin
 
@@ -157,3 +157,39 @@ revisions. Keep upstream trees out of plugin commits; commit the dependency pin,
 build instructions, required legal notices, and narrowly scoped patches instead.
 Android Auto's native service adapter is in `plugins/android-auto/native`; it
 owns USB projection only, and does not own Bluetooth or HDMI.
+
+## Hands-free button events
+
+Add `input.buttons` to a manifest to receive `radio.button` messages through
+`Client.receive()`. The launcher passively watches the paired radio's Linux input
+device (when exposed) and received BlueALSA HFP debug messages. It never grabs an
+input device, opens the RFCOMM AT dispatch socket, changes Bluetooth profiles, or
+simulates a call. Journal messages without peer identity are accepted only while
+BlueALSA exposes exactly one RFCOMM transport and it belongs to the configured
+radio. Debug logging must be available for that fallback; otherwise the UI says
+it is waiting for an input source.
+
+```json
+{"type":"radio.button","button":"voice_assistant","action":"activate",
+ "source":"hfp-command","sequence":12,"monotonic":1234.5}
+```
+
+`button` is `answer` (also dial/redial), `hang_up`, or `voice_assistant`.
+Linux keys have `down`, `repeat`, and `up` actions. HFP answer/hang-up commands
+produce `trigger`; voice activation produces `activate` or `deactivate`.
+**HFP commands are not physical button-down/up notifications.** A short received
+pulse in diagnostics does not claim the user is still holding the button.
+Dialed numbers are not included. Some radio states may consume a button locally
+without sending a command; this needs testing on the actual unit.
+
+Exactly one capable plugin receives an event: the foreground plugin, or otherwise
+one running background projection plugin. CarPlay and Android Auto currently
+receive and log these messages but deliberately do not answer calls or activate
+a phone assistant yet. Their worker log uses `radio_button_received`; the host
+logs `radio_button` and `radio_button_forwarded` with matching sequence numbers.
+
+Settings → System diagnostics → Hardware tests provides HDMI stereo tones,
+color bars plus black/white steps, and two-contact touch / hands-free input tests.
+Tones last one second, stop on leaving the page or losing the radio session, and
+share the existing PCM mixer. Tests do not change the HDMI range or microphone
+call state. Saved system reports include recent sanitized button events.

@@ -5,6 +5,8 @@ import time
 from PIL import Image, ImageDraw, ImageEnhance, ImageFilter
 from sdk.hlauncher_sdk.fonts import font as ui_font
 from . import __version__
+from .debug_tools import InputMonitor, ToneTest
+from .config import RADIO_ADDRESS
 from .diagnostics import Diagnostics, power_status
 from .obd import ObdManager
 from .audio import AudioBroker
@@ -44,6 +46,11 @@ class Launcher:
             background_allowed=self.prefs.background_enabled,
         )
         self.diagnostics = Diagnostics()
+        self.inputs = InputMonitor(event, RADIO_ADDRESS)
+        self.inputs.start()
+        self.tone_test = ToneTest(self.audio.playback)
+        self.debug_touch = {}
+        self.debug_redraw = 0
         self.obd = ObdManager(event)
         self.obd_page = 0
         self.obd_revision = -1
@@ -100,6 +107,7 @@ class Launcher:
 
     def home(self, message=""):
         self.diagnostics.stop()
+        self.tone_test.stop()
         self.restore_hdmi_range()
         self.host.deactivate()
         self.mode = "home"
@@ -151,6 +159,7 @@ class Launcher:
         self.draw()
 
     def system_diagnostics(self):
+        self.tone_test.stop()
         self.host.deactivate()
         self.mode = 'diagnostics'
         self.press = None
@@ -159,13 +168,21 @@ class Launcher:
         self.diagnostics.start()
         self.draw()
 
+    def debug_tools(self, page='menu'):
+        self.tone_test.stop()
+        self.host.deactivate()
+        self.mode = 'debug_'+page
+        self.press = self.pressed_box = None
+        self.debug_touch = {}
+        self.draw()
+
     def diagnostic_runtime(self):
         playback = self.audio.playback
         with playback.condition:
             streams = len(playback.streams)
             queued = sum(stream.queued for stream in playback.streams.values())
             dropped = sum(stream.dropped for stream in playback.streams.values())
-        return dict(version=__version__, session=dict(self.host.session),
+        return dict(inputs=dict(status=self.inputs.status, buttons=self.inputs.buttons, recent=list(self.inputs.history)), version=__version__, session=dict(self.host.session),
                     display=dict(width=self.fb.w,height=self.fb.h,
                                  backend='DRM' if getattr(self.fb,'kms',None) else 'Framebuffer'),
                     audio=dict(route='HDMI',streams=streams,queued_bytes=queued,
@@ -370,12 +387,12 @@ class Launcher:
             ImageDraw.Draw(overlay).rounded_rectangle(
                 bounds, radius=13, outline=(*edge,190), width=2)
             image.paste(overlay, (left-pad, top-pad), overlay)
-        self.fb.image(dither_rgb565(image) if self.mode != "hdmi_test" else image)
+        self.fb.image(dither_rgb565(image) if self.mode not in ("hdmi_test", "debug_colors") else image)
 
     def draw(self):
         w, h = self.fb.w, self.fb.h
         tile_color = TILE_COLORS[self.prefs.data["tile_color"]]
-        image = draw_background(w, h, tile_color) if self.mode != "hdmi_test" else Image.new("RGB", (w, h), "#080c14")
+        image = draw_background(w, h, tile_color) if self.mode not in ("hdmi_test", "debug_colors") else Image.new("RGB", (w, h), "#080c14")
         d = ImageDraw.Draw(image)
         self.actions = []
         if self.mode == "home":
@@ -566,9 +583,12 @@ class Launcher:
                 while value_size>12 and d.textlength(value,font=self.font(value_size))>w-250:value_size-=1
                 d.text((225,y),value,font=self.font(value_size),fill='white')
                 d.line((24,y+33,w-24,y+33),fill='#26313d')
-            self.button(d,(24,h-77,222,h-32),'Save report',lambda:self.diagnostics.save_report(self.diagnostic_runtime()),size=17)
-            self.button(d,(w-225,h-77,w-24,h-32),'System  ›' if self.diagnostic_page==0 else '‹  Connections',self.change_diagnostic_page,size=17)
+            self.button(d,(24,h-77,200,h-32),'Save report',lambda:self.diagnostics.save_report(self.diagnostic_runtime()),size=17)
+            self.button(d,(214,h-77,414,h-32),'Hardware tests',self.debug_tools,size=17)
+            self.button(d,(w-285,h-77,w-24,h-32),'System  ›' if self.diagnostic_page==0 else '‹  Connections',self.change_diagnostic_page,size=17)
             if report_status:d.text((24,h-23),report_status,font=self.font(13),fill='#a3b2c0')
+        elif self.mode.startswith('debug_'):
+            self.draw_debug(d, w, h)
         elif self.mode == 'tile_colors':
             self.button(d, (16,14,110,56), 'Back', self.settings)
             d.text((150,20), 'Tile color', font=self.font(27), fill='white')
@@ -644,6 +664,59 @@ class Launcher:
                 d.text((w/2,286+i*29), line.strip(), font=self.font(18), fill='#d2dce5', anchor='mt')
         self.present_ui(image)
 
+    def draw_debug(self, d, w, h):
+        page = self.mode[6:]
+        self.button(d,(16,14,134,56),'Back',self.system_diagnostics if page=='menu' else self.debug_tools)
+        d.text((150,20),{'menu':'Hardware tests','audio':'Audio test','colors':'Video colors','inputs':'Touch & hands-free'}.get(page,page),font=self.font(24),fill='white')
+        if page == 'menu':
+            for i,(name,detail,target) in enumerate((
+                ('Audio','Short left / right / stereo HDMI tones','audio'),
+                ('Video colors','Color bars and dark / light steps','colors'),
+                ('Touch & hands-free','Touch contacts and received car commands','inputs'))):
+                self.menu_row(d,(24,90+i*100,w-24,172+i*100),name,detail,lambda target=target:self.debug_tools(target))
+        elif page == 'audio':
+            d.text((24,100),'Plays a one-second 440 Hz tone through HDMI.',font=self.font(20),fill='white')
+            d.text((24,140),'Use the radio volume control to check the output.',font=self.font(17),fill='#b4bdc8')
+            for i,label in enumerate(('Left','Right','Stereo')):
+                x=24+i*((w-48)//3)
+                self.button(d,(x,205,x+(w-48)//3-12,266),label,lambda c=label:self.tone_test.start(c))
+            self.button(d,(24,300,220,355),'Stop',self.tone_test.stop)
+            status = self.tone_test.error or ('Playing '+self.tone_test.channel if self.tone_test.until else 'Ready')
+            d.text((24,390),status,font=self.font(22),fill='white')
+        elif page == 'colors':
+            colors=('#ffffff','#ffff00','#00ffff','#00ff00','#ff00ff','#ff0000','#0000ff','#000000')
+            for i,color in enumerate(colors):
+                x=24+i*(w-48)//8; right=24+(i+1)*(w-48)//8
+                d.rectangle((x,92,right,270),fill=color)
+            for y,values in ((300,(0,4,8,12,16,20,24,32)),(375,(223,231,239,243,247,251,253,255))):
+                for i,value in enumerate(values):
+                    x=24+i*(w-48)//8; right=24+(i+1)*(w-48)//8
+                    d.rectangle((x,y,right,y+42),fill=(value,)*3)
+                    d.text(((x+right)//2,y+45),str(value),font=self.font(14),fill='white',anchor='mt')
+        elif page == 'inputs':
+            now=time.monotonic()
+            for i,(name,label) in enumerate((('answer','Dial / Answer'),('hang_up','Hang up'),('voice_assistant','Voice assistant'))):
+                state=self.inputs.buttons[name]; recent=state['count'] and now-state['at']<.7
+                x=24+i*((w-48)//3); right=x+(w-48)//3-10
+                button_surface(d,(x,83,right,156),'#536c60' if recent or state['held'] else '#26313d')
+                d.text(((x+right)//2,94),label,font=self.font(17),fill='white',anchor='mt')
+                text='Held' if state['held'] else ('Received' if recent else 'Idle')
+                d.text(((x+right)//2,125),text,font=self.font(15),fill='white',anchor='mt')
+            d.text((24,174),self.inputs.status[:84],font=self.font(13),fill='#b4bdc8')
+            d.text((24,198),'Commands flash briefly; only key events have a held state.',font=self.font(14),fill='white')
+            d.rectangle((24,232,w-24,h-62),outline='#71808b',width=2)
+            d.text((w//2,240),'Touch area · two contacts',font=self.font(17),fill='white',anchor='mt')
+            for slot,contact in self.debug_touch.items():
+                if contact.get('has_position'):
+                    x,y=contact['x_px'],contact['y_px'];color=('#65c9ff','#ffc56e')[slot%2]
+                    d.ellipse((x-25,y-25,x+25,y+25),outline=color,width=4)
+            if self.debug_touch:
+                text='  '.join(f"{slot+1}: {c['action']} ({c.get('x_px')}, {c.get('y_px')})" for slot,c in self.debug_touch.items())
+                d.text((24,h-47),text,font=self.font(14),fill='white')
+            if self.inputs.history:
+                last=self.inputs.history[0]
+                d.text((24,h-24),f"Last: {last['button']} / {last['action']} / {last['source']}",font=self.font(13),fill='#b4bdc8')
+
     def change_page(self, delta):
         count = math.ceil(len(self.enabled()) / 5)
         self.page = (self.page + delta) % max(1, count)
@@ -656,6 +729,8 @@ class Launcher:
 
     def update(self, touch):
         touch = for_viewport(touch, self.fb.w, self.fb.h)
+        if self.mode == 'debug_inputs':
+            self.debug_touch = {c['slot']: c for c in touch.get('contacts', [])}
         primary = touch.get("contacts", [])
         primary = primary[0] if primary else {"action": "unused", "has_position": False}
         point = pixels(primary, self.fb.w, self.fb.h)
@@ -699,9 +774,15 @@ class Launcher:
             self.home()
 
     def tick(self):
+        for button in self.inputs.drain():
+            self.host.button(button)
+        self.tone_test.tick()
         self.host.tick()
         self.obd.tick(self.host.session)
         now = time.monotonic()
+        if self.mode in ('debug_inputs','debug_audio') and now-self.debug_redraw >= .05:
+            self.debug_redraw = now
+            self.draw()
         if self.mode == "obd_settings" and self.obd.revision != self.obd_revision:self.draw()
         if self.mode == 'diagnostics':
             _, revision, _ = self.diagnostics.snapshot()
@@ -745,6 +826,8 @@ class Launcher:
                     self.draw()
 
     def close(self):
+        self.inputs.close()
+        self.tone_test.stop()
         self.diagnostics.stop()
         self.obd.close()
         self.host.close()

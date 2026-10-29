@@ -12,7 +12,8 @@
     "session",
     "audio.status",
     "audio.playback",
-    "media.publish"
+    "media.publish",
+    "input.buttons"
   ],
   "default_enabled": true,
   "keep_alive": true,

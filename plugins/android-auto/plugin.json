@@ -2,8 +2,18 @@
   "api_version": 1,
   "id": "android-auto",
   "name": "Android Auto",
-  "entrypoint": ["python3", "worker.py"],
-  "capabilities": ["display", "touch", "session", "audio.status", "audio.playback"],
+  "entrypoint": [
+    "python3",
+    "worker.py"
+  ],
+  "capabilities": [
+    "display",
+    "touch",
+    "session",
+    "audio.status",
+    "audio.playback",
+    "input.buttons"
+  ],
   "default_enabled": true,
   "keep_alive": true,
   "color": "#19706b"

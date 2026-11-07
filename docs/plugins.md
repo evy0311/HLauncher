@@ -158,38 +158,59 @@ build instructions, required legal notices, and narrowly scoped patches instead.
 Android Auto's native service adapter is in `plugins/android-auto/native`; it
 owns USB projection only, and does not own Bluetooth or HDMI.
 
-## Hands-free button events
+## Radio button events
 
-Add `input.buttons` to a manifest to receive `radio.button` messages through
-`Client.receive()`. The launcher passively watches the paired radio's Linux input
-device (when exposed) and received BlueALSA HFP debug messages. It never grabs an
-input device, opens the RFCOMM AT dispatch socket, changes Bluetooth profiles, or
-simulates a call. Journal messages without peer identity are accepted only while
-BlueALSA exposes exactly one RFCOMM transport and it belongs to the configured
-radio. Debug logging must be available for that fallback; otherwise the UI says
-it is waiting for an input source.
+Plugins with `input.buttons` explicitly request controls with
+`client.subscribe_buttons(['next', 'previous', 'voice_assistant'])`, or the
+equivalent `input.buttons.subscribe` message with a `buttons` array. An empty
+array unsubscribes; a new valid list replaces the previous one. Subscriptions
+belong to a worker instance and disappear when it stops. The capability alone
+does not subscribe a plugin. CarPlay is the initial subscriber; Android Auto
+button forwarding is not enabled by this contract yet.
 
-```json
-{"type":"radio.button","button":"voice_assistant","action":"activate",
- "source":"hfp-command","sequence":12,"monotonic":1234.5}
-```
+Subscribed plugins receive `radio.button` with `button`, `action`,
+`source`, `sequence` and monotonic time. Buttons include `next`, `previous`,
+`play_pause`, `play`, `pause`, `stop`, `answer`, `hang_up` and `voice_assistant`.
+Actions are down/up/repeat or trigger/activate/deactivate. All edges are delivered;
+plugins must not retrigger commands on release or repeat. Exactly one ready
+subscriber is selected: foreground first, then a running background subscriber.
+A held press and its release retain the same destination across foreground changes.
+Bluetooth events include `input_epoch`; transport changes advance it so a lost
+release during disconnection cannot leave a control held after reconnection.
+Call commands are never broadcast to two
+phones. Plugins return `radio.button.result` with button, sequence and a result;
+the host accepts it only from the selected destination with matching button and
+sequence. Set `final: false` for an intermediate queue acknowledgement, then send
+a final result after USB submission. Outstanding results time out after three
+seconds; a late result cannot replace a newer command's status. Release feedback
+is logged without overwriting the press's displayed result. Queue-full errors
+never fall through to another phone. Commands are not replayed on reconnection.
 
-`button` is `answer` (also dial/redial), `hang_up`, or `voice_assistant`.
-Linux keys have `down`, `repeat`, and `up` actions. HFP answer/hang-up commands
-produce `trigger`; voice activation produces `activate` or `deactivate`.
-**HFP commands are not physical button-down/up notifications.** A short received
-pulse in diagnostics does not claim the user is still holding the button.
-Dialed numbers are not included. Some radio states may consume a button locally
-without sending a command; this needs testing on the actual unit.
+CarPlay subscribes to all nine supported names above. Its `stop` is a pause;
+voice activate/down/trigger sends one `siri` command. Voice deactivate only clears
+held state: the pinned dongle API has no outgoing Siri release command. Dial and
+redial can be observed by diagnostics but CarPlay does not subscribe to them.
+USB success means the adapter accepted the transfer, not that the phone acted.
 
-Exactly one capable plugin receives an event: the foreground plugin, or otherwise
-one running background projection plugin. CarPlay and Android Auto currently
-receive and log these messages but deliberately do not answer calls or activate
-a phone assistant yet. Their worker log uses `radio_button_received`; the host
-logs `radio_button` and `radio_button_forwarded` with matching sequence numbers.
+See [Radio controls](radio-buttons.md) for transport details, installation and
+hardware checks. Hardware tests provides audio, color and live button pages.
 
-Settings → System diagnostics → Hardware tests provides HDMI stereo tones,
-color bars plus black/white steps, and two-contact touch / hands-free input tests.
-Tones last one second, stop on leaving the page or losing the radio session, and
-share the existing PCM mixer. Tests do not change the HDMI range or microphone
-call state. Saved system reports include recent sanitized button events.
+### Projection voice and microphone
+
+`projection.voice` permits `projection.voice` messages with a `fields` object
+containing the boolean fields `call_audio`, `siri` and `recording`. These represent
+actual projection transport events; refresh at least every two seconds while
+running. Only the selected audio source reaches the HFP controller. A five-second
+producer lease and six-second exported-state lease prevent stale call state.
+Caller identity, call direction and ringing are not inferred from audio events.
+
+A plugin with `audio.capture` can request `audio.capture.start` with
+`sample_rate: 16000` for mono S16LE microphone PCM, delivered through `audio.format`
+and `audio.pcm`. Capture follows audio-source ownership and may continue for an
+enabled background plugin. `audio.capture.stop` releases capture only.
+
+Use `client.playback(pcm, rate, channels, stream, voice=True)` for a stream identified
+by the projection engine as call/Siri output. This uses a separate bounded PCM
+path and voice route; ordinary playback continues to use HDMI. Send
+`audio.voice.stop` when the voice stream ends. CarPlay maps its explicit audio
+control stream IDs and microphone start/stop commands to this contract.

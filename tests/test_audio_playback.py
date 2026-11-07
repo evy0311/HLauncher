@@ -1,4 +1,5 @@
 import struct
+import tempfile
 import sys
 import unittest
 from pathlib import Path
@@ -44,16 +45,44 @@ class AudioPlayback(unittest.TestCase):
         self.assertLessEqual(stream.queued, stream.limit)
         self.assertGreater(stream.dropped, 0)
 
-    def test_resampling_and_simultaneous_prompt_mixing(self):
-        try:
-            import audioop
-        except ImportError:
-            self.skipTest('audioop mixer runs on supported Pi Python 3.11')
+    def test_float_mixing_keeps_unity_and_does_not_clip_or_normalize(self):
+        import numpy as np
         output = Playback(lambda **v: None, start_worker=False)
-        output.feed('carplay', dict(sample_rate=16000, channels=1, stream=1,
-            pcm=struct.pack('<h', 1000)*320))
-        output.feed('carplay', dict(sample_rate=44100, channels=2, stream=2,
-            pcm=struct.pack('<h', 2000)*1764))
-        mixed = output.mix(audioop)
-        self.assertEqual(len(mixed), 3840)
-        self.assertEqual(struct.unpack('<1800h',mixed[:3600]), (3000,)*1800)
+        for stream in (1,2):
+            output.feed('carplay', dict(sample_rate=48000, channels=2, stream=stream,
+                pcm=struct.pack('<h', 24576)*1920))
+        mixed = np.frombuffer(output.mix(), dtype='<f4')
+        self.assertEqual(len(mixed), 1920)
+        np.testing.assert_array_equal(mixed, np.full(1920, 1.5, dtype=np.float32))
+        self.assertEqual(output.clip_samples,1920)
+        for stream in output.streams.values():
+            self.assertEqual(stream.source_peak,.75)
+            self.assertEqual(stream.converted_peak,.75)
+            self.assertEqual(stream.source_full_scale_samples,0)
+
+    def test_idle_flush_preserves_resampler_tail_and_restarts_after_a_gap(self):
+        import numpy as np
+        output=Playback(lambda **v:None,start_worker=False)
+        pcm=np.full((4410,2),3277,dtype='<i2').tobytes()
+        message=dict(sample_rate=44100,channels=2,stream=1,pcm=pcm)
+        output.feed('tail',message)
+        blocks=[]
+        while (mixed:=output.mix()) is not None:blocks.append(mixed)
+        entry=output.streams[('tail',1)]
+        entry.last_input-=1
+        while (mixed:=output.mix()) is not None:blocks.append(mixed)
+        self.assertEqual(sum(map(len,blocks)),4800*8)
+        self.assertIsNone(entry.resampler)
+        self.assertIsNone(output.mix())
+        output.feed('tail',message)
+        output.mix()
+        self.assertIsNotNone(entry.resampler)
+
+    def test_legacy_bluetooth_override_cannot_redirect_main_hdmi_audio(self):
+        device = 'bluealsa:DEV=11:22:33:44:55:66,PROFILE=a2dp'
+        events = []
+        with tempfile.TemporaryDirectory() as folder, patch('hlauncher.audio_settings.STATE_DIR', Path(folder)), patch.dict('os.environ', HLAUNCHER_AUDIO_DEVICE=device):
+            output = Playback(lambda **event: events.append(event), start_worker=False)
+        output.feed('carplay', dict(sample_rate=48000, channels=2, stream=1, pcm=bytes(3840)))
+        self.assertEqual(events[-1]['route'], 'hdmi')
+        self.assertEqual(events[-1]['device'], 'hlauncher_hdmi')

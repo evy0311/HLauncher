@@ -14,7 +14,11 @@ logs/
 *.pem
 *.key
 .DS_Store
+build/
 
 # Generated upstream dependencies
 .dependency-cache/
 plugins/carplay/runtime/usb/vendor/node-carplay/
+
+# Generated investigation evidence belongs outside the application repository
+artifacts/

@@ -37,7 +37,7 @@ class Engine:
     def __init__(self,client):
         self.client=client;self.lock=threading.Lock();self.lifecycle_lock=threading.Lock();self.proc=None
         self.visible=threading.Event();self.done=threading.Event()
-        self.inputs=queue.Queue(128);self.router=TouchRouter()
+        self.inputs=queue.Queue(128);self.router=TouchRouter();self.button_pending={}
         self.frame=None;self.sequence=0;self.status='Starting Android Auto';self.home=False
         self.video_packets=0;self.decoded=0;self.audio_packets=0;self.audio_dropped=0
 
@@ -66,6 +66,9 @@ class Engine:
                         self.decoded+=len(pictures)
                 elif kind==2:
                     event=json.loads(data)
+                    if event.get('state')=='button_result':
+                        with self.lock: name=self.button_pending.pop(event.get('sequence'),None)
+                        if name:self.client.send(type='radio.button.result',button=name,sequence=event.get('sequence'),result=event.get('result',''))
                     with self.lock:
                         if 'status' in event:
                             self.status=event['status']
@@ -105,6 +108,8 @@ class Engine:
         while not self.done.is_set():
             try:item=self.inputs.get(timeout=.1)
             except queue.Empty:continue
+            queued=item.pop('queued_at',None)
+            if queued is not None and time.monotonic()-queued > 1: continue
             try:
                 self.proc.stdin.write((json.dumps(item)+'\n').encode());self.proc.stdin.flush()
             except (OSError,ValueError):return
@@ -115,6 +120,19 @@ class Engine:
             except queue.Full:
                 # A session restart is safer than leaving a contact stuck down.
                 self.stop();return
+
+    def button(self, message):
+        from hlauncher_sdk.buttons import ButtonGate, ANDROID
+        if not hasattr(self, 'button_gate'): self.button_gate=ButtonGate()
+        code=self.button_gate.command(message, ANDROID)
+        if code is None: return 'Ignored release / duplicate'
+        if not self.proc or self.proc.poll() is not None: return 'Android Auto engine unavailable'
+        with self.lock:
+            self.button_pending[message.get('sequence',0)]=message['button']
+            if len(self.button_pending)>128:self.button_pending.pop(next(iter(self.button_pending)))
+        try: self.inputs.put_nowait(dict(type='button', code=code, sequence=message.get('sequence',0), queued_at=time.monotonic()))
+        except queue.Full: return 'Android Auto input queue full'
+        return 'Queued to Android Auto'
 
     def stop(self):
         with self.lifecycle_lock:
@@ -142,7 +160,10 @@ def main():
                         engine.start();started=True
                 elif kind=='host.deactivate':
                     active=False;engine.visible.clear();engine.touch({'contacts':[]})
-                elif kind=='radio.button':print(json.dumps(dict(state='radio_button_received',**message)),flush=True)
+                elif kind=='radio.button':
+                    result=engine.button(message)
+                    client.send(type='radio.button.result',button=message.get('button'),sequence=message.get('sequence'),result=result)
+                    print(json.dumps(dict(state='radio_button_received',result=result,**message)),flush=True)
                 elif kind=='host.stop':return
                 elif kind=='touch.cancel':engine.touch({'contacts':[]})
                 elif kind=='touch' and active:engine.touch(message)

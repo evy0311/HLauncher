@@ -34,6 +34,7 @@
 #include <unistd.h>
 #include <csignal>
 #include <set>
+#include <algorithm>
 
 namespace oa = f1x::openauto::autoapp;
 namespace media = aap_protobuf::service::media::sink::message;
@@ -94,7 +95,20 @@ class Input:public oa::projection::IInputDevice {
 public:
     void start(oa::projection::IInputDeviceEventHandler& h)override{std::lock_guard<std::mutex> guard(lock);handler=&h;}
     void stop()override{std::lock_guard<std::mutex> guard(lock);handler=nullptr;}
-    ButtonCodes getSupportedButtonCodes()const override{return {};}
+    ButtonCodes getSupportedButtonCodes()const override{
+      return {media::KEYCODE_CALL,media::KEYCODE_ENDCALL,media::KEYCODE_SEARCH,
+              media::KEYCODE_MEDIA_NEXT,media::KEYCODE_MEDIA_PREVIOUS,media::KEYCODE_MEDIA_PLAY_PAUSE,
+              media::KEYCODE_MEDIA_PLAY,media::KEYCODE_MEDIA_PAUSE,media::KEYCODE_MEDIA_STOP};}
+    bool button(const QJsonObject& obj){
+      auto code=static_cast<media::KeyCode>(obj["code"].toInt());
+      auto codes=getSupportedButtonCodes();
+      if(std::find(codes.begin(),codes.end(),code)==codes.end())return false;
+      std::lock_guard<std::mutex> guard(lock);
+      if(!handler)return false;
+      handler->onButtonEvent({oa::projection::ButtonEventType::PRESS,oa::projection::WheelDirection::NONE,code});
+      handler->onButtonEvent({oa::projection::ButtonEventType::RELEASE,oa::projection::WheelDirection::NONE,code});
+      return true;
+    }
     bool hasTouchscreen()const override{return true;}
     QRect getTouchscreenGeometry()const override{return QRect(0,0,800,480);}
     void touch(const QJsonObject& obj){
@@ -166,6 +180,25 @@ public:
     }
 };
 int main(int argc,char** argv){
+    if(argc>1&&std::string(argv[1])=="--check-buttons"){
+      class Capture:public oa::projection::IInputDeviceEventHandler{
+      public:
+        std::vector<oa::projection::ButtonEvent> events;
+        void onButtonEvent(const oa::projection::ButtonEvent& e)override{events.push_back(e);}
+        void onTouchEvent(const oa::projection::TouchEvent&)override{}
+      } capture;
+      Input input;bool ok=!input.button(QJsonObject{{"code",87}});input.start(capture);
+      const auto codes=input.getSupportedButtonCodes();
+      for(auto code:codes)ok=input.button(QJsonObject{{"code",int(code)}})&&ok;
+      ok=ok&&capture.events.size()==codes.size()*2;
+      for(size_t i=0;i<codes.size()&&ok;++i)
+        ok=capture.events[i*2].code==codes[i]&&capture.events[i*2+1].code==codes[i]
+          &&capture.events[i*2].type==oa::projection::ButtonEventType::PRESS
+          &&capture.events[i*2+1].type==oa::projection::ButtonEventType::RELEASE;
+      input.stop();ok=ok&&!input.button(QJsonObject{{"code",87}});
+      std::cout<<"{\"valid\":"<<(ok?"true":"false")<<",\"supported_buttons\":"<<codes.size()<<"}\n";return ok?0:1;
+    }
+
     if(argc>1&&std::string(argv[1])=="--check-driving-policy"){
       std::cout<<"{\"driving_status\":"<<SessionSensors::drivingPolicy()<<"}\n";return 0;
     }
@@ -236,6 +269,10 @@ int main(int argc,char** argv){
     out.state("Connect an Android phone to the Pi USB port");app->waitForUSBDevice();
     std::string line;while(std::getline(std::cin,line)){
       auto obj=QJsonDocument::fromJson(QByteArray::fromStdString(line)).object();
+      if(obj["type"].toString()=="button")io.post([input,obj,&out]{
+        QJsonObject ack{{"state","button_result"},{"sequence",obj["sequence"]},{"result",input->button(obj)?"Sent to Android Auto":"Android Auto input unavailable"}};
+        auto raw=QJsonDocument(ack).toJson(QJsonDocument::Compact);out.send(2,reinterpret_cast<const uint8_t*>(raw.constData()),raw.size());
+      });
       if(obj["type"].toString()=="touch")io.post([input,obj]{input->touch(obj);});
     }
     // All state belongs to this isolated process. Avoid blocking the launcher

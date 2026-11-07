@@ -59,3 +59,26 @@ If distributing binaries, include the applicable notices/licenses and provide
 corresponding source, including these patches and build instructions. Fetching
 upstream code during installation does not remove those obligations. Crankshaft
 is not installed or bundled.
+
+## SoXR, libsamplerate and PipeWire audio processing
+
+Production sample-rate conversion dynamically uses the OS-provided SoXR library
+(https://sourceforge.net/projects/soxr/), VHQ 28-bit linear-phase mode, through its
+public C API. SoXR is LGPL-2.1-or-later licensed; its source and binaries are not
+bundled here. The distribution supplies the library and its license.
+
+The benchmark reference in scripts/reference_libsamplerate.py uses the
+OS-provided BSD-2-Clause libsamplerate library
+(https://github.com/libsndfile/libsamplerate), SRC_SINC_BEST_QUALITY. It is not a
+production fallback. No upstream library source or binary is bundled here.
+NumPy and the OS-provided PipeWire/ALSA libraries retain their own licenses.
+The private EQ graph uses PipeWire's built-in biquad filters. The original native
+PCM bridge is built locally and dynamically links the OS PipeWire libraries.
+
+## BlueALSA button integration
+
+The optional button-aware daemon is built separately from BlueALSA 4.0.0
+(commit dd05a1baa261b94da9ba977b5e3392c8b4dc7a5e),
+https://github.com/arkq/bluez-alsa, licensed under MIT. Upstream source and its
+license remain under /opt/hlauncher-deps/src/bluealsa-buttons. HLauncher changes
+only configuration defaults using scripts/patch_button_audio.py.

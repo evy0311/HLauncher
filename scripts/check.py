@@ -35,6 +35,9 @@ def main():
     args = parser.parse_args()
     for module in ["PIL", "dbus", "gi", "hlauncher.config", "hlauncher.launcher"]:
         importlib.import_module(module)
+    from hlauncher.resample import Resampler
+    converter = Resampler(44100)
+    converter.close()
     runtime = ROOT / "plugins/carplay/runtime/usb"
     subprocess.run(
         ["node", "--input-type=module", "-e", "await import('usb')"],

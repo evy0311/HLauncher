@@ -32,7 +32,7 @@ CarPlay requests **60fps**. That is the requested stream rate, not a guarantee f
 
 What is still missing:
 
-- **Microphone forwarding.** CarPlay output audio now has an HDMI playback path; audible playback inside HondaLink still needs hardware confirmation. Microphone input is not forwarded to CarPlay.
+- **Microphone forwarding.** CarPlay media audio over HDMI inside HondaLink DA is confirmed in the car. Audio & EQ provides independent bass/mid/treble controls; phone-call audio routing still needs confirmation. Microphone input is not forwarded to CarPlay.
 - A microphone test page in the new launcher. Earlier experiments received microphone PCM through Bluetooth HFP, but the radio required a hands-free call state. The core retains capture support; CarPlay does not use it yet.
 - Verification on other Honda radios, Pi models and OS releases.
 

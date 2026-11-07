@@ -5,7 +5,7 @@ import fs from 'node:fs';
 import readline from 'node:readline';
 import { format } from 'node:util';
 import { DongleDriver, DEFAULT_CONFIG, VideoData, AudioData, Plugged, Unplugged,
-         SendTouch, SendMultiTouch, SendCommand, Command, MediaData, SoftwareVersion, ManufacturerInfo, BoxInfo, Opened } from './vendor/node-carplay/dist/modules/index.js';
+         SendTouch, SendMultiTouch, SendCommand, SendAudio, Command, MediaData, SoftwareVersion, ManufacturerInfo, BoxInfo, Opened } from './vendor/node-carplay/dist/modules/index.js';
 const write = process.stdout.write.bind(process.stdout);
 for (const name of ['log','debug','info','warn','error']) {
   console[name] = (...args) => process.stderr.write(format(...args)+'\n');
@@ -22,15 +22,53 @@ function packet(type, payload) {
   const h=Buffer.alloc(5); h[0]=type; h.writeUInt32BE(b.length,1);
   write(Buffer.concat([h,b]));
 }
-function status(state, extra={}) { packet(2,JSON.stringify({state,...extra})); }
+const testStatuses=process.argv.includes('--self-test')?[]:null;
+function status(state, extra={}) {
+  if(testStatuses) testStatuses.push({state,...extra});
+  packet(2,JSON.stringify({state,...extra}));
+}
 process.stdout.on('error',()=>process.exit(0));
 let touchChain=Promise.resolve(), touchSequence=0;
+let voice={call_audio:false,siri:false,recording:false};
+let micChain=Promise.resolve(),micPending=0,micBytes=0,micDropped=0,micErrors=0;
+let mediaSchema='',mediaState='';
+function voiceChange(fields) {
+  voice={...voice,...fields};status('projection_voice',{fields:voice});
+}
+function microphone(m) {
+  if(!connected || !Object.values(voice).some(Boolean))return;
+  if(typeof m.pcm!=='string' || m.pcm.length>856 || !/^[A-Za-z0-9+/]*={0,2}$/.test(m.pcm))return;
+  const raw=Buffer.from(m.pcm,'base64');
+  if(!raw.length || raw.length>640 || raw.length%2)return;
+  if(micPending>=4){micDropped+=raw.length;return;}
+  micPending++;
+  micChain=micChain.then(async()=>{
+    if(!connected || !Object.values(voice).some(Boolean)){micDropped+=raw.length;return;}
+    const samples=Int16Array.from({length:raw.length/2},(_,i)=>raw.readInt16LE(i*2));
+    try {
+      if(await driver.send(new SendAudio(samples))===true)micBytes+=raw.length;
+      else {micErrors++;micDropped+=raw.length;}
+    } catch(e){micErrors++;micDropped+=raw.length;}
+  }).finally(()=>{micPending--;});
+}
 function handleCommand(value) {
   console.error(JSON.stringify({state:'dongle_command',value}));
   if(value===3) status('host_ui_requested');
+  if(value===1 || value===2)voiceChange({recording:value===1});
 }
 function handleMedia(message) {
     if(message.payload?.type===1 && message.payload.media && typeof message.payload.media==='object') {
+      const fields=message.payload.media,keys=Object.keys(fields).slice(0,64);
+      const schema=JSON.stringify(keys);
+      if(schema!==mediaSchema){mediaSchema=schema;console.error(JSON.stringify({state:'projection_media_schema',keys}));}
+      const states={};
+      for(const key of keys)if(/state|status|phase|mode|event|error|command/i.test(key)) {
+        const value=fields[key];
+        if(typeof value==='boolean' || typeof value==='number' && Number.isFinite(value))states[key]=value;
+        else if(typeof value==='string' && value.length<=32 && !/number|name|contact/i.test(key))states[key]=value;
+      }
+      const state=JSON.stringify(states);
+      if(state!==mediaState){mediaState=state;console.error(JSON.stringify({state:'projection_media_state',fields:states}));}
       const media={};
       for(const key of ['MediaSongName','MediaArtistName','MediaAlbumName','MediaAPPName','MediaSongDuration','MediaSongPlayTime','MediaPlayStatus']) {
         const value=message.payload.media[key];
@@ -41,9 +79,16 @@ function handleMedia(message) {
     }
 }
 function touch(m) {
-  if (!m || !connected) return;
+  if (!m) return;
+  if (!connected) {
+    if(m.type==='button') status('button_usb_result',{sequence:m.sequence,command:m.command,result:'no_device'});
+    return;
+  }
   let message;
-  if (m.type==='touch') {
+  if (m.type==='button') {
+    if (!['next','prev','playOrPause','play','pause','siri','acceptPhone','rejectPhone'].includes(m.command)) return;
+    message=new SendCommand(m.command);
+  } else if (m.type==='touch') {
     if (![14,15,16].includes(m.action) || !Number.isFinite(m.x) || !Number.isFinite(m.y)) return;
     message=new SendTouch(Math.max(0,Math.min(1,m.x)),Math.max(0,Math.min(1,m.y)),m.action);
     down=m.action!==16;
@@ -58,17 +103,23 @@ function touch(m) {
   console.error(JSON.stringify({state:'touch_node_received',sequence,mode:m.type,action:m.action,touches:m.touches,x:m.x,y:m.y,payload:message.getPayload().toString('hex')}));
   touchChain=touchChain.then(async()=>{
     const started=Date.now();
+    if(m.type==='button' && started-queued>1000) { status('button_expired',{sequence:m.sequence}); return; }
+    if(m.type==='button' && !connected) { status('button_usb_result',{sequence:m.sequence,command:m.command,result:'no_device'}); return; }
     const pending=setTimeout(()=>console.error(JSON.stringify({state:'touch_usb_pending',sequence,elapsed_ms:Date.now()-started})),1500);
     try {
       const result=await driver.send(message);
+      if(m.type==='button') status('button_usb_result',{sequence:m.sequence,command:m.command,result:result===true?'sent':result===false?'failed':'no_device'});
       console.error(JSON.stringify({state:'touch_usb_complete',sequence,mode:m.type,result:result===true?'ok':result===false?'failed':'no_device',queue_ms:started-queued,transfer_ms:Date.now()-started}));
-    } catch(e) {console.error(JSON.stringify({state:'touch_usb_error',sequence,error:String(e)}));}
+    } catch(e) {
+      if(m.type==='button') status('button_usb_result',{sequence:m.sequence,command:m.command,result:'error'});
+      console.error(JSON.stringify({state:'touch_usb_error',sequence,error:String(e)}));
+    }
     finally {clearTimeout(pending);}
   });
 }
 if (!process.argv.includes('--self-test')) readline.createInterface({input:process.stdin}).on('line',line=>{
   if (line.length>1024) return;
-  try { touch(JSON.parse(line)); } catch(e) { console.error('Touch input:',String(e)); }
+  try { const m=JSON.parse(line);if(m.type==='microphone')microphone(m);else touch(m); } catch(e) { console.error('Bridge input:',String(e)); }
 });
 async function stop() {
   if (shutting) return; shutting=true;
@@ -110,6 +161,36 @@ if (process.argv.includes('--self-test')) {
       sent[1].getPayload().readUInt32LE(8)!==0) throw Error('Touch serialization failed');
   const fixture=process.env.CIVIC_CARPLAY_FIXTURE;
   if(fixture) packet(1,fs.readFileSync(fixture));
+  for(const command of ['next','prev','playOrPause','play','pause','siri','acceptPhone','rejectPhone'])
+    touch({type:'button',command,sequence:42});
+  await touchChain;
+  const codes=sent.slice(6).map(m=>m.getPayload().readUInt32LE(0));
+  if(JSON.stringify(codes)!==JSON.stringify([204,205,203,201,202,5,300,301])) throw Error('Button serialization failed');
+  connected=false;
+  touch({type:'button',command:'next',sequence:100});
+  connected=true;
+  touch({type:'button',command:'prev',sequence:101});
+  connected=false;
+  await touchChain;
+  connected=true;
+  driver={send:async()=>false};
+  touch({type:'button',command:'next',sequence:102});
+  await touchChain;
+  driver={send:async()=>{throw Error('USB fixture failure');}};
+  touch({type:'button',command:'prev',sequence:103});
+  await touchChain;
+  const failures=testStatuses.filter(s=>s.state==='button_usb_result' && s.sequence>=100).map(s=>s.result);
+  if(JSON.stringify(failures)!==JSON.stringify(['no_device','no_device','failed','error'])) throw Error('Button failure acknowledgement failed');
+  const micSent=[];driver={send:async m=>{micSent.push(m);return true;}};
+  const pcm=Buffer.alloc(6);pcm.writeInt16LE(-32768,0);pcm.writeInt16LE(0,2);pcm.writeInt16LE(32767,4);
+  microphone({pcm:pcm.toString('base64')});await micChain;
+  if(micSent.length)throw Error('Microphone sent without a projection request');
+  handleCommand(1);microphone({pcm:pcm.toString('base64')});await micChain;
+  if(micSent.length!==1)throw Error('Requested microphone was not forwarded');
+  const mic=micSent[0].getPayload();
+  if(mic.length!==18 || mic.readUInt32LE(0)!==5 || mic.readUInt32LE(8)!==3 || !mic.subarray(12).equals(pcm))throw Error('Microphone serialization failed');
+  handleCommand(2);microphone({pcm:pcm.toString('base64')});await micChain;
+  if(micSent.length!==1)throw Error('Microphone continued after recording stopped');
   status('self_test_ok',{touch_messages:sent.length});
   await new Promise(resolve=>write(Buffer.alloc(0),resolve));
   process.exit(0);
@@ -166,7 +247,7 @@ driver.on('message',message=>{
   }
   else if(message instanceof MediaData) { handleMedia(message); }
   else if(message instanceof Plugged) { status('phone_connected',{phone_type:message.phoneType}); }
-  else if(message instanceof Unplugged) { status('phone_disconnected'); }
+  else if(message instanceof Unplugged) { voiceChange({call_audio:false,siri:false,recording:false});status('phone_disconnected'); }
   else if(message instanceof VideoData && message.data?.length) {
     videoPackets++;
     const receivedAt=Date.now();
@@ -181,18 +262,22 @@ driver.on('message',message=>{
       const h=Buffer.alloc(12);h.writeUInt32LE(message.decodeType,0);
       h.writeUInt32LE(message.audioType,4);h.writeFloatLE(message.volume,8);
       packet(3,Buffer.concat([h,Buffer.from(message.data.buffer,message.data.byteOffset,message.data.byteLength)]));
-    } else status('audio_control',{command:message.command,decode_type:message.decodeType,audio_type:message.audioType,volume:message.volume,volume_duration:message.volumeDuration});
+    } else {
+      if(message.command===4 || message.command===5)voiceChange({call_audio:message.command===4});
+      if(message.command===8 || message.command===9)voiceChange({siri:message.command===8});
+      status('audio_control',{command:message.command,decode_type:message.decodeType,audio_type:message.audioType,volume:message.volume,volume_duration:message.volumeDuration});
+    }
   }
   const now=Date.now();
   if(now-lastStats>=1000) {
     const elapsed=lastStats ? now-lastStats : 0;
-    status('stream_stats',{video_packets:videoPackets,video_packets_delta:videoPackets-lastStatsVideo,window_ms:elapsed,video_gap_max_ms:maxVideoGap,audio_packets:audioPackets,audio_forwarding:'launcher_hdmi',usb_message_types:usbTypes,media_subtypes:mediaSubtypes});
+    status('stream_stats',{video_packets:videoPackets,video_packets_delta:videoPackets-lastStatsVideo,window_ms:elapsed,video_gap_max_ms:maxVideoGap,audio_packets:audioPackets,audio_forwarding:'launcher_hdmi',usb_message_types:usbTypes,media_subtypes:mediaSubtypes,mic_bytes:micBytes,mic_dropped:micDropped,mic_errors:micErrors});
     lastStats=now;lastStatsVideo=videoPackets;maxVideoGap=0;
   }
 });
 const fps=Number(process.env.CIVIC_CARPLAY_FPS || 15);
 const config={...DEFAULT_CONFIG,width:800,height:480,fps:Number.isFinite(fps)?Math.max(5,Math.min(60,fps)):15,
-  boxName:'CivicCarPlay',micType:'box',audioTransferMode:false};
+  boxName:'CivicCarPlay',micType:'os',audioTransferMode:false};
 await driver.initialise(device);await driver.start(config);connected=true;
 status('metadata_requested',{DashboardInfo:1});
 status('dongle_ready',{width:800,height:480,fps:config.fps,audio_forwarding:'launcher_hdmi'});

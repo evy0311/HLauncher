@@ -13,9 +13,11 @@ import sys
 import threading
 import time
 
-BUTTONS = ('answer', 'hang_up', 'voice_assistant')
+from .buttons import LABELS
+BUTTONS = tuple(LABELS) + ('play', 'pause', 'stop', 'dial', 'redial')
 # Linux input-event-codes.h; never grab the radio's input device exclusively.
-KEYS = {169: 'answer', 445: 'answer', 446: 'hang_up', 582: 'voice_assistant'}
+KEYS = {169: 'answer', 445: 'answer', 446: 'hang_up', 582: 'voice_assistant',
+        163:'next', 165:'previous', 164:'play_pause', 207:'play', 119:'pause', 166:'stop'}
 INPUT_EVENT = struct.Struct('@llHHi')
 
 
@@ -29,7 +31,7 @@ def hfp_command(line):
     if not match:
         return None
     kind, command, value = match.groups()
-    if kind == 'CMD' and command in ('A', 'D', '+BLDN'):
+    if kind == 'CMD' and command == 'A':
         return ('answer', 'trigger')
     if kind == 'CMD' and command == '+CHUP':
         return ('hang_up', 'trigger')
@@ -48,6 +50,41 @@ class InputMonitor:
         self.stop_event = threading.Event()
         self.thread = None
         self.sequence = 0
+        self.control_status = {}
+        self.control_epochs = {'avrcp': 0, 'hfp': 0, 'hondalink-iap': 0}
+        self.control_process = None
+        self.traffic_pending = queue.Queue(128)
+        self.traffic = {source:dict(count=0,summary='No messages received',at=0)
+                        for source in ('avrcp','hfp','hondalink')}
+        self.traffic_dropped = 0
+        self.steering_mode = None
+
+    def observe(self, source, summary, **fields):
+        """Bound receiver-to-UI traffic; unknown messages never become button presses."""
+        if not isinstance(source,str) or source not in self.traffic:return
+        item=dict(source=source,summary=str(summary)[:96],monotonic=self.clock())
+        item.update({key:fields[key] for key in ('bytes','recognized') if key in fields})
+        try:self.traffic_pending.put_nowait(item)
+        except queue.Full:self.traffic_dropped += 1
+
+    def receive_control(self,item):
+        if not isinstance(item,dict):return
+        if item.get('state') in ('projection_hfp_tx','projection_hfp_state','protocol_packet'):
+            self.event(**item)
+            return
+        if isinstance(item.get('observation'),dict):
+            observation=item['observation']
+            self.observe(observation.get('source'),observation.get('summary',''),
+                         bytes=observation.get('bytes',0),recognized=bool(item.get('recognized')))
+        elif isinstance(item.get('button'),str) and item['button'] in BUTTONS:
+            self.offer(item['button'],item.get('action','trigger'),item.get('source','bluetooth'))
+        elif item.get('transport') in ('avrcp','hfp'):
+            transport=item['transport']
+            self.control_epochs[transport] += 1
+            self.control_status[transport]=str(item.get('status',''))[:100]
+            details={key:item[key] for key in ('rx_packets','session_seconds') if key in item}
+            self.event(state='radio_control_transport',transport=transport,
+                       status=self.control_status[transport],**details)
 
     def start(self):
         if sys.platform != 'linux' or not self.peer or self.peer == '00:00:00:00:00:00':
@@ -56,13 +93,33 @@ class InputMonitor:
         self.thread = threading.Thread(target=self.run, daemon=True)
         self.thread.start()
 
+    def receive_iap_remote(self, event):
+        state = event.get('state')
+        if state == 'iap_remote_buttons':
+            self.observe('hondalink', f"iAP buttons 0x{event['mask']:08x}",
+                         bytes=event['bytes'], recognized=not bool(event['unsupported_mask']))
+        elif state == 'iap_remote_button':
+            self.offer(event['button'], event['action'], 'hondalink-iap')
+        elif state == 'iap_remote_reset':
+            self.control_epochs['hondalink-iap'] += 1
+
     def offer(self, button, action, source):
+        item = dict(button=button, action=action, source=source, monotonic=self.clock())
+        transport = 'hfp' if source == 'hfp-command' else source
+        if transport in self.control_epochs:
+            item['input_epoch'] = self.control_epochs[transport]
         try:
-            self.pending.put_nowait(dict(button=button, action=action, source=source, monotonic=self.clock()))
+            self.pending.put_nowait(item)
         except queue.Full:
             pass
 
     def drain(self):
+        while True:
+            try:item=self.traffic_pending.get_nowait()
+            except queue.Empty:break
+            state=self.traffic[item['source']]
+            state.update(count=state['count']+1,summary=item['summary'],at=item['monotonic'])
+            self.event(state='radio_control_rx',**item)
         result = []
         while True:
             try: item = self.pending.get_nowait()
@@ -72,7 +129,8 @@ class InputMonitor:
             state = self.buttons[item['button']]
             if item['action'] in ('down', 'up', 'repeat'):
                 state['held'] = item['action'] != 'up'
-            state.update(at=item['monotonic'], count=state['count']+1, action=item['action'])
+            if item['source']!='screen':
+                state.update(at=item['monotonic'],count=state['count']+1,action=item['action'])
             self.history.appendleft(item)
             self.event(state='radio_button', **item)
             result.append(item)
@@ -94,17 +152,31 @@ class InputMonitor:
 
     def run(self):
         journal = None
+        control = None
         devices = {}
         buffers = {}
         next_scan = 0
         journal_trusted = False
         try:
+            control = subprocess.Popen([sys.executable, '-m', 'hlauncher.controls_worker'],
+                stdout=subprocess.PIPE, stderr=None, bufsize=0)
+            self.control_process = control
+            os.set_blocking(control.stdout.fileno(), False)
+            buffers[control.stdout.fileno()] = b''
             journal = subprocess.Popen(['journalctl', '-f', '-n', '0', '-o', 'json', '_COMM=bluealsa'],
                                        stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
             os.set_blocking(journal.stdout.fileno(), False)
             buffers[journal.stdout.fileno()] = b''
             while not self.stop_event.is_set():
                 now = self.clock()
+                if control.poll() is not None and now >= next_scan:
+                    oldfd=control.stdout.fileno();control.stdout.close();buffers.pop(oldfd,None)
+                    self.control_status.clear()
+                    control=subprocess.Popen([sys.executable,'-m','hlauncher.controls_worker'],
+                        stdout=subprocess.PIPE,stderr=None,bufsize=0)
+                    self.control_process=control
+                    os.set_blocking(control.stdout.fileno(),False)
+                    buffers[control.stdout.fileno()]=b''
                 if now >= next_scan:
                     next_scan = now + 2
                     journal_trusted = self.single_radio_rfcomm()
@@ -120,6 +192,7 @@ class InputMonitor:
                                    else 'Waiting for radio input source (HFP debug logs or input device)')
                 fds = list(devices)
                 if journal.poll() is None: fds.append(journal.stdout.fileno())
+                if control.poll() is None: fds.append(control.stdout.fileno())
                 ready = select.select(fds, [], [], .1)[0] if fds else []
                 if not fds: self.stop_event.wait(.1)
                 for fd in ready:
@@ -138,10 +211,17 @@ class InputMonitor:
                             _, _, kind, code, value = INPUT_EVENT.unpack(raw)
                             if kind == 1 and code in KEYS and value in (0, 1, 2):
                                 self.offer(KEYS[code], {0:'up',1:'down',2:'repeat'}[value], 'evdev')
+                    elif fd == control.stdout.fileno():
+                        while b'\n' in buffers[fd]:
+                            raw, buffers[fd] = buffers[fd].split(b'\n', 1)
+                            try: item = json.loads(raw)
+                            except (ValueError, TypeError): continue
+                            self.receive_control(item)
                     else:
                         while b'\n' in buffers[fd]:
                             raw, buffers[fd] = buffers[fd].split(b'\n', 1)
-                            if not journal_trusted: continue
+                            # The dispatcher owns HFP input; journal fallback must not duplicate it.
+                            if not journal_trusted or (control and control.poll() is None): continue
                             try: message = json.loads(raw).get('MESSAGE', '')
                             except (ValueError, TypeError): continue
                             if parsed := hfp_command(message): self.offer(*parsed, 'hfp-command')
@@ -149,6 +229,11 @@ class InputMonitor:
             self.status = 'Input observer unavailable: '+type(exc).__name__
             self.event(state='radio_input_observer_error', error=str(exc))
         finally:
+            if control:
+                control.terminate()
+                try: control.wait(timeout=2)
+                except subprocess.TimeoutExpired: control.kill(); control.wait(timeout=1)
+                control.stdout.close()
             for fd in devices: os.close(fd)
             if journal:
                 journal.terminate()
@@ -170,12 +255,16 @@ class ToneTest:
         self.sample = 0
         self.channel = 'Stereo'
         self.error = ''
+        self.frequency = 440
+        self.duration = 1
 
-    def start(self, channel):
+    def start(self, channel, frequency=440, duration=1):
         self.stop()
         self.error = ''
         self.channel = channel
-        self.until = time.monotonic()+1
+        self.frequency = frequency
+        self.duration = duration
+        self.until = time.monotonic()+duration
         self.next_block = time.monotonic()
         self.sample = 0
 
@@ -188,8 +277,8 @@ class ToneTest:
         data = bytearray()
         for _ in range(960):
             t = self.sample/48000
-            envelope = min(1, t/.02, max(0, (1-t)/.02))
-            value = round(2200*envelope*math.sin(2*math.pi*440*t))
+            envelope = min(1, t/.02, max(0, (self.duration-t)/.02))
+            value = round(2200*envelope*math.sin(2*math.pi*self.frequency*t))
             data.extend(struct.pack('<hh', value if self.channel != 'Right' else 0,
                                     value if self.channel != 'Left' else 0))
             self.sample += 1

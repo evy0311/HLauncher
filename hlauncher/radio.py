@@ -1,9 +1,37 @@
 """HondaLink Bluetooth profile owner. Protocol payload handling matches V42."""
 
 
+class ProfileRegistry:
+    """Re-register local profiles after bluetoothd releases them or changes owner."""
+    def __init__(self, entries, manager, event):
+        self.entries, self.manager, self.event = entries, manager, event
+        self.errors = {}
+
+    def lost(self):
+        for path, profile, options in self.entries:
+            profile.registered = False
+            profile.close_all()
+
+    def tick(self):
+        for path, profile, options in self.entries:
+            if profile.registered: continue
+            try:
+                self.manager().RegisterProfile(path, profile.uuid, options)
+                profile.registered = True
+                self.errors.pop(path, None)
+                self.event(state='registered', uuid=profile.uuid, channel=int(options['Channel']))
+            except Exception as exc:
+                error=str(exc)
+                if self.errors.get(path)!=error:
+                    self.event(state='profile_registration_waiting',uuid=profile.uuid,error=error)
+                    self.errors[path]=error
+        return True
+
+
 def main():
     import argparse, datetime, json, os, pathlib, socket
     from hlauncher.config import LOG_DIR, RADIO_PATH, RADIO_ADDRESS
+    from hlauncher.protocol_diagnostics import ProtocolDiagnostics
     from hlauncher.protocol.session import StartProbe
     from hlauncher.touch import decode_touch
     from hlauncher.launcher import Launcher
@@ -26,17 +54,20 @@ def main():
     import threading
 
     log_lock = threading.Lock()
+    protocols = ProtocolDiagnostics()
+    protocols.start()
 
     def event(**v):
         with log_lock:
             if f.closed:
                 return
             v["wall"] = datetime.datetime.now(datetime.timezone.utc).isoformat()
+            protocols.observe(v)
             s = json.dumps(v)
             print(s, flush=True)
             f.write(s + "\n")
 
-    launcher = Launcher(event)
+    launcher = Launcher(event, independent_audio=True, protocol_diagnostics=protocols)
     try:
         launcher.home()
         event(state="hdmi_launcher_ready")
@@ -61,6 +92,7 @@ def main():
         def __init__(self, path, uuid):
             super().__init__(bus, path)
             self.uuid = uuid
+            self.registered = False
             self.sockets = {}
             self.watches = {}
             self.parsers = {}
@@ -69,6 +101,7 @@ def main():
 
         @dbus.service.method("org.bluez.Profile1", in_signature="", out_signature="")
         def Release(self):
+            self.registered = False
             self.close_all()
             event(state="released", uuid=self.uuid)
 
@@ -107,6 +140,14 @@ def main():
                         events, replies = self.parsers[device].feed(b)
                         for e in events:
                             event(uuid=self.uuid, **e)
+                            launcher.inputs.receive_iap_remote(e)
+                            if e.get('state') == 'honda_frame' and e.get('message') != 0x43:
+                                payload=e.get('payload','')
+                                launcher.inputs.observe('hondalink',f"Message 0x{e['message']:02x} / {len(payload)//2} bytes",
+                                                        bytes=len(payload)//2)
+                            if e.get('state') == 'honda_steering_mode':
+                                launcher.inputs.steering_mode=e['mode']
+                                launcher.inputs.observe('hondalink',f"Steering mode {e['mode']}",recognized=True)
                             if e.get("state") == "iap_accessory_key_proof":
                                 launcher.session_changed(
                                     authenticated=bool(e.get("verified"))
@@ -132,6 +173,7 @@ def main():
                                         payload=e["payload"],
                                     )
                         for reply in replies:
+                            event(state='protocol_tx',uuid=self.uuid,hex=reply.hex())
                             self.tx.setdefault(device, bytearray()).extend(reply)
                         if self.tx.get(device) and device not in self.txw:
                             self.txw[device] = GLib.io_add_watch(
@@ -184,6 +226,7 @@ def main():
                 GLib.source_remove(self.watches.pop(key))
             if key in self.sockets:
                 self.sockets.pop(key).close()
+                event(state='closed',uuid=self.uuid,device=key)
                 if self.uuid.endswith("cafe"):
                     launcher.session_changed(connected=False, authenticated=False)
 
@@ -198,35 +241,44 @@ def main():
             event(state="touch_overlay_error", error=str(exc))
         return True
 
+    def protocol_tick():
+        for _, profile in profiles:
+            if profile.uuid.endswith('cafe'):
+                for parser in list(profile.parsers.values()):
+                    for item in parser.tick():
+                        event(uuid=profile.uuid, **item)
+        return True
+
     # Availability sampling is faster than scanout; KMS still paces actual frames.
     GLib.timeout_add(4, draw_tick)
-    manager = dbus.Interface(
-        bus.get_object("org.bluez", "/org/bluez"), "org.bluez.ProfileManager1"
-    )
     profiles = []
+    entries = []
+    def manager():
+        # A fresh proxy resolves the new unique bus owner after a daemon restart.
+        return dbus.Interface(bus.get_object("org.bluez", "/org/bluez"), "org.bluez.ProfileManager1")
+    registry = ProfileRegistry(entries, manager, event)
+    def bluetooth_owner(name, old, new):
+        if old != new:
+            registry.lost()
+            if new: GLib.idle_add(lambda: (registry.tick(), False)[1])
+    bus.add_signal_receiver(bluetooth_owner, dbus_interface='org.freedesktop.DBus',
+                            signal_name='NameOwnerChanged', arg0='org.bluez')
     try:
-        for i, (uuid, channel) in enumerate(
-            [
-                ("00001101-0000-1000-8000-00805f9b34fb", 10),
-                ("00000000-deca-fade-deca-deafdecacafe", 11),
-            ]
-        ):
+        for i, (uuid, channel) in enumerate([
+            ("00001101-0000-1000-8000-00805f9b34fb", 10),
+            ("00000000-deca-fade-deca-deafdecacafe", 11),
+        ]):
             path = "/hlauncher/profile" + str(i)
             profile = Profile(path, uuid)
-            manager.RegisterProfile(
-                path,
-                uuid,
-                {
-                    "Name": dbus.String("HLauncher"),
-                    "Role": dbus.String("server"),
-                    "Channel": dbus.UInt16(channel),
-                    "RequireAuthentication": dbus.Boolean(True),
-                    "RequireAuthorization": dbus.Boolean(False),
-                    "AutoConnect": dbus.Boolean(False),
-                },
-            )
             profiles.append((path, profile))
-            event(state="registered", uuid=uuid, channel=channel)
+            entries.append((path, profile, {
+                "Name": dbus.String("HLauncher"), "Role": dbus.String("server"),
+                "Channel": dbus.UInt16(channel), "RequireAuthentication": dbus.Boolean(True),
+                "RequireAuthorization": dbus.Boolean(False), "AutoConnect": dbus.Boolean(False),
+            }))
+        registry.tick()
+        GLib.timeout_add_seconds(2, registry.tick)
+        GLib.timeout_add_seconds(1, protocol_tick)
         if a.seconds > 0:
             GLib.timeout_add_seconds(a.seconds, lambda: (loop.quit(), False)[1])
         loop.run()
@@ -234,7 +286,7 @@ def main():
         for path, profile in profiles:
             profile.close_all()
             try:
-                manager.UnregisterProfile(path)
+                manager().UnregisterProfile(path)
             except dbus.DBusException:
                 pass
         launcher.close()

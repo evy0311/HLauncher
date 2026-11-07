@@ -24,11 +24,11 @@ def encode(message):
 def decode(raw):
     if not raw or len(raw) > MAX_PACKET:
         raise ValueError("invalid packet size")
-    if raw[:1] == b"P":
+    if raw[:1] in (b"P",b"C"):
         if len(raw) < 8:
             raise ValueError("short playback packet")
         rate, channels, stream = struct.unpack("!IBB", raw[1:7])
-        return dict(type="audio.playback.pcm", sample_rate=rate, channels=channels, stream=stream, pcm=raw[7:])
+        return dict(type="audio.voice.pcm" if raw[:1]==b'C' else "audio.playback.pcm", sample_rate=rate, channels=channels, stream=stream, pcm=raw[7:])
     if raw[:1] == b"A":
         return {"type": "audio.pcm", "pcm": raw[1:]}
     if raw[:1] != b"J":
@@ -43,6 +43,8 @@ class Client:
     def __init__(self):
         self.socket = socket.socket(fileno=int(os.environ["HLAUNCHER_CONTROL_FD"]))
         self.socket.setblocking(False)
+        self.playback_socket=socket.socket(fileno=int(os.environ['HLAUNCHER_PLAYBACK_FD'])) if 'HLAUNCHER_PLAYBACK_FD' in os.environ else self.socket
+        self.playback_socket.setblocking(False)
         self.width = int(os.environ["HLAUNCHER_WIDTH"])
         self.height = int(os.environ["HLAUNCHER_HEIGHT"])
         self.frame_bytes = self.width * self.height * 2
@@ -66,14 +68,18 @@ class Client:
         """Publish a partial media update. Times are milliseconds; None clears a field."""
         return self.send(type='media.now_playing', fields=fields, clear=clear)
 
-    def playback(self, pcm, rate, channels, stream=0):
+    def subscribe_buttons(self, buttons):
+        """Request named controls; an empty list unsubscribes. Requires input.buttons."""
+        return self.send(type='input.buttons.subscribe', buttons=list(buttons))
+
+    def playback(self, pcm, rate, channels, stream=0, *, voice=False):
         """Nonblocking PCM submission; False means backpressure, never retry stale audio."""
         ok = True
         for at in range(0, len(pcm), 4096):
-            raw = b"P" + struct.pack("!IBB", rate, channels, stream) + pcm[at:at+4096]
+            raw = (b"C" if voice else b"P") + struct.pack("!IBB", rate, channels, stream) + pcm[at:at+4096]
             with self.lock:
                 try:
-                    ok = (self.socket.send(raw) == len(raw)) and ok
+                    ok = (self.playback_socket.send(raw) == len(raw)) and ok
                 except BlockingIOError:
                     return False
         return ok
@@ -119,5 +125,6 @@ class Client:
         return self.send(type="launcher.home")
 
     def close(self):
+        if self.playback_socket is not self.socket:self.playback_socket.close()
         self.memory.close()
         self.socket.close()

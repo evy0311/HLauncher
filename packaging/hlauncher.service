@@ -10,6 +10,7 @@ EnvironmentFile=/etc/hlauncher.env
 Environment=PYTHONUNBUFFERED=1
 WorkingDirectory=/opt/hlauncher
 ExecStartPre=/usr/bin/fbset -depth 16
+ExecStartPre=/usr/bin/python3 -m hlauncher.audio_settings --disable-pipewire
 ExecStart=/usr/bin/python3 -m hlauncher run --seconds 0
 Restart=on-failure
 RestartSec=3

@@ -1,0 +1,16 @@
+[Unit]
+Description=HLauncher private PipeWire EQ graph
+After=bluetooth.service
+PartOf=hlauncher.service
+
+[Service]
+RuntimeDirectory=hlauncher-pipewire
+RuntimeDirectoryMode=0700
+Environment=PIPEWIRE_RUNTIME_DIR=/run/hlauncher-pipewire
+Environment=XDG_RUNTIME_DIR=/run/hlauncher-pipewire
+Environment=ALSA_CONFIG_PATH=/opt/hlauncher/config/alsa-hdmi.conf
+LimitRTPRIO=75
+LimitMEMLOCK=268435456
+ExecStart=/usr/bin/pipewire -c /opt/hlauncher/config/pipewire.conf
+Restart=on-failure
+RestartSec=2

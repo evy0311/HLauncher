@@ -1,4 +1,4 @@
-"""Plugin-neutral now-playing state. This module never talks to the radio."""
+"""Plugin-neutral local track state and source-only radio display labels."""
 
 import argparse
 import json
@@ -12,6 +12,13 @@ RUNTIME = Path(os.environ.get('HLAUNCHER_RUNTIME_DIR', '/run/hlauncher'))
 TEXT = ('title', 'artist', 'album', 'app')
 TIMES = ('position_ms', 'duration_ms')
 STATES = ('unknown', 'playing', 'paused', 'stopped')
+RADIO_SOURCES = {'carplay': 'Carplay', 'android-auto': 'Android Auto'}
+
+
+def radio_metadata(plugin):
+    """Only the selected source label is exported, never song or phone details."""
+    title = RADIO_SOURCES.get(plugin) if isinstance(plugin, str) else None
+    return dict(title=title, artist='HLauncher') if title else {}
 
 
 def validate(fields):
@@ -44,6 +51,7 @@ class NowPlaying:
         self.path = Path(path) if path else RUNTIME / 'now-playing.json'
         self.sources = {}
         self.selected = None
+        self.source_plugin = None
         self.revision = 0
         self.dirty = True
         self.last_write = 0
@@ -75,13 +83,23 @@ class NowPlaying:
         self.dirty = True
 
     def clear(self, plugin):
+        if self.source_plugin == plugin:
+            self.select_source(None)
         if plugin in self.sources:
             self.publish(plugin, {}, clear=True)
+
+    def select_source(self, plugin):
+        if self.source_plugin != plugin:
+            self.source_plugin = plugin
+            self.revision += 1
+            self.dirty = True
 
     def snapshot(self):
         return dict(schema=1, revision=self.revision, launcher_pid=os.getpid(),
                     selected_plugin=self.selected, now_playing=self.sources.get(self.selected),
-                    sources=self.sources, radio_forwarding=False)
+                    sources=self.sources, source_plugin=self.source_plugin,
+                    radio_metadata=radio_metadata(self.source_plugin),
+                    radio_forwarding=True, radio_forwarding_mode='source_only')
 
     def flush(self, force=False):
         if not self.dirty or (not force and time.monotonic()-self.last_write < .2):
@@ -115,7 +133,7 @@ def clock(ms):
 
 
 def main(argv=None):
-    parser = argparse.ArgumentParser(description='Watch plugin now-playing reports; nothing is sent to the radio')
+    parser = argparse.ArgumentParser(description='Watch local song reports; the radio receives only source labels')
     parser.add_argument('--watch', action='store_true')
     parser.add_argument('--json', action='store_true')
     parser.add_argument('--path', type=Path, default=RUNTIME/'now-playing.json')
@@ -139,7 +157,7 @@ def main(argv=None):
                         f"Album:  {p.get('album') or '(not reported)'}",
                         f"Position: {clock(p.get('position_ms'))} / {clock(p.get('duration_ms'))}    State: {p.get('playback_state', 'unknown')}",
                         f"Last report: {age:.1f}s ago" + (f"    Position report: {position_age:.1f}s ago" if position_age is not None else ''),
-                        'Position is reported, not extrapolated. Radio forwarding is off.',
+                        'Position is reported, not extrapolated. Radio receives only the selected source label.',
                     ])
             except (OSError, ValueError, KeyError, TypeError):
                 output = 'Waiting for HLauncher now-playing service.'

@@ -12,9 +12,10 @@ if [[ ${VERSION_CODENAME:-} != bookworm || $(uname -m) != aarch64 ]]; then
 fi
 apt-get update
 apt-get install -y python3 python3-pil python3-numpy python3-dbus python3-gi python3-bleak \
-  bluez bluez-alsa-utils libasound2-plugin-bluez alsa-utils openssl \
+  bluez bluez-alsa-utils libasound2-plugin-bluez alsa-utils openssl pipewire pipewire-bin libspa-0.2-modules libsamplerate0 libsoxr0 \
   nodejs npm patch libudev-dev libusb-1.0-0 libdrm2 libavcodec59 libavutil57 libswscale6 \
-  fonts-dejavu-core fbset usbutils
+  fonts-dejavu-core fbset usbutils build-essential pkg-config libpipewire-0.3-dev
+bash scripts/install_button_audio.sh
 root=/opt/hlauncher
 if [[ $(pwd -P) == "$root" ]]; then
   echo 'Run the installer from your Git checkout, outside /opt/hlauncher.'
@@ -25,21 +26,24 @@ if [[ -d $root ]]; then
   cp -a "$root" "/opt/hlauncher.backup-$stamp"
 fi
 install -d "$root" /var/log/hlauncher /var/lib/hlauncher /etc/systemd/system/bluetooth.service.d
-for path in hlauncher sdk plugins examples bluetooth scripts packaging config docs tests third_party LICENSE NOTICE README.md THIRD_PARTY_NOTICES.md; do
+for path in hlauncher sdk plugins examples bluetooth scripts packaging config docs tests third_party native LICENSE NOTICE README.md THIRD_PARTY_NOTICES.md; do
   cp -a "$path" "$root/"
 done
+bash "$root/scripts/build_pipewire_pcm.sh"
 python3 "$root/scripts/fetch_dependencies.py"
 npm ci --prefix "$root/plugins/carplay/runtime/usb" --omit=dev --ignore-scripts --no-audit --no-fund
 if [[ ! -f /etc/hlauncher.env ]]; then
   install -m 600 hlauncher.env.example /etc/hlauncher.env
 fi
-for unit in hlauncher.service hlauncher-audio.service hlauncher-connect.service; do
+for unit in hlauncher.service hlauncher-audio.service hlauncher-connect.service hlauncher-pipewire.service; do
   install -m 644 "packaging/$unit" "/etc/systemd/system/$unit"
 done
 dropin=/etc/systemd/system/bluetooth.service.d/90-hlauncher.conf
 if [[ -f $dropin ]]; then cp -a "$dropin" "$dropin.backup-$stamp"; fi
 install -m 644 packaging/90-hlauncher.conf "$dropin"
+python3 "$root/scripts/configure_phone_identity.py" --apply
 systemctl daemon-reload
+systemctl disable --now hlauncher-pipewire.service
 /usr/bin/python3 "$root/scripts/check.py"
 echo
 echo 'Installed. No HLauncher services were started.'

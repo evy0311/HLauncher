@@ -2,13 +2,16 @@
 
 import math
 import time
+import subprocess
 from PIL import Image, ImageDraw, ImageEnhance, ImageFilter
 from sdk.hlauncher_sdk.fonts import font as ui_font
 from . import __version__
 from .debug_tools import InputMonitor, ToneTest
+from .buttons import LABELS
 from .config import RADIO_ADDRESS
 from .diagnostics import Diagnostics, power_status
 from .obd import ObdManager
+from .audio_settings import AudioSettings, BANDS, EQ_BANDS
 from .audio import AudioBroker
 from .catalog import discover
 from .config import Preferences, TILE_COLORS
@@ -26,11 +29,16 @@ class Launcher:
         framebuffer=None,
         preferences=None,
         manifests=None,
+        independent_audio=False,
+        protocol_diagnostics=None,
     ):
         self.event = event
         self.fb = framebuffer or Framebuffer(event)
         self.fb.open()
         self.prefs = preferences or Preferences()
+        self.audio_settings = AudioSettings(self.prefs.path.with_name('audio.json'))
+        self.audio_notice = ''
+        self.audio_checked = 0
         self.picture = PictureSettings(self.prefs.path.with_name('carplay-color.json'))
         self.picture_values = dict(self.picture.values)
         self.picture_drag = None
@@ -40,12 +48,19 @@ class Launcher:
         self.hdmi_range_original = None
         self.hdmi_range_label = "Automatic"
         self.manifests = discover(event) if manifests is None else manifests
-        self.audio = AudioBroker(event)
+        self.audio = AudioBroker(event, independent=independent_audio)
         self.host = PluginHost(
             self.manifests, self.fb.w, self.fb.h, event, self.home, self.audio,
             background_allowed=self.prefs.background_enabled,
         )
         self.diagnostics = Diagnostics()
+        from .protocol_diagnostics import ProtocolDiagnostics
+        self.protocols = protocol_diagnostics or ProtocolDiagnostics(self.prefs.path.parent/'protocol-captures')
+        self.protocol_page = 0
+        self.protocol_marker_index = 0
+        self.protocol_redraw = 0
+        from .voice_audio import VoiceAudio
+        self.voice_audio=VoiceAudio(self.prefs.path.with_name('voice-audio.json'))
         self.inputs = InputMonitor(event, RADIO_ADDRESS)
         self.inputs.start()
         self.tone_test = ToneTest(self.audio.playback)
@@ -89,7 +104,10 @@ class Launcher:
             draw_back_button(draw, box, color=TILE_COLORS[self.prefs.data["tile_color"]])
         else:
             button_surface(draw, box, color or TILE_COLORS[self.prefs.data["tile_color"]])
-            draw.text((box[0] + 12, box[1] + 10), label, font=self.font(size), fill="white")
+            if label in ('+', '−'):
+                draw.text(((box[0]+box[2])/2,(box[1]+box[3])/2),label,font=self.font(size),fill='white',anchor='mm')
+            else:
+                draw.text((box[0] + 12, box[1] + 10), label, font=self.font(size), fill="white")
         self.actions.append((box, action))
 
     def enabled(self):
@@ -126,6 +144,32 @@ class Launcher:
         self.banner = ""
         self.press = None
         self.draw()
+
+    def audio_page(self):
+        self.tone_test.stop()
+        self.host.deactivate()
+        self.audio_settings.refresh()
+        self.mode = 'audio_settings'
+        self.press = None
+        self.audio_notice = ''
+        self.draw()
+
+    def change_audio(self, **changes):
+        try:
+            self.audio_settings.save(**changes)
+            self.audio.playback.settings = self.audio_settings
+            self.audio_notice = 'Saved'
+        except (OSError, ValueError, RuntimeError) as exc:
+            self.audio_notice = str(exc)[:72]
+        self.draw()
+
+    def adjust_eq(self, key, delta):
+        if key in EQ_BANDS:
+            bands = dict(self.audio_settings.values['bands'])
+            bands[key] = max(-12, min(12, bands[key]+delta))
+            self.change_audio(bands=bands)
+        else:
+            self.change_audio(**{key: max(-12, min(12, self.audio_settings.values[key]+delta))})
 
     def plugin_settings(self):
         self.host.deactivate()
@@ -176,17 +220,78 @@ class Launcher:
         self.debug_touch = {}
         self.draw()
 
+    def protocol_tests(self):
+        self.tone_test.stop()
+        self.host.deactivate()
+        self.mode = 'protocol_tests'
+        self.press = self.pressed_box = None
+        self.draw()
+
+    def protocol_tab(self, page):
+        self.protocol_page = page
+        self.draw()
+
+    def toggle_protocol_capture(self):
+        if self.protocols.snapshot()['recording']:self.protocols.stop()
+        else:self.protocols.start()
+        self.draw()
+
+    def mark_protocol_step(self):
+        labels = ('Connection test','Next / previous test','Siri test','Incoming call test',
+                  'Outgoing call test','Call ended','Vehicle controls test','Test complete')
+        self.protocols.marker(labels[self.protocol_marker_index % len(labels)])
+        self.protocol_marker_index += 1
+        self.draw()
+
+    def toggle_voice_output(self):
+        try:
+            self.voice_audio.save('hdmi' if self.voice_audio.output=='sco' else 'sco')
+            self.event(state='projection_voice_output',output=self.voice_audio.output)
+            self.protocols.marker('Voice output: '+self.voice_audio.output.upper())
+        except OSError as exc:self.event(state='projection_voice_output_error',error=str(exc))
+        self.draw()
+
+    def shutdown_page(self):
+        self.tone_test.stop()
+        self.diagnostics.stop()
+        self.mode = 'shutdown_confirm'
+        self.press = self.pressed_box = None
+        self.banner = ''
+        self.draw()
+
+    def shutdown_pi(self):
+        self.tone_test.stop()
+        self.mode = 'shutdown_pending'
+        self.banner = ''
+        self.draw()
+        try:
+            subprocess.run(['systemctl','poweroff','--no-block'], check=True,
+                           capture_output=True, text=True, timeout=3)
+            self.event(state='system_poweroff_requested')
+        except (OSError, subprocess.SubprocessError) as exc:
+            self.mode = 'shutdown_confirm'
+            self.banner = 'Shutdown failed; Pi is still running.'
+            self.event(state='system_poweroff_failed', error=str(exc))
+            self.draw()
+
     def diagnostic_runtime(self):
         playback = self.audio.playback
         with playback.condition:
             streams = len(playback.streams)
             queued = sum(stream.queued for stream in playback.streams.values())
             dropped = sum(stream.dropped for stream in playback.streams.values())
-        return dict(inputs=dict(status=self.inputs.status, buttons=self.inputs.buttons, recent=list(self.inputs.history)), version=__version__, session=dict(self.host.session),
+            levels={str(key):dict(source_peak=getattr(stream,'source_peak',0),
+                source_full_scale_samples=getattr(stream,'source_full_scale_samples',0),
+                converted_peak=getattr(stream,'converted_peak',0)) for key,stream in playback.streams.items()}
+        return dict(inputs=dict(status=self.inputs.status, transports=dict(self.inputs.control_status), buttons=self.inputs.buttons, results=dict(getattr(self.host,'button_results',{})), recent=list(self.inputs.history)), version=__version__, session=dict(self.host.session),
                     display=dict(width=self.fb.w,height=self.fb.h,
                                  backend='DRM' if getattr(self.fb,'kms',None) else 'Framebuffer'),
-                    audio=dict(route='HDMI',streams=streams,queued_bytes=queued,
-                               dropped_bytes=dropped,written_bytes=playback.written,failures=playback.failures),
+                    audio=dict(route=playback.route,device=playback.device,pipewire=playback.settings.values['pipewire'],
+                               rate=48000,channels=2,processing_format='float32',hdmi_requested_format='S32_LE',
+                               resampler='libsoxr VHQ 28-bit linear phase',streams=streams,queued_bytes=queued,
+                               dropped_bytes=dropped,written_bytes=playback.written,failures=playback.failures,
+                               peak=getattr(playback,'peak',0),clip_samples=getattr(playback,'clip_samples',0),stream_levels=levels),
+                    protocols=self.protocols.snapshot(),
                     plugins=[self.manifests[key].name for key in self.host.workers],
                     plugin_status={key:dict(status=worker.status,background=not worker.active,
                                            received_frames=worker.frames_received)
@@ -467,12 +572,49 @@ class Launcher:
                   ('OBD Gauges','Connect a Bluetooth LE ELM327 dongle',self.obd_settings),
                   ('Tile color',self.prefs.data['tile_color'],self.tile_colors),
                   ('Start with',default_label,self.cycle_default),
+                  ('Audio & EQ','12 bands · Flat and EDM Bass presets',self.audio_page),
                   ('System diagnostics','Connections, hardware and reports',self.system_diagnostics)]
             for i,(title,detail,action) in enumerate(rows):
-                y=77+i*69
-                self.menu_row(d,(24,y,w-24,y+61),title,detail,action)
+                y=72+i*59
+                self.menu_row(d,(24,y,w-24,y+55),title,detail,action)
             d.text((24,h-33),'HLauncher '+__version__,font=self.font(14),fill='#a3adb8')
             if self.banner:d.text((w-24,h-33),self.banner[:50],font=self.font(14),fill='#ffbc75',anchor='rt')
+        elif self.mode == 'audio_settings':
+            self.button(d,(16,14,134,56),'Back',self.settings)
+            d.text((150,20),'Audio & EQ',font=self.font(27),fill='white')
+            d.text((w-24,34),'HDMI audio',font=self.font(16),fill='#a3adb8',anchor='rm')
+            values = self.audio_settings.values
+            gap = 8
+            control_w = (w-48-gap*3)//4
+            self.button(d,(24,82,24+control_w,132),'PipeWire '+('On' if values['pipewire'] else 'Off'),
+                        lambda:self.change_audio(pipewire=not values['pipewire']),size=17)
+            x=24+control_w+gap
+            self.button(d,(x,82,x+control_w,132),'EQ On' if values['eq'] else 'EQ bypassed',
+                        lambda:self.change_audio(eq=not values['eq']),size=17)
+            preset = self.audio_settings.preset_name()
+            for i,name in enumerate(('Flat','EDM Bass')):
+                x=24+(i+2)*(control_w+gap)
+                self.button(d,(x,82,x+control_w,132),name,
+                            lambda name=name:self.change_audio(**self.audio_settings.preset_changes(name)),
+                            color='#246b48' if preset==name else '#2d3945',size=17)
+            cw=(w-48-gap*5)//6
+            for i,(key,freq) in enumerate(EQ_BANDS.items()):
+                x=24+(i%6)*(cw+gap);y=150+(i//6)*146
+                gain=values['bands'][key]
+                button_surface(d,(x,y,x+cw,y+136),'#202b35')
+                frequency=f'{freq/1000:g} kHz' if freq>=1000 else f'{freq:g} Hz'
+                d.text((x+cw/2,y+15),frequency,
+                       font=self.font(17),fill='#bcc9d3',anchor='mt')
+                d.text((x+cw/2,y+41),f'{gain:+d} dB',font=self.font(23),fill='white',anchor='mt')
+                left,right=x+10,x+cw-10;zero=(left+right)/2;point=left+(gain+12)/24*(right-left)
+                d.line((left,y+75,right,y+75),fill='#44515c',width=3)
+                d.line((zero,y+70,zero,y+80),fill='#89949f',width=1)
+                d.ellipse((point-3,y+72,point+3,y+78),fill='#b8d4dc')
+                self.button(d,(x+5,y+87,x+cw//2-3,y+132),'−',lambda key=key:self.adjust_eq(key,-1),size=22)
+                self.button(d,(x+cw//2+3,y+87,x+cw-5,y+132),'+',lambda key=key:self.adjust_eq(key,1),size=22)
+            notice = self.audio_notice or (preset+' · No automatic gain adjustment')
+            if any(values[key] for key in BANDS):notice='Previous tone gains active — Flat clears all gains'
+            d.text((24,h-24),notice[:86],font=self.font(13),fill='#a3adb8')
         elif self.mode == 'plugins_settings':
             self.button(d,(16,14,110,56),'Back',self.settings)
             d.text((150,20),'Plugins',font=self.font(27),fill='white')
@@ -554,6 +696,7 @@ class Launcher:
         elif self.mode == 'diagnostics':
             self.button(d,(16,14,110,56),'Back',self.settings)
             d.text((150,20),'System diagnostics',font=self.font(25),fill='white')
+            self.button(d,(w-160,14,w-24,56),'Shutdown',self.shutdown_page,color='#743c36',size=16)
             system,revision,report_status=self.diagnostics.snapshot()
             self.diagnostic_revision=revision
             runtime=self.diagnostic_runtime()
@@ -564,7 +707,7 @@ class Launcher:
                       ('Handshake','Verified' if session.get('authenticated') else 'Not verified'),
                       ('Display',f"{display['width']} × {display['height']} · {display['backend']}"),
                       ('USB dongle',str(len(system['dongles']))+' detected' if 'dongles' in system else 'Checking…'),
-                      ('Audio',f"HDMI · {audio['streams']} stream(s)"),
+                      ('Audio',f"{audio['route'].title()} · {audio['streams']} stream(s)"),
                       ('Running apps',', '.join(runtime['plugins']) or 'None')]
             else:
                 temp=system.get('temperature_c');uptime=system.get('uptime_seconds')
@@ -584,9 +727,20 @@ class Launcher:
                 d.text((225,y),value,font=self.font(value_size),fill='white')
                 d.line((24,y+33,w-24,y+33),fill='#26313d')
             self.button(d,(24,h-77,200,h-32),'Save report',lambda:self.diagnostics.save_report(self.diagnostic_runtime()),size=17)
-            self.button(d,(214,h-77,414,h-32),'Hardware tests',self.debug_tools,size=17)
+            self.button(d,(214,h-77,414,h-32),'HondaLink',self.protocol_tests,size=17)
             self.button(d,(w-285,h-77,w-24,h-32),'System  ›' if self.diagnostic_page==0 else '‹  Connections',self.change_diagnostic_page,size=17)
             if report_status:d.text((24,h-23),report_status,font=self.font(13),fill='#a3b2c0')
+        elif self.mode == 'protocol_tests':
+            self.draw_protocols(d,w,h)
+        elif self.mode in ('shutdown_confirm','shutdown_pending'):
+            if self.mode == 'shutdown_confirm':
+                self.button(d,(16,14,134,56),'Back',self.system_diagnostics)
+            d.text((24,100),'Shut down Raspberry Pi?' if self.mode == 'shutdown_confirm' else 'Shutting down…',font=self.font(30),fill='white')
+            d.text((24,160),'Stops apps and shuts down the operating system cleanly.',font=self.font(18),fill='#b4bdc8')
+            if self.mode == 'shutdown_confirm':
+                self.button(d,(24,235,310,294),'Shut down',self.shutdown_pi,color='#743c36',size=22)
+                self.button(d,(330,235,w-24,294),'Cancel',self.system_diagnostics,size=22)
+            if self.banner:d.text((24,335),self.banner[:70],font=self.font(17),fill='#ffbc75')
         elif self.mode.startswith('debug_'):
             self.draw_debug(d, w, h)
         elif self.mode == 'tile_colors':
@@ -667,15 +821,15 @@ class Launcher:
     def draw_debug(self, d, w, h):
         page = self.mode[6:]
         self.button(d,(16,14,134,56),'Back',self.system_diagnostics if page=='menu' else self.debug_tools)
-        d.text((150,20),{'menu':'Hardware tests','audio':'Audio test','colors':'Video colors','inputs':'Touch & hands-free'}.get(page,page),font=self.font(24),fill='white')
+        d.text((150,20),{'menu':'Hardware tests','audio':'Audio test','colors':'Video colors','inputs':'Radio buttons'}.get(page,page),font=self.font(24),fill='white')
         if page == 'menu':
             for i,(name,detail,target) in enumerate((
-                ('Audio','Short left / right / stereo HDMI tones','audio'),
+                ('Audio','Short tones through the selected audio route','audio'),
                 ('Video colors','Color bars and dark / light steps','colors'),
-                ('Touch & hands-free','Touch contacts and received car commands','inputs'))):
+                ('Radio buttons','Live inputs and projection control tests','inputs'))):
                 self.menu_row(d,(24,90+i*100,w-24,172+i*100),name,detail,lambda target=target:self.debug_tools(target))
         elif page == 'audio':
-            d.text((24,100),'Plays a one-second 440 Hz tone through HDMI.',font=self.font(20),fill='white')
+            d.text((24,100),'Plays a one-second tone through the selected output.',font=self.font(20),fill='white')
             d.text((24,140),'Use the radio volume control to check the output.',font=self.font(17),fill='#b4bdc8')
             for i,label in enumerate(('Left','Right','Stereo')):
                 x=24+i*((w-48)//3)
@@ -695,27 +849,104 @@ class Launcher:
                     d.text(((x+right)//2,y+45),str(value),font=self.font(14),fill='white',anchor='mt')
         elif page == 'inputs':
             now=time.monotonic()
-            for i,(name,label) in enumerate((('answer','Dial / Answer'),('hang_up','Hang up'),('voice_assistant','Voice assistant'))):
-                state=self.inputs.buttons[name]; recent=state['count'] and now-state['at']<.7
-                x=24+i*((w-48)//3); right=x+(w-48)//3-10
-                button_surface(d,(x,83,right,156),'#536c60' if recent or state['held'] else '#26313d')
-                d.text(((x+right)//2,94),label,font=self.font(17),fill='white',anchor='mt')
-                text='Held' if state['held'] else ('Received' if recent else 'Idle')
-                d.text(((x+right)//2,125),text,font=self.font(15),fill='white',anchor='mt')
-            d.text((24,174),self.inputs.status[:84],font=self.font(13),fill='#b4bdc8')
-            d.text((24,198),'Commands flash briefly; only key events have a held state.',font=self.font(14),fill='white')
-            d.rectangle((24,232,w-24,h-62),outline='#71808b',width=2)
-            d.text((w//2,240),'Touch area · two contacts',font=self.font(17),fill='white',anchor='mt')
-            for slot,contact in self.debug_touch.items():
-                if contact.get('has_position'):
-                    x,y=contact['x_px'],contact['y_px'];color=('#65c9ff','#ffc56e')[slot%2]
-                    d.ellipse((x-25,y-25,x+25,y+25),outline=color,width=4)
-            if self.debug_touch:
-                text='  '.join(f"{slot+1}: {c['action']} ({c.get('x_px')}, {c.get('y_px')})" for slot,c in self.debug_touch.items())
-                d.text((24,h-47),text,font=self.font(14),fill='white')
+            transports=self.inputs.control_status
+            d.text((24,78),'Track controls: '+transports.get('avrcp','Starting'),font=self.font(14),fill='#b4bdc8')
+            d.text((24,100),'Phone / voice: '+transports.get('hfp','Starting'),font=self.font(14),fill='#b4bdc8')
+            for i,(name,label) in enumerate(LABELS.items()):
+                keys=(('play_pause','play','pause','stop') if name=='play_pause' else
+                      ('answer','dial','redial') if name=='answer' else (name,))
+                if name=='answer':label='Dial / answer'
+                states=[self.inputs.buttons[key] for key in keys]
+                state=dict(max(states,key=lambda value:value['at']))
+                state['count']=sum(value['count'] for value in states)
+                recent=state['count'] and now-state['at']<.7
+                col,row=i%3,i//3;cw=(w-48)//3;x=24+col*cw;y=132+row*132;right=x+cw-10
+                button_surface(d,(x,y,right,y+119),'#536c60' if recent or state['held'] else '#26313d')
+                d.text((x+10,y+8),label,font=self.font(18),fill='white')
+                text=('Held' if state['held'] else 'Received' if recent else 'Waiting')+f"  ·  RX {state['count']}"
+                d.text((x+10,y+36),text,font=self.font(13),fill='#c8d4df')
+                results=getattr(self.host,'button_results',{})
+                result=max((results.get(key,{}) for key in (('play_pause','play','pause','stop') if name=='play_pause' else (name,))),key=lambda value:value.get('sequence',0))
+                d.text((x+10,y+57),result.get('result','No command yet')[:28],font=self.font(12),fill='#c8d4df')
+                self.button(d,(x+10,y+79,right-10,y+111),'Test '+LABELS[name],lambda name=name:self.test_radio_button(name),size=13)
+            for i,(source,label) in enumerate((('avrcp','Track RX'),('hfp','Phone RX'),('hondalink','HondaLink RX'))):
+                traffic=self.inputs.traffic[source]
+                detail=traffic['summary']
+                if source=='hondalink' and self.inputs.steering_mode is not None:
+                    detail=f"Steering mode {self.inputs.steering_mode} / "+detail
+                d.text((24,398+i*19),f"{label}: {traffic['count']} / {detail}"[:94],font=self.font(12),fill='#c8d4df')
             if self.inputs.history:
                 last=self.inputs.history[0]
-                d.text((24,h-24),f"Last: {last['button']} / {last['action']} / {last['source']}",font=self.font(13),fill='#b4bdc8')
+                d.text((24,457),f"Last action: {last['button']} / {last['source']} · Screen tests do not increase RX counts.",font=self.font(11),fill='white')
+            else:
+                d.text((24,457),'RX counts vehicle events. Test buttons send Pi → phone; they do not increase RX.',font=self.font(11),fill='#b4bdc8')
+
+    def test_radio_button(self, name):
+        self.inputs.offer(name,'trigger','screen')
+
+    def draw_protocols(self,d,w,h):
+        self.button(d,(16,14,134,56),'Back',self.system_diagnostics)
+        d.text((150,20),'HondaLink diagnostics',font=self.font(24),fill='white')
+        snapshot=self.protocols.snapshot()
+        cw=(w-48)//4
+        for i,label in enumerate(('Connection','Vehicle data','Calls / mic','Traffic')):
+            x=24+i*cw
+            self.button(d,(x,76,x+cw-8,116),label,lambda i=i:self.protocol_tab(i),
+                        color='#426b81' if i==self.protocol_page else '#26313d',size=14)
+        def row(y,label,value):
+            d.text((24,y),label,font=self.font(15),fill='#a3b2c0')
+            text=str(value)
+            while text and d.textlength(text,font=self.font(15))>w-258:text=text[:-1]
+            d.text((235,y),text,font=self.font(15),fill='white')
+            d.line((24,y+28,w-24,y+28),fill='#26313d')
+        if self.protocol_page==0:
+            row(137,'HondaLink','Connected' if snapshot['connected'] else 'Waiting for radio')
+            row(178,'Authentication','Verified' if self.host.session.get('authenticated') else 'Waiting')
+            row(219,'Track channel',self.inputs.control_status.get('avrcp','Waiting'))
+            row(260,'Phone / voice',self.inputs.control_status.get('hfp','Waiting'))
+            row(301,'App sessions',f"{len(snapshot['sessions'])} acknowledged")
+        elif self.protocol_page==1:
+            status=snapshot.get('vehicle_status',{})
+            flags=status.get('flags')
+            brake=status.get('parking_brake_engaged')
+            row(137,'Parking brake','Engaged' if brake is True else 'Released' if brake is False else 'Waiting for radio')
+            y=178
+            for key,label,unit in (('engine_rpm','Engine RPM','rpm'),
+                                   ('coolant_temperature_c','Coolant temperature','°C'),
+                                   ('intake_temperature_c','Intake air temperature','°C')):
+                reading=snapshot.get('vehicle_readings',{}).get(key)
+                if reading:
+                    row(y,label,'Stale' if reading['stale'] else f"{reading['value']} {unit}")
+                    y+=41
+            subscription=snapshot.get('vehicle_subscription',{})
+            if subscription:
+                row(y,'CAN subscription',subscription.get('status','pending').capitalize())
+            d.text((24,333),'Parking brake: in-car mapping · CAN sensors: verify against car',font=self.font(12),fill='#a3b2c0')
+        elif self.protocol_page==2:
+            voice=getattr(self.host,'voice',None)
+            fields=voice.current if voice else {}
+            mic=dict(snapshot['mic'])
+            if self.audio.capture:mic.update(self.audio.capture.snapshot())
+            row(137,'Call audio','Active' if fields.get('call_audio') else 'Idle')
+            row(178,'Siri / voice','Active' if fields.get('siri') else 'Idle')
+            level=mic.get('dbfs')
+            status=mic.get('status','Start Siri or a call to test')
+            if isinstance(level,(int,float)):status+=f' ({level:.0f} dBFS)'
+            row(219,'Radio microphone',status)
+            row(260,'Microphone data',f"HFP {mic.get('bytes',0)} B / USB {mic.get('mic_usb_bytes',0)} B")
+            d.text((24,301),'Voice output',font=self.font(15),fill='#a3b2c0')
+            self.button(d,(235,296,w-24,334),'Hands-free' if self.voice_audio.output=='sco' else 'HDMI',self.toggle_voice_output,size=14)
+        else:
+            for i,text in enumerate(snapshot['recent'][:7]):
+                d.text((24,135+i*27),text[:85],font=self.font(14),fill='#c8d4df')
+        d.text((24,350),f"{snapshot['status']} · {snapshot['saved']} saved · {snapshot['dropped']} dropped",font=self.font(14),fill='#a3b2c0')
+        d.text((24,373),('Marked: '+snapshot['last_marker'])[:80],font=self.font(13),fill='#c8d4df')
+        self.button(d,(24,h-77,224,h-32),'Stop recording' if snapshot['recording'] else 'Start recording',self.toggle_protocol_capture,size=15)
+        self.button(d,(238,h-77,426,h-32),'Mark test step',self.mark_protocol_step,size=15)
+        self.button(d,(440,h-77,w-24,h-32),'Test Siri' if self.protocol_page==2 else 'Hardware tests',
+                    (lambda:self.test_radio_button('voice_assistant')) if self.protocol_page==2 else self.debug_tools,size=15)
+        d.text((24,h-22),'Capture continues in the background. Microphone audio is not recorded.',font=self.font(12),fill='#a3b2c0')
+
 
     def change_page(self, delta):
         count = math.ceil(len(self.enabled()) / 5)
@@ -729,8 +960,6 @@ class Launcher:
 
     def update(self, touch):
         touch = for_viewport(touch, self.fb.w, self.fb.h)
-        if self.mode == 'debug_inputs':
-            self.debug_touch = {c['slot']: c for c in touch.get('contacts', [])}
         primary = touch.get("contacts", [])
         primary = primary[0] if primary else {"action": "unused", "has_position": False}
         point = pixels(primary, self.fb.w, self.fb.h)
@@ -770,12 +999,18 @@ class Launcher:
     def session_changed(self, **values):
         self.host.session_changed(**values)
         self.obd.tick(self.host.session)
+        if 'connected' in values:
+            self.inputs.steering_mode=None
+            self.inputs.control_epochs['hondalink-iap'] += 1
         if values.get("connected") is False:
             self.home()
 
     def tick(self):
         for button in self.inputs.drain():
             self.host.button(button)
+        if self.mode == 'audio_settings' and time.monotonic()-self.audio_checked > .5:
+            self.audio_checked = time.monotonic()
+            if self.audio_settings.refresh():self.draw()
         self.tone_test.tick()
         self.host.tick()
         self.obd.tick(self.host.session)
@@ -787,6 +1022,9 @@ class Launcher:
         if self.mode == 'diagnostics':
             _, revision, _ = self.diagnostics.snapshot()
             if revision != self.diagnostic_revision:self.draw()
+        if self.mode == 'protocol_tests' and now-self.protocol_redraw>.25:
+            self.protocol_redraw=now
+            self.draw()
         if self.mode == 'colors':
             if self.picture_dirty and now-self.picture_saved > .1:
                 self.save_picture()
@@ -831,4 +1069,6 @@ class Launcher:
         self.diagnostics.stop()
         self.obd.close()
         self.host.close()
+        self.protocols.close()
+        if hasattr(self.audio.playback,'close'):self.audio.playback.close()
         self.fb.close()

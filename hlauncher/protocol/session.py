@@ -4,6 +4,7 @@ from .frames import frame as honda_frame, Frames as HondaFrames
 import subprocess
 from hlauncher.config import serial_number
 from .auth import AccessoryProof
+from .vehicle_can import VehicleSubscription, HONDALINK, GENERAL
 
 
 def packet(payload):
@@ -59,6 +60,10 @@ class StartProbe:
         self.startup_ready = False
         self.ready_announced = set()
         self.app_restart_needed = False
+        self.simple_remote_state = 0
+        self.vehicle_subscription = VehicleSubscription()
+        self.vehicle_auth_sessions = {}
+        self.vehicle_session = None
 
     def feed(self, data):
         self.buffer.extend(data)
@@ -106,7 +111,33 @@ class StartProbe:
                     "payload": p.hex(),
                 }
             )
-            if len(p) == 4 and p[:2] == b"\0\x38":
+            if p[:2] == b'\x02\x00':
+                # Honda wraps Simple Remote ContextButtonStatus in the same
+                # transaction-bearing iAP format as its other commands.
+                # State bytes are separate 8-bit banks, lowest bank first.
+                if not self.authenticated or not 5 <= len(p) <= 8:
+                    events.append(dict(state='iap_remote_buttons_rejected', bytes=len(p),
+                                       reason='Unauthenticated' if not self.authenticated else 'Invalid length'))
+                else:
+                    mask = int.from_bytes(p[4:], 'little')
+                    previous = self.simple_remote_state
+                    self.simple_remote_state = mask
+                    controls = ((0x01, 'play_pause'), (0x08, 'next'), (0x10, 'previous'),
+                                (0x100, 'play'), (0x200, 'pause'))
+                    supported = sum(bit for bit, _ in controls)
+                    events.append(dict(state='iap_remote_buttons', transaction=int.from_bytes(p[2:4], 'big'),
+                                       mask=mask, unsupported_mask=mask & ~supported, bytes=len(p)))
+                    for bit, name in controls:
+                        if (previous ^ mask) & bit:
+                            events.append(dict(state='iap_remote_button', button=name,
+                                               action='down' if mask & bit else 'up'))
+                    # ContextButtonStatus has no iAP reply. Do not fabricate an ACK.
+            elif len(p) == 4 and p[:2] == b"\0\x38":
+                self.vehicle_subscription.clear()
+                self.vehicle_auth_sessions.clear()
+                self.vehicle_session = None
+                self.simple_remote_state = 0
+                events.append(dict(state='iap_remote_reset'))
                 self.tokens = []
                 self.identification = False
                 self.proof = AccessoryProof()
@@ -421,6 +452,7 @@ class StartProbe:
             elif len(p) == 6 and p[:2] == b"\0\x41" and self.authenticated:
                 txn = int.from_bytes(p[2:4], "big")
                 status, command = p[4:6]
+                events.extend(self.vehicle_subscription.transport_ack(txn, status, command))
                 if txn in self.session_pending and command == 0x3F:
                     sid, index, name = self.session_pending.pop(txn)
                     if status == 0:
@@ -473,10 +505,16 @@ class StartProbe:
                 if sid in self.sessions:
                     decoder = self.honda_decoders.setdefault(sid, HondaFrames())
                     for inner in decoder.feed(data):
-                        events.append(dict(inner, session=sid))
+                        events.append(dict(inner, session=sid, protocol=self.sessions.get(sid)))
                         if inner.get("state") == "honda_frame":
                             mid = inner["message"]
                             body = bytes.fromhex(inner["payload"])
+                            if self.sessions[sid][1] in (GENERAL, HONDALINK):
+                                self.vehicle_subscription.observe(sid, mid, body, events)
+                            # Stock Communication.exe: b9970 ->12bf44 ->1651c4.
+                            # This reports the radio's mode; it is not a button or enable request.
+                            if mid == 0xC1 and len(body) == 4 and body[:3] == b"\x00\x01\x64":
+                                events.append(dict(state="honda_steering_mode",session=sid,mode=body[3]))
                             if (
                                 self.honda_stage.get(sid) == "auth_requested"
                                 and mid == 1
@@ -661,10 +699,27 @@ class StartProbe:
                                         ),
                                     }
                                 )
+                                if self.sessions[sid][1] in (GENERAL, HONDALINK):
+                                    authorized = body[1] == 1
+                                    if authorized:
+                                        self.vehicle_auth_sessions[sid] = dict(result=body[1], flags=body[10])
+                                    else:
+                                        self.vehicle_auth_sessions.pop(sid, None)
+                                        self.vehicle_subscription.clear(sid)
+                                        if self.vehicle_session == sid:
+                                            self.vehicle_session = None
+                                    events.append(dict(state='honda_can_authorization', session=sid,
+                                        protocol=self.sessions[sid][1], authorized=authorized,
+                                        result=body[1], flags=body[10]))
+                            if mid != 0xB3:
+                                self.request_vehicle_data(events, replies)
                             if mid == 0xB3 and body == b"\0":
                                 # Honda app disconnect is distinct from iAP EndDataSession40.
                                 # Retain underlying transports, invalidate application handshake on retry.
                                 self.app_restart_needed = True
+                                self.vehicle_subscription.clear()
+                                self.vehicle_auth_sessions.clear()
+                                self.vehicle_session = None
                                 events.append(
                                     {
                                         "state": "honda_app_disconnect_received",
@@ -682,7 +737,7 @@ class StartProbe:
                                 )
             elif len(p) == 6 and p[:2] == b"\0\x40" and self.authenticated:
                 sid = int.from_bytes(p[4:6], "big")
-                self.sessions.pop(sid, None)
+                self.close_session(sid)
                 events.append({"state": "iap_data_session_closed", "session": sid})
                 replies.append(packet(b"\0\x02" + p[2:4] + bytes.fromhex("0040")))
             elif (
@@ -792,6 +847,40 @@ class StartProbe:
                 )
         return events, replies
 
+    def close_session(self, sid):
+        self.vehicle_subscription.clear(sid)
+        self.vehicle_auth_sessions.pop(sid, None)
+        if self.vehicle_session == sid:
+            self.vehicle_session = None
+        self.sessions.pop(sid,None)
+        for mapping in (self.honda_decoders,self.honda_stage,self.app_metadata_sent):mapping.pop(sid,None)
+        for values in (self.honda_name_retry,self.app_started_sessions,self.metadata_transition_replied,self.ready_announced):values.discard(sid)
+        self.start_ack_pending={txn:value for txn,value in self.start_ack_pending.items() if value!=sid}
+        self.session_pending={txn:value for txn,value in self.session_pending.items() if value[0]!=sid}
+        self.session_start_requested=False
+
+    def request_vehicle_data(self, events, replies):
+        if not self.authenticated or self.active_app is None:
+            return
+        # Firmware C80C4 checks the specific app connection, not a global flag.
+        # One owner per app connection; a bootstrap channel cannot borrow auth.
+        for sid, auth in self.vehicle_auth_sessions.items():
+            name = self.sessions.get(sid, (None, None))[1]
+            if name not in (GENERAL, HONDALINK) or self.honda_stage.get(sid) != 'session_start_notified':
+                continue
+            if self.vehicle_session is not None and self.vehicle_session != sid:
+                continue
+            if sid in self.vehicle_subscription.requests:
+                continue
+            self.vehicle_session = sid
+            events.append(dict(state='honda_can_session_selected', session=sid,
+                               protocol=name, authorization_session=sid, **auth))
+            self.vehicle_subscription.request(sid, self.send_honda, events, replies, protocol=name)
+            return
+
+    def tick(self):
+        return self.vehicle_subscription.tick()
+
     def start_local_app(self, sid, events, replies):
         if sid in self.app_started_sessions:
             return
@@ -857,6 +946,9 @@ class StartProbe:
 
     def start_app_sessions(self, events, replies):
         if self.app_restart_needed:
+            self.vehicle_subscription.clear()
+            self.vehicle_auth_sessions.clear()
+            self.vehicle_session = None
             # A successful real launch is required before this method is entered.
             self.honda_stage.clear()
             self.honda_decoders.clear()
@@ -894,7 +986,10 @@ class StartProbe:
                     "jp.co.honda.rd.dispaudio.app.generals",
                     "jp.co.honda.rd.dispaudio.app.hondalink",
                 ]:
-                    self.session_queue.append((token[2], name))
+                    known={entry[1] for entry in self.sessions.values()}
+                    known.update(entry[2] for entry in self.session_pending.values())
+                    known.update(entry[1] for entry in self.session_queue)
+                    if name not in known:self.session_queue.append((token[2], name))
         events.append(
             {"state": "app_channels_start_after_launch", "app_id": self.active_app}
         )

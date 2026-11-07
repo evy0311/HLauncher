@@ -14,6 +14,53 @@ from test_architecture import Display
 
 
 class DebugTools(unittest.TestCase):
+    def test_unrecognized_rx_is_visible_without_inventing_button_events(self):
+        events=[]
+        monitor=InputMonitor(lambda **v:events.append(v),'',clock=lambda:10)
+        monitor.observe('avrcp','Operation 0x7f press',recognized=False,bytes=8)
+        self.assertEqual(monitor.drain(),[])
+        self.assertEqual(monitor.traffic['avrcp']['count'],1)
+        self.assertFalse(any(state['count'] for state in monitor.buttons.values()))
+        self.assertEqual(events[0]['state'],'radio_control_rx')
+        for _ in range(200):monitor.observe('hfp','AT+UNKNOWN')
+        self.assertEqual(monitor.traffic_pending.qsize(),128)
+        self.assertEqual(monitor.traffic_dropped,72)
+
+    def test_worker_receive_messages_reach_diagnostics_and_preserve_disconnect_evidence(self):
+        events=[]
+        monitor=InputMonitor(lambda **v:events.append(v),'',clock=lambda:10)
+        monitor.receive_control(dict(observation=dict(source='hfp',summary='AT+BVRA=1',bytes=10),recognized=True))
+        monitor.receive_control(dict(button='voice_assistant',action='activate',source='hfp-command'))
+        monitor.receive_control(dict(transport='avrcp',status='Disconnected',rx_packets=0,session_seconds=.2))
+        self.assertEqual(monitor.drain()[0]['button'],'voice_assistant')
+        self.assertEqual(monitor.traffic['hfp']['count'],1)
+        self.assertEqual(events[0]['rx_packets'],0)
+        self.assertEqual(events[0]['session_seconds'],.2)
+        monitor.receive_control([])
+        monitor.receive_control(dict(observation=dict(source=[],summary='invalid')))
+
+    def test_screen_test_never_counts_as_a_received_vehicle_press(self):
+        monitor=InputMonitor(lambda **v:None,'',clock=lambda:10)
+        monitor.offer('next','trigger','screen')
+        self.assertEqual(monitor.drain()[0]['source'],'screen')
+        self.assertEqual(monitor.buttons['next']['count'],0)
+        monitor.offer('dial','trigger','hfp-command');monitor.drain()
+        self.assertEqual(monitor.buttons['dial']['count'],1)
+
+    def test_phone_class_preserves_other_configuration_and_is_idempotent(self):
+        import importlib.util
+        path=Path(__file__).resolve().parents[1]/'scripts/configure_phone_identity.py'
+        spec=importlib.util.spec_from_file_location('phone_identity',path)
+        module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module)
+        for original in ('[General]\nName = HLauncher\n[Policy]\nAutoEnable=true\n',
+                         '[General]\nClass = 0x000100\nName = HLauncher\n',
+                         '# Initial configuration\n'):
+            updated=module.phone_config(original)
+            self.assertIn('Class = 0x00020c',updated)
+            self.assertEqual(module.phone_config(updated),updated)
+            if 'Name' in original:self.assertIn('Name = HLauncher',updated)
+            if '[Policy]' in original:self.assertIn('[Policy]\nAutoEnable=true',updated)
+
     def test_hfp_rx_only_and_no_phone_number_leak(self):
         prefix='D: at.c:162: AT message: '
         self.assertEqual(hfp_command(prefix+'CMD: command:A, value:(null)'),('answer','trigger'))
@@ -79,6 +126,7 @@ class DebugTools(unittest.TestCase):
         sent=[]
         def worker(name,capable=True):
             return SimpleNamespace(manifest=SimpleNamespace(id=name,capabilities={'input.buttons'} if capable else set()),
+                                   ready=True,button_subscription={'answer'} if name=='carplay' else set(),
                                    background_enabled=True,send=lambda **v:sent.append((name,v)) or True)
         host=PluginHost({},720,480,lambda **v:None,lambda:None,None)
         host.workers={'obd':worker('obd',False),'carplay':worker('carplay'),'android-auto':worker('android-auto')}

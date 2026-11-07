@@ -29,7 +29,7 @@ class Media(unittest.TestCase):
             self.assertEqual(broker.sources['carplay']['title'],'Second')
             broker.clear('other')
             self.assertFalse(broker.snapshot()['now_playing']['available'])
-            self.assertFalse(broker.snapshot()['radio_forwarding'])
+            self.assertEqual(broker.snapshot()['radio_forwarding_mode'],'source_only')
 
     def test_bad_updates_and_export_failure_do_not_damage_state(self):
         with tempfile.TemporaryDirectory() as folder:
@@ -49,3 +49,31 @@ class Media(unittest.TestCase):
         self.assertEqual(module.normalize({'MediaSongDuration':float('inf')}),{})
         self.assertEqual(clock(12000),'0:12')
         self.assertEqual(clock(None),'--:--')
+
+    def test_selected_audio_source_is_independent_of_song_reports_and_foreground(self):
+        from hlauncher.media import radio_metadata
+        with tempfile.TemporaryDirectory() as folder:
+            broker=NowPlaying(path=Path(folder)/'state.json')
+            broker.select_source('carplay')
+            broker.publish('carplay',dict(title='Private song',artist='Private artist',duration_ms=1000))
+            broker.publish('background',dict(title='Other song'))
+            self.assertEqual(broker.snapshot()['radio_metadata'],dict(title='Carplay',artist='HLauncher'))
+            broker.select_source('android-auto')
+            self.assertEqual(broker.snapshot()['radio_metadata'],dict(title='Android Auto',artist='HLauncher'))
+            broker.clear('carplay')
+            self.assertEqual(broker.source_plugin,'android-auto')
+            broker.clear('android-auto')  # Android Auto does not need to publish song metadata.
+            self.assertEqual(broker.snapshot()['radio_metadata'],{})
+            for unknown in (None,'unknown',[],{}):self.assertEqual(radio_metadata(unknown),{})
+
+    def test_control_worker_exports_only_source_and_rejects_dead_launcher(self):
+        import os
+        from unittest.mock import patch
+        from hlauncher import controls_worker as worker
+        with tempfile.TemporaryDirectory() as folder,patch.dict(os.environ,HLAUNCHER_RUNTIME_DIR=folder):
+            path=Path(folder)/'now-playing.json'
+            path.write_text(json.dumps(dict(launcher_pid=os.getpid(),source_plugin='android-auto',
+                now_playing=dict(title='Private song',artist='Private artist',album='Private album',duration_ms=123))))
+            self.assertEqual(worker.metadata(),dict(title='Android Auto',artist='HLauncher'))
+            with patch('hlauncher.controls_worker.os.kill',side_effect=ProcessLookupError):
+                self.assertEqual(worker.metadata(),{})

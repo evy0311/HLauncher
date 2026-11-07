@@ -18,7 +18,7 @@ def levels(raw):
 
 
 class Capture:
-    def __init__(self, event=lambda **v: None, pcm=lambda *args: None):
+    def __init__(self, event=lambda **v: None, pcm=lambda *args: None, output_rate=None):
         self.pcm = pcm
         self.event = event
         self.lock = threading.Lock()
@@ -34,6 +34,7 @@ class Capture:
             "channels": 0,
         }
         self.proc = None
+        self.output_rate = output_rate
 
     def update(self, **values):
         with self.lock:
@@ -60,6 +61,7 @@ class Capture:
         self.thread.start()
 
     def stop(self):
+        self.event(state='audio_capture_stop_requested')
         self.cancel.set()
         p = self.proc
         if p and p.poll() is None:
@@ -71,10 +73,15 @@ class Capture:
     def run(self):
         p = None
         bus = None
+        converter = None
         try:
             import dbus
 
             bus = dbus.SystemBus(private=True)
+            # libdbus otherwise exits the entire launcher when this temporary
+            # connection is closed after Siri/call capture (even from a thread).
+            bus.set_exit_on_disconnect(False)
+            self.event(state='audio_capture_bus_open')
             manager = dbus.Interface(
                 bus.get_object("org.bluealsa", "/org/bluealsa"),
                 "org.freedesktop.DBus.ObjectManager",
@@ -137,12 +144,19 @@ class Capture:
                     str(rate),
                     "-c",
                     str(channels),
+                    "--buffer-time=80000",
+                    "--period-time=20000",
                 ],
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 bufsize=0,
             )
             self.proc = p
+            self.event(state='audio_capture_open',rate=rate,channels=channels,codec=str(v.get('Codec','')),
+                       output_rate=self.output_rate or rate)
+            if self.output_rate and rate != self.output_rate:
+                from .resample import Resampler
+                converter=Resampler(rate,self.output_rate,channels=1)
             last = time.monotonic()
             total = 0
             last_log = 0
@@ -173,7 +187,14 @@ class Capture:
                     end = len(data) // 2 * 2
                     carry = data[end:]
                     dbfs, peak = levels(data[:end])
-                    self.pcm(data[:end], rate, channels)
+                    captured=data[:end]
+                    if self.output_rate:
+                        import numpy as np
+                        samples=np.frombuffer(captured,dtype='<i2').astype(np.float32).reshape(-1,channels)/32768
+                        samples=samples.mean(axis=1,keepdims=True)
+                        if converter:samples=converter.process(samples)
+                        captured=np.clip(np.rint(samples*32768),-32768,32767).astype('<i2').tobytes()
+                    if captured:self.pcm(captured, self.output_rate or rate, 1 if self.output_rate else channels)
                     self.update(
                         status=(
                             "Receiving microphone PCM"
@@ -208,6 +229,8 @@ class Capture:
                 self.update(status=text, dbfs=-90.0, peak=0.0)
                 self.event(state="audio_meter_error", error=str(exc))
         finally:
+            self.event(state='audio_capture_closing',cancelled=self.cancel.is_set())
+            if converter:converter.close()
             if p:
                 if p.poll() is None:
                     p.terminate()
@@ -215,46 +238,66 @@ class Capture:
                         p.wait(timeout=1)
                     except subprocess.TimeoutExpired:
                         p.kill()
+                        try:p.wait(timeout=1)
+                        except subprocess.TimeoutExpired:pass
                 for stream in (p.stdout, p.stderr):
                     stream.close()
             if bus:
                 bus.close()
+                self.event(state='audio_capture_bus_closed')
             self.proc = None
+            self.event(state='audio_capture_closed')
 
 
 class AudioBroker:
     """Shared radio audio resources. PCM capture is opt-in; playback is routed to HDMI."""
 
-    def __init__(self, event):
+    def __init__(self, event, independent=False):
         self.event = event
-        self.playback = Playback(event)
+        if independent:
+            from .audio_process import AudioProcess
+            self.playback = AudioProcess(event)
+        else:
+            self.playback = Playback(event)
         self.owner = None
         self.capture = None
         self.worker = None
         self.format = None
         self.dropped = 0
         self.generation = 0
+        self.capture_source = None
+
+    def select_source(self, plugin_id):
+        self.capture_source = plugin_id
+        if hasattr(self.playback,'select_source'):self.playback.select_source(plugin_id)
+        if self.owner and self.owner != plugin_id:self.stop_capture(self.owner)
 
     def stop(self, plugin_id):
         self.playback.stop(plugin_id)
         self.stop_capture(plugin_id)
 
-    def stop_capture(self, plugin_id):
+    def stop_capture(self, plugin_id, notify=True):
         if self.owner != plugin_id:
             return
         self.generation += 1
         self.owner = None
-        self.worker = None
+        worker,self.worker = self.worker,None
         capture, self.capture = self.capture, None
         if capture:
             capture.stop()
+        if notify and worker:
+            try:worker.send(type='audio.capture.stopped')
+            except (OSError,ValueError):pass
         self.event(state="plugin_audio_stopped", plugin=plugin_id)
 
     def request(self, worker, message, active):
         request_id = message.get("request_id")
         kind = message["type"]
         allowed = "audio.capture" in worker.manifest.capabilities
-        if kind == "audio.playback.pcm":
+        if kind=='audio.voice.stop' and 'audio.playback' in worker.manifest.capabilities:
+            if hasattr(self.playback,'stop_voice'):self.playback.stop_voice(worker.manifest.id)
+            return
+        if kind in ("audio.playback.pcm","audio.voice.pcm"):
             if "audio.playback" not in worker.manifest.capabilities or not (active or getattr(worker, "background_enabled", False)):
                 return
             try:
@@ -270,11 +313,18 @@ class AudioBroker:
                 request_id=request_id,
                 capture_supported=True,
                 playback_supported=True,
-                playback_route="hdmi",
+                playback_route=self.playback.route,
                 microphone_gated_by_radio=True,
                 capturing=self.owner == worker.manifest.id,
             )
-        elif kind == "audio.capture.start" and allowed and active:
+        elif kind == "audio.capture.start" and allowed and (active or getattr(worker,'background_enabled',False)):
+            if self.capture_source is not None and self.capture_source!=worker.manifest.id:
+                worker.send(type='audio.error',request_id=request_id,error='Another projection owns the audio source')
+                return
+            output_rate=message.get('sample_rate')
+            if output_rate not in (None,16000):
+                worker.send(type='audio.error',request_id=request_id,error='Unsupported microphone output rate')
+                return
             if self.owner and self.owner != worker.manifest.id:
                 worker.send(
                     type="audio.error",
@@ -282,7 +332,7 @@ class AudioBroker:
                     error="Radio capture already in use",
                 )
                 return
-            if not self.capture:
+            if not self.capture or not self.capture.thread or not self.capture.thread.is_alive():
                 self.owner = worker.manifest.id
                 self.worker = worker
                 self.format = None
@@ -291,11 +341,13 @@ class AudioBroker:
                 self.capture = Capture(
                     lambda **values: self.capture_event(generation, **values),
                     lambda *values: self.pcm(generation, *values),
+                    output_rate=output_rate,
                 )
                 self.capture.start()
+                self.event(state='plugin_audio_capture_requested',plugin=worker.manifest.id,output_rate=output_rate)
             worker.send(type="audio.capture.started", request_id=request_id)
         elif kind == "audio.capture.stop" and allowed:
-            self.stop(worker.manifest.id)
+            self.stop_capture(worker.manifest.id,notify=False)
             worker.send(type="audio.capture.stopped", request_id=request_id)
         else:
             worker.send(
@@ -319,7 +371,7 @@ class AudioBroker:
         if generation != self.generation:
             return
         worker = self.worker
-        if not worker or not worker.active:
+        if not worker or not (worker.active or getattr(worker,'background_enabled',False)):
             return
         fmt = (rate, channels)
         if self.format != fmt:

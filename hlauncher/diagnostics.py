@@ -35,6 +35,8 @@ def collect():
         disk=shutil.disk_usage(STATE_DIR if STATE_DIR.exists() else '/')
         result.update(storage_total=disk.total,storage_free=disk.free)
     except OSError:result.update(storage_total=None,storage_free=None)
+    result['alsa_playback']={str(path):read(path) for path in Path('/proc/asound').glob('card*/pcm*p/sub*/hw_params')}
+    result['hdmi_eld']={str(path):read(path) for path in Path('/proc/asound').glob('card*/eld*')}
     result['dongles']=[]
     for device in Path('/sys/bus/usb/devices').glob('*'):
         if read(device/'idVendor')=='1314':

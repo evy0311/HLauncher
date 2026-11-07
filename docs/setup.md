@@ -120,7 +120,7 @@ Settings is built into the launcher. It lists every installed plugin and lets yo
 
 CarPlay, Android Auto and OBD Gauges are included and enabled initially. The gauges currently use simulated values and do not connect to an OBD adapter. Android Auto requires the separately built OpenAuto engine: run `sudo bash scripts/install_android_auto.sh`, then connect an Android phone directly to the Pi USB port. It is experimental pending phone testing. See [plugins](plugins.md) for installing an external plugin or writing one.
 
-The core exposes an opt-in microphone capture API. The radio still gates live microphone samples behind its hands-free call state. CarPlay output PCM is routed through HDMI; audible playback inside HondaLink is pending confirmation. No automatic call simulation is added; the earlier microphone experiment remains documented in Git history.
+The core exposes an opt-in microphone capture API. The radio still gates live microphone samples behind its hands-free call state. CarPlay output PCM is routed through HDMI; normal media playback inside HondaLink DA is confirmed by the owner. Phone-call routing is separate. No automatic call simulation is added; the earlier microphone experiment remains documented in Git history.
 
 ## Logs and recovery
 
@@ -151,12 +151,22 @@ sudo systemctl disable --now hlauncher hlauncher-connect hlauncher-audio
 The BlueZ workaround is `/etc/systemd/system/bluetooth.service.d/90-hlauncher.conf`. Remove that file and restart Bluetooth only if you also want to undo the workaround. Keep your pairing records.
 
 
+### Audio & EQ settings
+
+See [audio output and PipeWire EQ](audio.md) for Settings → Audio & EQ and the
+12-band controls and Flat/EDM Bass presets. Main media output is fixed to HDMI; old Bluetooth output
+preferences and environment overrides are ignored. The page has no output
+selector or test-tone controls. Bluetooth continues carrying HondaLink control
+and the existing hands-free profiles.
+
 ### HDMI audio
 
 CarPlay PCM goes through the plugin API to a core-owned mixer and one `aplay` worker. The mixer converts simultaneous streams
 to 48 kHz stereo; `config/alsa-hdmi.conf` selects `vc4hdmi0`
-(the HDMI connector nearest the Pi 4 power connector). The mixer uses Python 3.11 audioop to convert each incoming stream;
-ALSA performs HDMI IEC958 framing. System-wide audio defaults are
+(the HDMI connector nearest the Pi 4 power connector). The mixer preserves PCM in 32-bit float and uses SoXR VHQ 28-bit linear-phase
+conversion for source rates other than 48 kHz. PipeWire EQ and its bridge retain
+float PCM; the HDMI endpoint requests S32_LE at 48 kHz. ALSA performs HDMI IEC958
+framing. See [audio fidelity](audio.md#audio-fidelity) for receiver validation. System-wide audio defaults are
 unchanged. Music, prompts and received call audio use this output; microphone
 capture remains separate. Audio control/volume messages are logged; automatic
 media ducking is not implemented yet.
@@ -164,7 +174,7 @@ media ducking is not implemented yet.
 `audio_hdmi_open`, `audio_hdmi_progress` and `audio_hdmi_alsa` in the launcher journal
 show device selection, PCM writes/drops and ALSA diagnostics. Successful writes
 verify software delivery, not that HondaLink selected that physical input.
-Use `HLAUNCHER_AUDIO_DEVICE` to override the ALSA endpoint for diagnosis.
+The main ALSA endpoint is fixed to HDMI; diagnostics report the requested format.
 Playback failures retry after five seconds and do not stop video or HondaLink.
 
 ### CarPlay picture controls
@@ -240,7 +250,15 @@ python3 scripts/now_playing.py
 Press Ctrl+C to stop the viewer; playback continues. For one snapshot or streaming
 JSON, use `python3 -m hlauncher now-playing` or
 `python3 -m hlauncher now-playing --watch --json`. Missing reports show a waiting
-message, never invented song data. This does not forward anything to the radio.
+message, never invented song data. Track reports remain local. Bluetooth AVRCP
+exposes only the selected source title (`Carplay` or `Android Auto`) and artist
+`HLauncher`. Returning to Settings or a non-audio plugin retains a background
+audio source; stopping that source clears the radio metadata. Display availability
+depends on the radio screen and its AVRCP connection.
+
+PipeWire defaults to off on each HLauncher service start. The audio process starts
+the private graph only when the setting is enabled, and stops the graph and its
+playback clients when disabled. The graph unit is not enabled at boot.
 
 
 ### Background audio and gauges
@@ -262,3 +280,65 @@ on Back or when another plugin replaces it. Disabling CarPlay stops its audio.
 The return-item label is sent through the adapter's standard icon configuration
 before Open; the existing OEM icon PNG is not replaced. A phone reconnection may
 be needed for the label change to appear.
+
+### Radio media and phone buttons
+
+See [Radio controls](radio-buttons.md). New installs build the pinned
+button-aware BlueALSA before installing hlauncher-audio.service. Existing bench
+installs can retain their civic-bt-bench unit and use an ExecStart drop-in pointing
+to `/opt/hlauncher-deps/bluealsa-buttons/bin/bluealsa -p a2dp-source -p hfp-ag`.
+Keep bluetoothd's `--noplugin=avrcp`: HLauncher registers its own basic target.
+Back up application files, the old Android Auto engine and the service drop-in
+before upgrading; restore those and restart HLauncher/its audio profile unit to
+roll back. Pairing and HDMI settings do not need resetting.
+
+### Record a HondaLink drive test
+
+Open Settings → Diagnostics → HondaLink. Capture starts automatically with the
+HLauncher service and continues while using CarPlay, Android Auto or Settings.
+Connection, Vehicle data, Calls/mic and Traffic tabs show received activity.
+Vehicle messages remain identified by session/message until their sensor fields
+are decoded. No simulated sensor values are added to this page.
+The Vehicle data tab shows parking brake Engaged/Released using the in-car test
+mapping, plus received radio flags and payload-change counts. Disconnecting
+clears the displayed brake state. Sensors without received data are omitted.
+After the Honda application authentication exchange, HLauncher requests passive
+RPM (`0x17C`) and temperature (`0x324`) records once per HondaLink session, with
+a cycle field of 500. No vehicle-speed subscription or CAN transmit is enabled.
+Coolant and intake-air mappings follow the older Honda K/Civic layout; confirm
+them against the car during a cold-start/warm-up test. Newer Hondas reuse `0x324`
+with different meanings. Received sensors appear on Vehicle data; readings older
+than five seconds show Stale, and a disconnect clears them. Requests, setting
+responses, timeouts, invalid/encrypted data and decoded records are captured.
+The capture summary includes subscription history and latest received values.
+Capture records include app-protocol identity and bounded byte/bit differences
+for non-touch packets; other unmapped flags are not labeled as sensors.
+
+Use **Mark test step** before each phase: connection, tracks, Siri, incoming call,
+outgoing call, call end, vehicle controls and completion. **Stop recording** saves
+the current capture; **Start recording** starts another. Captures are private JSONL
+files under `/var/lib/hlauncher/protocol-captures`, rotated within 64 MB. The page
+shows dropped events and storage errors. Microphone audio is not saved: only
+formats, levels, byte counts, projection/HFP state and routing events are recorded.
+Capture headers identify the launcher process and system boot. The background
+writer syncs files once per second and when stopping a capture. Microphone
+open/stop/close events identify the stage reached during Siri/call teardown.
+
+The Calls/mic tab provides **Test Siri** and a **Voice output** selector. Identified
+call/Siri streams default to hands-free (Bluetooth SCO); HDMI remains available
+for comparison. Ordinary media stays on HDMI. The CarPlay dongle requests the
+radio microphone, converted to 16 kHz mono for USB, only during its voice/call
+capture requests. Returning to Settings preserves a background call. A stopped
+source, stale USB bridge or expired state lease clears voice routing/state.
+The dongle's call-audio events do not provide a caller list or incoming/outgoing
+ringing information; these are not fabricated.
+
+After testing, summarize the retained captures over SSH:
+
+```bash
+cd /opt/hlauncher
+sudo python3 scripts/protocol_capture.py
+```
+
+The summary includes test markers, command/message counts, call/Siri transitions,
+voice routing, microphone byte counts and errors without printing packet payloads.

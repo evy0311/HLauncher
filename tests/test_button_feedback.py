@@ -19,16 +19,19 @@ class ButtonFeedback(unittest.TestCase):
             ui = Launcher(framebuffer=fb, preferences=Preferences(Path(folder)/'settings.json'), manifests={})
             try:
                 normal = fb.last.tobytes()
-                ui.update(touch('down', 570, 300))
+                bounds, _ = ui.actions[-1]
+                x,y=(bounds[0]+bounds[2])//2,(bounds[1]+bounds[3])//2
+                ui.update(touch('down', x, y))
                 self.assertEqual(ui.mode, 'home')
                 self.assertNotEqual(fb.last.tobytes(), normal)
                 ui.update(touch('up'))
                 self.assertEqual(ui.mode, 'settings')
                 ui.home()
-                ui.update(touch('down', 570, 300))
-                ui.update(touch('move', 400, 200))
+                normal=fb.last.tobytes()
+                ui.update(touch('down', x, y))
+                ui.update(touch('move', 700, 460))
                 self.assertEqual(fb.last.tobytes(), normal)
-                ui.update(touch('move', 570, 300))
+                ui.update(touch('move', x, y))
                 ui.update(touch('up'))
                 self.assertEqual(ui.mode, 'home')
             finally:

@@ -98,8 +98,10 @@ class Engine:
             print(json.dumps({'event':'openauto_log_unavailable','error':str(exc)}),flush=True)
         try:
             while line:=self.proc.stderr.readline(8192):
-                if handler:
-                    record=logging.LogRecord('openauto',logging.INFO,'',0,line.decode(errors='replace').rstrip(),(),None)
+                from hlauncher_sdk.logging import output_summary
+                summary=output_summary(line)
+                if handler and summary is not None:
+                    record=logging.LogRecord('openauto',logging.INFO,'',0,summary,(),None)
                     handler.handle(record)
         finally:
             if handler:handler.close()

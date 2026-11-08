@@ -29,49 +29,23 @@ The installer adds a BlueZ drop-in which disables AVRCP and restarts Bluetooth a
 
 Check for other `bluetooth.service.d` overrides before proceeding. The older `99-civic-watchdog.conf`, if present, already implements the same workaround. Do not run another BlueALSA instance alongside `hlauncher-audio`.
 
+Automatic enrollment and the setup wizard are described in [first boot and recovery](onboarding.md). Start the dedicated agent and services after stopping any competing BlueALSA instance:
+
 ```bash
 sudo systemctl disable --now bluealsa.service bluealsa-aplay.service
 sudo systemctl restart bluetooth
-sudo systemctl start hlauncher-audio
-bluetoothctl --agent DisplayYesNo
+sudo systemctl enable --now hlauncher-firstboot hlauncher-pairing hlauncher-recovery hlauncher-audio hlauncher-connect hlauncher
 ```
 
-At the Bluetooth prompt:
+Add **HLauncher** from the radio's HandsFreeLink settings during the five-minute pairing window. Confirm on the radio, then open HLauncher through HondaLink to complete setup. The Pi accepts a qualifying first candidate and saves its address only after a successful HondaLink handshake. Subsequent connections are limited to that saved radio. Do not run a competing `bluetoothctl` default agent during enrollment.
 
-```text
-default-agent
-power on
-system-alias HLauncher
-pairable on
-discoverable on
-```
-
-Add a phone from the radio's HandsFreeLink settings. Select HLauncher and confirm the matching code on both sides. Approve profile authorization prompts if shown. Then:
-
-```text
-devices Paired
-trust AA:BB:CC:DD:EE:FF
-quit
-```
-
-Use the **HandsFreeLink radio's** address, not the Pi controller address. Replace the example address everywhere below. Save it in `/etc/hlauncher.env`:
-
-```bash
-sudoedit /etc/hlauncher.env
-```
-
-```text
-HLAUNCHER_RADIO_ADDRESS=AA:BB:CC:DD:EE:FF
-HLAUNCHER_LOG_DIR=/var/log/hlauncher
-```
-
-The address must match the paired peer: the listener rejects connections from other devices. The reconnect service trusts and reconnects an already-paired radio; it does not pair automatically.
+A previously paired, valid `HLAUNCHER_RADIO_ADDRESS` in `/etc/hlauncher.env` is adopted once for migration. New installations can leave it all zeroes. Use System → Radio & Wi-Fi to reopen pairing or use the authenticated phone recovery page if automatic identification fails.
 
 ## HDMI
 
 Use the Pi 4's HDMI0 connector, the micro-HDMI connector nearest USB-C power, and connect it to the radio's HDMI input. The panel is **800x480**, but the radio advertises **720x480 and 640x480 over HDMI**. The working setup uses 720x480. A forced 800x480 signal appeared on the radio and was confirmed at the Pi framebuffer, but later testing showed that its right side was cropped. It was reverted. Accepting a signal does not mean the radio displays its entire active area correctly. Touch coordinates are scaled to the actual framebuffer size.
 
-The renderer requires RGB565, 16 bits per pixel. The launcher unit sets this before starting:
+The renderer requires RGB565, 16 bits per pixel. The Bluetooth bootstrap sets this before opening the display:
 
 ```bash
 sudo fbset -depth 16
@@ -87,7 +61,7 @@ Use the default Bookworm KMS display driver (`dtoverlay=vc4-kms-v3d`). If HDMI i
 video=HDMI-A-1:720x480@60D
 ```
 
-Back up that file first and retain its existing root/PARTUUID and other arguments. Reboot after changing it. HLauncher does not edit boot settings automatically. The `D` forces digital output. Use the advertised mode rather than forcing the panel resolution; the tested 800x480 input cropped the picture. A 60Hz HDMI mode does not guarantee a 60fps CarPlay stream.
+Back up that file first and retain its existing root/PARTUUID and other arguments. Reboot after changing it. The source installer does not edit boot settings; the fresh-image builder configures this mode. The `D` forces digital output. Use the advertised mode rather than forcing the panel resolution; the tested 800x480 input cropped the picture. A 60Hz HDMI mode does not guarantee a 60fps CarPlay stream.
 
 The launcher switches tty1 to graphics mode while it is running, hiding the login cursor. It restores the previous console mode on a normal exit.
 
@@ -100,7 +74,7 @@ Look for `display_backend` with `backend: drm` and `vsync: true` in the journal.
 Plug the Carlinkit dongle into a Pi USB host port. Connect the iPhone to the dongle. USB/IP and VirtualHere are not needed for the Pi 4 setup.
 
 ```bash
-sudo systemctl enable --now hlauncher-audio hlauncher-connect hlauncher
+sudo systemctl enable --now hlauncher-firstboot hlauncher-pairing hlauncher-recovery hlauncher-audio hlauncher-connect hlauncher
 ```
 
 Open HondaLink on the radio. Select CarPlay in the Pi launcher. Tapping CarPlay's Honda icon returns to the Pi launcher; it does not exit to the radio's home screen. A Home button is also available on the waiting-for-phone page.
@@ -118,7 +92,7 @@ Start the installed service again afterward with `sudo systemctl start hlauncher
 
 Settings is built into the launcher. It lists every installed plugin and lets you enable or disable it. Tap **Start with** to cycle between Launcher and the enabled plugins. Changes are saved in `/var/lib/hlauncher/settings.json`. Disabling the default plugin resets the default to Launcher. Returning with CarPlay's Honda icon always goes to the launcher, even when CarPlay is the default.
 
-CarPlay, Android Auto and OBD Gauges are included and enabled initially. The gauges currently use simulated values and do not connect to an OBD adapter. Android Auto requires the separately built OpenAuto engine: run `sudo bash scripts/install_android_auto.sh`, then connect an Android phone directly to the Pi USB port. It is experimental pending phone testing. See [plugins](plugins.md) for installing an external plugin or writing one.
+CarPlay, Android Auto and OBD Gauges are included; the setup wizard chooses which to enable. OBD Gauges supports compatible BLE ELM327 adapters. Android Auto requires the separately built OpenAuto engine: run `sudo bash scripts/install_android_auto.sh`, then connect an Android phone directly to the Pi USB port. It is experimental pending phone testing. See [plugins](plugins.md) for installing an external plugin or writing one.
 
 The core exposes an opt-in microphone capture API. The radio still gates live microphone samples behind its hands-free call state. CarPlay output PCM is routed through HDMI; normal media playback inside HondaLink DA is confirmed by the owner. Phone-call routing is separate. No automatic call simulation is added; the earlier microphone experiment remains documented in Git history.
 
@@ -132,7 +106,7 @@ lsusb -d 1314:
 sudo node /opt/hlauncher/plugins/carplay/runtime/usb/bridge.mjs --check
 ```
 
-Protocol and bridge logs are written to `/var/log/hlauncher`. They can contain device identifiers and packet contents; review them before sharing. Log rotation is not implemented in this snapshot.
+Production mode records bounded errors. Enable Debug in System settings before collecting detailed protocol logs; packet captures can contain private/device data. The fresh image keeps general logs in RAM and protocol captures in persistent state. See [logging and recovery](onboarding.md#production-and-debug) for retention and exports.
 
 If Bluetooth restarts and HondaLink no longer opens, restart HLauncher so it registers its profiles again:
 
@@ -145,7 +119,7 @@ If the display shows the Linux console, inspect the HLauncher journal and frameb
 To stop the installation:
 
 ```bash
-sudo systemctl disable --now hlauncher hlauncher-connect hlauncher-audio
+sudo systemctl disable --now hlauncher hlauncher-connect hlauncher-audio hlauncher-pairing hlauncher-recovery hlauncher-firstboot
 ```
 
 The BlueZ workaround is `/etc/systemd/system/bluetooth.service.d/90-hlauncher.conf`. Remove that file and restart Bluetooth only if you also want to undo the workaround. Keep your pairing records.

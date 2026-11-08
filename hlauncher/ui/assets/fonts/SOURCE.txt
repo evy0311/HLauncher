@@ -1,0 +1,12 @@
+Barlow Condensed SemiBold, unmodified. Copyright 2017 The Barlow Project Authors.
+License: SIL Open Font License 1.1 (OFL.txt).
+Source: https://github.com/google/fonts/tree/main/ofl/barlowcondensed
+Downloaded 2026-11-07. Exact distributed file checksums:
+BarlowCondensed-SemiBold.ttf SHA256 7b619d14bc2327509a9ef32b0890f709626f7ecc9ff61191c2a4314c5499d2d9
+OFL.txt SHA256 186d750eb496a4c17a76385f82be6aea2ac1cf2de074a811d63786cf374ea73f
+
+Noto Sans JP, unmodified variable font; selected label weight 700.
+Source: https://raw.githubusercontent.com/google/fonts/main/ofl/notosansjp/NotoSansJP%5Bwght%5D.ttf
+License: NotoSansJP-OFL.txt (SIL OFL 1.1). Downloaded 2026-11-07.
+NotoSansJP.ttf SHA256 c2f3b4d463500a2ddcd3849cded1fceeb9fd6d1c32e6cbecd568453ba50fc68f
+NotoSansJP-OFL.txt SHA256 1c05c68c34f9708415aada51f17e1b0092d2cea709bf4a94cd38114f9e73d7d9

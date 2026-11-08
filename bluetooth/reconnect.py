@@ -53,9 +53,16 @@ def main():
     p = argparse.ArgumentParser()
     p.add_argument("--peer", default=os.environ.get("HLAUNCHER_RADIO_ADDRESS"))
     a = p.parse_args()
-    if not a.peer or not re.fullmatch(r"(?:[0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2}", a.peer):
+    if a.peer and not re.fullmatch(r"(?:[0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2}", a.peer):
         raise SystemExit("Invalid peer address")
+    from pathlib import Path
+    import sys
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+    from hlauncher.setup_state import SetupState
+    from sdk.hlauncher_sdk.logging import DebugFilter
+    state = SetupState()
     logging.basicConfig(level=logging.INFO, format="%(message)s")
+    log.addFilter(DebugFilter())
     signal.signal(signal.SIGTERM, lambda *_: STOP.set())
     signal.signal(signal.SIGINT, lambda *_: STOP.set())
     last = None
@@ -86,24 +93,29 @@ def main():
                 )
             STOP.wait(5)
             continue
-        rc, info = command("info", a.peer)
+        peer = state.peer
+        if not peer:
+            note('enrollment', 'Waiting for verified radio pairing')
+            STOP.wait(2)
+            continue
+        rc, info = command("info", peer)
         if rc or not present(info, "Paired"):
             note(
                 "not_paired",
-                "HandsFreeLink pairing unavailable; pair once interactively, then this service can reconnect automatically",
+                "HandsFreeLink pairing unavailable; reopen enrollment from HLauncher recovery",
             )
             STOP.wait(10)
             continue
         if not present(info, "Trusted"):
             note("trusting", "Marking the existing paired HandsFreeLink device trusted")
-            command("trust", a.peer)
+            command("trust", peer)
         if present(info, "Connected"):
             note("connected", "HandsFreeLink connected")
             backoff = 5
             next_connect = 0
         elif time.monotonic() >= next_connect:
             note("connecting", "Connecting to HandsFreeLink")
-            rc, result = command("connect", a.peer, timeout=12)
+            rc, result = command("connect", peer, timeout=12)
             if rc:
                 # Keep a bounded diagnostic; avoid continuous connection attempts.
                 lines = [s.strip() for s in result.splitlines() if s.strip()]

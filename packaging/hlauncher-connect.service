@@ -6,7 +6,7 @@ StartLimitIntervalSec=0
 
 [Service]
 Type=simple
-EnvironmentFile=/etc/hlauncher.env
+EnvironmentFile=-/etc/hlauncher.env
 ExecStart=/usr/bin/python3 /opt/hlauncher/bluetooth/reconnect.py
 Restart=on-failure
 RestartSec=5

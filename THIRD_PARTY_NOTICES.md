@@ -82,3 +82,20 @@ The optional button-aware daemon is built separately from BlueALSA 4.0.0
 https://github.com/arkq/bluez-alsa, licensed under MIT. Upstream source and its
 license remain under /opt/hlauncher-deps/src/bluealsa-buttons. HLauncher changes
 only configuration defaults using scripts/patch_button_audio.py.
+
+## Barlow Condensed
+
+The shared radio-style clock uses unmodified Barlow Condensed SemiBold by
+The Barlow Project Authors, distributed under the SIL Open Font License 1.1.
+The font, license and source/checksums are in `hlauncher/ui/assets/fonts/`.
+Source: https://github.com/google/fonts/tree/main/ofl/barlowcondensed .
+The home-screen icons, gradients and reflections are original HLauncher artwork;
+no Honda firmware images or fonts are included.
+
+## Noto Sans JP
+
+Radio-style UI labels use the unmodified Google Fonts variable Noto Sans JP
+distribution at weight 700. Copyright 2014–2021 Adobe, distributed under SIL
+Open Font License 1.1. The font, `NotoSansJP-OFL.txt` and source/checksum are
+included in `hlauncher/ui/assets/fonts/`.
+Source: https://github.com/google/fonts/tree/main/ofl/notosansjp .

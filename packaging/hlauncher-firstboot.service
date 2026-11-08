@@ -1,0 +1,15 @@
+[Unit]
+Description=Initialize HLauncher device identity and storage transition
+After=local-fs.target
+Before=hlauncher-pairing.service
+
+[Service]
+Type=oneshot
+EnvironmentFile=-/etc/hlauncher.env
+WorkingDirectory=/opt/hlauncher
+ExecStart=/usr/bin/python3 -m hlauncher.firstboot
+RemainAfterExit=yes
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

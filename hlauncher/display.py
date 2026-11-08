@@ -98,6 +98,9 @@ class Framebuffer:
         if self.tty_fd is not None:
             try:
                 fcntl.ioctl(self.tty_fd, 0x4B3A, self.tty_mode)
+            except OSError as exc:
+                import errno
+                if exc.errno not in (errno.EIO, errno.ENODEV, errno.ENXIO): raise
             finally:
                 os.close(self.tty_fd)
                 self.tty_fd = None

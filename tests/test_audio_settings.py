@@ -48,7 +48,7 @@ class AudioSettingsTests(unittest.TestCase):
             ui = Launcher(framebuffer=Display(), preferences=Preferences(Path(folder)/'settings.json'), manifests={})
             try:
                 ui.settings()
-                action = next(action for box,action in ui.actions if box[1] == 308)
+                action = next(action for _,action in ui.actions if action == ui.audio_page)
                 action()
                 self.assertEqual(ui.mode, 'audio_settings')
                 ui.adjust_eq('bass', 1)
@@ -56,7 +56,30 @@ class AudioSettingsTests(unittest.TestCase):
                 with patch.object(ui.audio_settings, 'status', return_value='PipeWire ready'):
                     ui.change_audio(pipewire=True)
                 self.assertTrue(AudioSettings(Path(folder)/'audio.json').values['pipewire'])
-                self.assertEqual(len(ui.actions), 29)
+                self.assertEqual(len(ui.actions), 28)
+            finally:ui.close()
+
+    def test_themed_audio_controls_route_each_band_and_home(self):
+        from hlauncher.launcher import Launcher
+        from hlauncher.config import Preferences
+        from test_architecture import Display
+        with tempfile.TemporaryDirectory() as folder:
+            ui=Launcher(framebuffer=Display(),preferences=Preferences(Path(folder)/'settings.json'),manifests={})
+            try:
+                ui.audio_page()
+                for i,key in enumerate(EQ_BANDS):
+                    ui.actions[4+2*i][1]()
+                    self.assertEqual(ui.audio_settings.values['bands'][key],1)
+                self.assertEqual(list(ui.audio_settings.values['bands'].values()),[1]*12)
+                ui.adjust_eq('bass',2)
+                ui.actions[2][1]()  # EQ Off
+                ui.actions[3][1]()  # Reset EQ
+                self.assertEqual(ui.audio_settings.values['bass'],0)
+                self.assertFalse(ui.audio_settings.values['eq'])
+                self.assertEqual(ui.audio_settings.preset_name(),'Flat')
+                self.assertFalse(ui.audio_settings.values['pipewire'])
+                ui.actions[0][1]()
+                self.assertEqual(ui.mode,'home')
             finally:ui.close()
 
     def test_twelve_band_presets_persist_and_flat_clears_legacy_gains(self):

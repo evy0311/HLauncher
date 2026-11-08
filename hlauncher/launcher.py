@@ -11,7 +11,7 @@ from .buttons import LABELS
 from .config import RADIO_ADDRESS
 from .diagnostics import Diagnostics, power_status
 from .obd import ObdManager
-from .audio_settings import AudioSettings, BANDS, EQ_BANDS
+from .audio_settings import AudioSettings, EQ_BANDS
 from .audio import AudioBroker
 from .catalog import discover
 from .config import Preferences, TILE_COLORS
@@ -71,6 +71,9 @@ class Launcher:
         self.obd_revision = -1
         self.diagnostic_page = 0
         self.diagnostic_revision = -1
+        self.storage_info = dict(protected=False, available=False, message='Checking storage layout')
+        self.storage_checked = 0
+        self.setup_list_page = 0
         self.mode = "home"
         self.page = 0
         self.settings_page = 0
@@ -87,6 +90,135 @@ class Launcher:
 
     def font(self, size):
         return ui_font(size + 2 if size >= 18 else size, 600 if size >= 18 else 400)
+
+    def setup_page(self, restart=False):
+        from .onboarding import Onboarding
+        self.tone_test.stop()
+        self.host.deactivate()
+        self.wizard = Onboarding(self.prefs, self.manifests)
+        if restart: self.wizard.restart()
+        self.mode = 'onboarding'
+        self.setup_list_page = 0
+        self.press = None
+        self.draw()
+
+    def setup_action(self, function, *args):
+        try:
+            function(*args)
+            self.banner = ''
+        except (ValueError, OSError) as exc:
+            self.banner = str(exc)[:70]
+        self.draw()
+
+    def setup_next(self, delta):
+        self.setup_list_page = 0
+        self.setup_action(self.wizard.move, delta)
+
+    def setup_finish(self, protect=False):
+        try:
+            self.wizard.finish()
+        except (OSError, ValueError) as exc:
+            self.banner = str(exc)[:70]; self.draw(); return
+        for plugin_id, manifest in self.manifests.items():
+            if not self.prefs.enabled(manifest): self.host.stop(plugin_id)
+        self.event(state='setup_completed')
+        if protect:
+            self.storage_confirm(True)
+        else:
+            self.home('Setup complete. Storage protection is available in System settings.')
+            self.pending_default = True
+
+    def system_settings(self):
+        self.tone_test.stop()
+        self.diagnostics.stop()
+        self.host.deactivate()
+        self.mode = 'system_settings'
+        self.press = None
+        self.banner = ''
+        self.draw()
+
+    def toggle_debug(self):
+        before = self.prefs.data['debug_mode']
+        self.prefs.data['debug_mode'] = not before
+        try: self.prefs.save()
+        except OSError:
+            self.prefs.data['debug_mode'] = before
+            raise
+        if not self.prefs.data['debug_mode']:
+            self.protocols.stop()
+        self.draw()
+
+    def recovery_page(self):
+        self.host.deactivate()
+        self.mode = 'recovery_settings'
+        self.press = None
+        self.draw()
+
+    def maintenance(self, operation):
+        from .recovery import request_job
+        try:
+            request_job(operation)
+            self.banner = 'Requested. Status updates below.'
+        except FileExistsError: self.banner = 'A setup operation is already queued.'
+        except (OSError, ValueError): self.banner = 'Could not request the setup operation.'
+        self.draw()
+
+    def storage_confirm(self, enabled):
+        self.host.deactivate()
+        self.storage_target = enabled
+        self.mode = 'storage_confirm'
+        self.press = None
+        self.draw()
+
+    def setup_more(self, total):
+        self.setup_list_page = (self.setup_list_page+1)%total
+        self.draw()
+
+    def draw_system_settings(self, d, w, h):
+        self.button(d,(16,14,134,56),'Back',self.settings)
+        d.text((150,22),'System',font=self.font(25),fill='white')
+        info=self.storage_info
+        rows=[('Radio and Wi-Fi','Pair another radio or connect home Wi-Fi',self.recovery_page),
+              ('Setup wizard','Change your initial setup choices',lambda:self.setup_page(True)),
+              ('Debug mode','On · detailed logs and tests' if self.prefs.data['debug_mode'] else 'Off · normal operation',self.toggle_debug),
+              ('Storage protection','Enabled' if info['protected'] else info['message'],lambda:self.storage_confirm(not info['protected'])),
+              ('Shut down','Power off the Raspberry Pi cleanly',self.shutdown_page)]
+        if self.prefs.data['debug_mode']:
+            rows.append(('Diagnostics','Hardware, HondaLink and reports',self.system_diagnostics))
+        for i,(title,detail,action) in enumerate(rows):
+            self.menu_row(d,(24,74+i*56,w-24,126+i*56),title,detail,action)
+
+    def draw_recovery(self, d, w, h):
+        from .setup_state import SetupState
+        from .recovery import job_status
+        credentials=SetupState(self.prefs.path.parent).credentials()
+        self.button(d,(16,14,134,56),'Back',self.system_settings)
+        d.text((150,22),'Radio and Wi-Fi',font=self.font(25),fill='white')
+        lines=[credentials['ssid'],'Password: '+credentials['password'],
+               'http://192.168.4.1:8080 · username: hlauncher',
+               'Use the page to connect home Wi-Fi or pair another radio.']
+        for i,text in enumerate(lines):d.text((24,100+i*44),text,font=self.font(17),fill='#c8d4df')
+        self.button(d,(24,294,w-24,350),'Enable setup Wi-Fi',lambda:self.maintenance('hotspot'),size=18)
+        result=job_status(self.prefs.path.parent)
+        d.text((24,375),str(result.get('message',result['status']))[:75],font=self.font(14),fill='#ffbc75')
+        d.text((24,409),'Changing the radio ends this connection. Continue from your phone.',font=self.font(14),fill='#a3b2c0')
+
+    def draw_storage(self, d, w, h):
+        from .recovery import job_status
+        self.button(d,(16,14,134,56),'Back',self.system_settings)
+        d.text((150,22),'Storage protection',font=self.font(24),fill='white')
+        target=self.storage_target
+        lines=['Enable protection?' if target else 'Switch to maintenance mode?',
+               'The change takes effect after restarting.',
+               'Pairing and settings stay on the persistent data partition.',
+               'Finish updates in maintenance mode, then re-enable protection.']
+        for i,text in enumerate(lines):d.text((24,95+i*42),text,font=self.font(17),fill='#c8d4df')
+        if self.storage_info['available']:
+            self.button(d,(24,280,330,334),'Enable' if target else 'Disable',lambda:self.maintenance('protect' if target else 'unprotect'),size=18)
+            self.button(d,(350,280,w-24,334),'Restart',lambda:self.maintenance('reboot'),size=18)
+        else:d.text((24,280),self.storage_info['message'],font=self.font(15),fill='#ffbc75')
+        result=job_status(self.prefs.path.parent)
+        d.text((24,370),str(result.get('message',result['status']))[:80],font=self.font(14),fill='#c8d4df')
 
     def draw_brand(self, draw, xy, size):
         x, y = xy
@@ -119,11 +251,17 @@ class Launcher:
             "com.honda.hondalink.launcher",
         ):
             return False
-        self.home()
-        self.pending_default = True
+        if not self.prefs.data['setup_complete']:
+            self.setup_page()
+        else:
+            self.home()
+            self.pending_default = True
         return True
 
     def home(self, message=""):
+        if hasattr(self, 'wizard') and not self.prefs.data['setup_complete']:
+            self.setup_page()
+            return
         self.diagnostics.stop()
         self.tone_test.stop()
         self.restore_hdmi_range()
@@ -203,6 +341,9 @@ class Launcher:
         self.draw()
 
     def system_diagnostics(self):
+        if not self.prefs.data['debug_mode']:
+            self.system_settings()
+            return
         self.tone_test.stop()
         self.host.deactivate()
         self.mode = 'diagnostics'
@@ -213,6 +354,7 @@ class Launcher:
         self.draw()
 
     def debug_tools(self, page='menu'):
+        if not self.prefs.data['debug_mode']: return
         self.tone_test.stop()
         self.host.deactivate()
         self.mode = 'debug_'+page
@@ -221,6 +363,7 @@ class Launcher:
         self.draw()
 
     def protocol_tests(self):
+        if not self.prefs.data['debug_mode']: return
         self.tone_test.stop()
         self.host.deactivate()
         self.mode = 'protocol_tests'
@@ -232,6 +375,7 @@ class Launcher:
         self.draw()
 
     def toggle_protocol_capture(self):
+        if not self.prefs.data['debug_mode']: return
         if self.protocols.snapshot()['recording']:self.protocols.stop()
         else:self.protocols.start()
         self.draw()
@@ -495,126 +639,38 @@ class Launcher:
         self.fb.image(dither_rgb565(image) if self.mode not in ("hdmi_test", "debug_colors") else image)
 
     def draw(self):
+        if self.mode == "home":
+            from .ui.home import draw_launcher
+            draw_launcher(self)
+            return
+        if self.mode == "settings":
+            from .ui.settings import draw_launcher
+            draw_launcher(self)
+            return
+        if self.mode == "onboarding":
+            from .ui.onboarding import draw_launcher
+            draw_launcher(self)
+            return
+        if self.mode in ("audio_settings", "obd_settings"):
+            from .ui import audio, obd
+            (audio if self.mode == "audio_settings" else obd).draw_launcher(self)
+            return
+        if self.mode == "plugin" and self.host.active in ('carplay','android-auto'):
+            if not self.has_frame:
+                from .ui.projection import draw_launcher
+                draw_launcher(self)
+            return
         w, h = self.fb.w, self.fb.h
         tile_color = TILE_COLORS[self.prefs.data["tile_color"]]
         image = draw_background(w, h, tile_color) if self.mode not in ("hdmi_test", "debug_colors") else Image.new("RGB", (w, h), "#080c14")
         d = ImageDraw.Draw(image)
         self.actions = []
-        if self.mode == "home":
-            self.draw_brand(d, (24, 16), 28)
-            if self.banner:
-                d.text((24, 55), self.banner[:66], font=self.font(15), fill="#ffbc75")
-            entries = [
-                (
-                    m.name,
-                    lambda pid=m.id: self.open_plugin(pid),
-                    m.color,
-                    m.id,
-                )
-                for m in sorted(self.enabled(), key=lambda m: m.id != 'carplay')
-            ]
-            pages = max(1, math.ceil(len(entries) / 5))
-            self.page = min(self.page, pages - 1)
-            top = 72
-            bottom = h - (62 if pages > 1 else 12)
-            tw = th = min((w - 72) // 3, (bottom - top - 12) // 2)
-            left = (w - (3 * tw + 24)) // 2
-            for i in range(6):
-                col, row = i % 3, i // 3
-                x = left + col * (tw + 12)
-                y = top + row * (th + 12)
-                box = (x, y, x + tw, y + th)
-                at = self.page * 5 + i
-                if i == 5:
-                    entry = ('Settings', self.settings, tile_color, 'settings')
-                elif at < len(entries):
-                    entry = entries[at]
-                else:
-                    d.rounded_rectangle(box, radius=14, outline="#1d2838", width=1)
-                    continue
-                label, action, color, icon = entry
-                glass_tile(image, box, tile_color)
-                draw_icon(image, icon, (x + tw / 2, y + th * .40), round(tw * .40))
-                label_size = 20
-                while label_size > 14 and d.textlength(label[:18], font=self.font(label_size)) > tw - 32:
-                    label_size -= 1
-                d.text(
-                    (x + tw / 2, y + th - 48), label[:18], font=self.font(label_size), fill="white", anchor="mt"
-                )
-                self.actions.append((box, action))
-            if pages > 1:
-                self.button(
-                    d,
-                    (w - 185, h - 52, w - 110, h - 12),
-                    "Prev",
-                    lambda: self.change_page(-1),
-                    size=15,
-                )
-                self.button(
-                    d,
-                    (w - 100, h - 52, w - 24, h - 12),
-                    "Next",
-                    lambda: self.change_page(1),
-                    size=15,
-                )
-                d.text(
-                    (24, h - 44),
-                    f"{self.page+1} / {pages}",
-                    font=self.font(15),
-                    fill="white",
-                )
-        elif self.mode == "settings":
-            self.button(d, (16,14,110,56), 'Back', self.home)
-            self.draw_brand(d, (150,20), 21)
-            default=self.prefs.data['default_plugin']
-            default_label=self.manifests[default].name if default in self.manifests and self.prefs.enabled(self.manifests[default]) else 'Launcher'
-            rows=[('Plugins','Enable apps and adjust CarPlay picture',self.plugin_settings),
-                  ('OBD Gauges','Connect a Bluetooth LE ELM327 dongle',self.obd_settings),
-                  ('Tile color',self.prefs.data['tile_color'],self.tile_colors),
-                  ('Start with',default_label,self.cycle_default),
-                  ('Audio & EQ','12 bands · Flat and EDM Bass presets',self.audio_page),
-                  ('System diagnostics','Connections, hardware and reports',self.system_diagnostics)]
-            for i,(title,detail,action) in enumerate(rows):
-                y=72+i*59
-                self.menu_row(d,(24,y,w-24,y+55),title,detail,action)
-            d.text((24,h-33),'HLauncher '+__version__,font=self.font(14),fill='#a3adb8')
-            if self.banner:d.text((w-24,h-33),self.banner[:50],font=self.font(14),fill='#ffbc75',anchor='rt')
-        elif self.mode == 'audio_settings':
-            self.button(d,(16,14,134,56),'Back',self.settings)
-            d.text((150,20),'Audio & EQ',font=self.font(27),fill='white')
-            d.text((w-24,34),'HDMI audio',font=self.font(16),fill='#a3adb8',anchor='rm')
-            values = self.audio_settings.values
-            gap = 8
-            control_w = (w-48-gap*3)//4
-            self.button(d,(24,82,24+control_w,132),'PipeWire '+('On' if values['pipewire'] else 'Off'),
-                        lambda:self.change_audio(pipewire=not values['pipewire']),size=17)
-            x=24+control_w+gap
-            self.button(d,(x,82,x+control_w,132),'EQ On' if values['eq'] else 'EQ bypassed',
-                        lambda:self.change_audio(eq=not values['eq']),size=17)
-            preset = self.audio_settings.preset_name()
-            for i,name in enumerate(('Flat','EDM Bass')):
-                x=24+(i+2)*(control_w+gap)
-                self.button(d,(x,82,x+control_w,132),name,
-                            lambda name=name:self.change_audio(**self.audio_settings.preset_changes(name)),
-                            color='#246b48' if preset==name else '#2d3945',size=17)
-            cw=(w-48-gap*5)//6
-            for i,(key,freq) in enumerate(EQ_BANDS.items()):
-                x=24+(i%6)*(cw+gap);y=150+(i//6)*146
-                gain=values['bands'][key]
-                button_surface(d,(x,y,x+cw,y+136),'#202b35')
-                frequency=f'{freq/1000:g} kHz' if freq>=1000 else f'{freq:g} Hz'
-                d.text((x+cw/2,y+15),frequency,
-                       font=self.font(17),fill='#bcc9d3',anchor='mt')
-                d.text((x+cw/2,y+41),f'{gain:+d} dB',font=self.font(23),fill='white',anchor='mt')
-                left,right=x+10,x+cw-10;zero=(left+right)/2;point=left+(gain+12)/24*(right-left)
-                d.line((left,y+75,right,y+75),fill='#44515c',width=3)
-                d.line((zero,y+70,zero,y+80),fill='#89949f',width=1)
-                d.ellipse((point-3,y+72,point+3,y+78),fill='#b8d4dc')
-                self.button(d,(x+5,y+87,x+cw//2-3,y+132),'−',lambda key=key:self.adjust_eq(key,-1),size=22)
-                self.button(d,(x+cw//2+3,y+87,x+cw-5,y+132),'+',lambda key=key:self.adjust_eq(key,1),size=22)
-            notice = self.audio_notice or (preset+' · No automatic gain adjustment')
-            if any(values[key] for key in BANDS):notice='Previous tone gains active — Flat clears all gains'
-            d.text((24,h-24),notice[:86],font=self.font(13),fill='#a3adb8')
+        if self.mode == 'system_settings':
+            self.draw_system_settings(d,w,h)
+        elif self.mode == 'recovery_settings':
+            self.draw_recovery(d,w,h)
+        elif self.mode == 'storage_confirm':
+            self.draw_storage(d,w,h)
         elif self.mode == 'plugins_settings':
             self.button(d,(16,14,110,56),'Back',self.settings)
             d.text((150,20),'Plugins',font=self.font(27),fill='white')
@@ -666,33 +722,6 @@ class Launcher:
                     size=15,
                 )
             if self.banner:d.text((24,h-28),self.banner[:60],font=self.font(14),fill='#ffbc75')
-        elif self.mode == 'obd_settings':
-            self.button(d,(16,14,110,56),'Back',self.settings)
-            d.text((150,20),'OBD Gauges',font=self.font(27),fill='white')
-            state = self.obd.state
-            self.obd_revision = self.obd.revision
-            message = state.get('message','No OBD dongle connected')
-            # Wrap long adapter errors so they stay readable on this screen.
-            import textwrap
-            for i,line in enumerate(textwrap.wrap(message,64)[:2]):
-                d.text((24,76+i*23),line,font=self.font(17),fill='white')
-            self.button(d,(24,132,240,178),'Scan',self.obd_scan,size=18)
-            self.button(d,(260,132,450,178),'Disconnect',self.obd_disconnect,size=18)
-            devices=state.get('devices',[])
-            pages=max(1,math.ceil(len(devices)/3))
-            self.obd_page=min(self.obd_page,pages-1)
-            for i,row in enumerate(devices[self.obd_page*3:self.obd_page*3+3]):
-                y=194+i*61
-                name=row.get('name','BLE device')[:35]
-                address=row['address']
-                self.menu_row(d,(24,y,w-24,y+58),name,address,
-                              lambda address=address:self.obd_connect(address))
-            if not devices:
-                d.text((24,205),'Scan nearby BLE devices, then select your dongle.',font=self.font(18),fill='#c0c8d0')
-            if pages>1:
-                self.button(d,(w-190,h-68,w-110,h-24),'Prev',lambda:self.obd_devices_page(-1),size=16)
-                self.button(d,(w-100,h-68,w-24,h-24),'Next',lambda:self.obd_devices_page(1),size=16)
-            d.text((24,h-25),'BLE ELM327 · unsupported sensors show —',font=self.font(14),fill='#adbcc8')
         elif self.mode == 'diagnostics':
             self.button(d,(16,14,110,56),'Back',self.settings)
             d.text((150,20),'System diagnostics',font=self.font(25),fill='white')
@@ -949,7 +978,7 @@ class Launcher:
 
 
     def change_page(self, delta):
-        count = math.ceil(len(self.enabled()) / 5)
+        count = math.ceil(len(self.enabled()) / 4)
         self.page = (self.page + delta) % max(1, count)
         self.draw()
 
@@ -1006,6 +1035,27 @@ class Launcher:
             self.home()
 
     def tick(self):
+        waiting_projection = (self.mode == "plugin" and self.host.active in ('carplay','android-auto')
+                              and not self.has_frame)
+        if (self.mode in ("home","settings","audio_settings","obd_settings") or waiting_projection) and time.strftime('%Y-%m-%d %H:%M') != getattr(self, 'home_clock', None):
+            self.draw()
+        # Storage inspection runs off the renderer thread and never delays Bluetooth.
+        if time.monotonic()-self.storage_checked > 5:
+            self.storage_checked = time.monotonic()
+            import threading
+            def inspect_storage():
+                from .storage import status
+                self.storage_info = status()
+            threading.Thread(target=inspect_storage,daemon=True).start()
+        if self.mode in ('onboarding','system_settings','recovery_settings','storage_confirm'):
+            if time.monotonic()-getattr(self,'setup_redraw',0)>1:
+                self.setup_redraw=time.monotonic(); self.draw()
+        # A debug toggle from the recovery site takes effect without restarting.
+        if time.monotonic()-getattr(self,'debug_checked',0)>1:
+            self.debug_checked=time.monotonic()
+            self.prefs.data['debug_mode'] = Preferences(self.prefs.path).data['debug_mode']
+            if not self.prefs.data['debug_mode'] and (self.mode.startswith('debug_') or self.mode in ('protocol_tests','diagnostics')):
+                self.protocols.stop(); self.system_settings()
         for button in self.inputs.drain():
             self.host.button(button)
         if self.mode == 'audio_settings' and time.monotonic()-self.audio_checked > .5:
@@ -1033,7 +1083,7 @@ class Launcher:
                 if self.picture.refresh():
                     self.picture_values = dict(self.picture.values)
                     self.draw()
-        if self.pending_default:
+        if self.pending_default and self.prefs.data['setup_complete']:
             self.pending_default = False
             plugin_id = self.prefs.data["default_plugin"]
             if plugin_id in self.manifests and self.prefs.enabled(

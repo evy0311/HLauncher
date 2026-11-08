@@ -1,6 +1,8 @@
 """Installation paths, peer identity and atomic launcher preferences."""
 
 import json
+import copy
+import fcntl
 import os
 from pathlib import Path
 import re
@@ -12,6 +14,12 @@ LOG_DIR = Path(os.environ.get("HLAUNCHER_LOG_DIR", "/var/log/hlauncher"))
 RADIO_ADDRESS = os.environ.get("HLAUNCHER_RADIO_ADDRESS", "00:00:00:00:00:00").upper()
 if not re.fullmatch(r"(?:[0-9A-F]{2}:){5}[0-9A-F]{2}", RADIO_ADDRESS):
     raise ValueError("Invalid HLAUNCHER_RADIO_ADDRESS")
+try:
+    _peer = json.loads((STATE_DIR/'radio.json').read_text())
+    if _peer.get('verified') is True and re.fullmatch(r"(?:[0-9A-F]{2}:){5}[0-9A-F]{2}", _peer.get('address','')):
+        RADIO_ADDRESS = _peer['address']
+except (OSError, ValueError, TypeError, AttributeError):
+    pass
 RADIO_PATH = "/org/bluez/hci0/dev_" + RADIO_ADDRESS.replace(":", "_")
 RFCOMM_PATH = "/org/bluealsa/hci0/dev_" + RADIO_ADDRESS.replace(":", "_") + "/rfcomm"
 
@@ -31,13 +39,19 @@ def serial_number():
 class Preferences:
     def __init__(self, path=None):
         self.path = Path(path) if path else STATE_DIR / "settings.json"
-        self.data = {"enabled": {}, "background": {}, "default_plugin": None, "tile_color": "Blue"}
+        self.data = {"enabled": {}, "background": {}, "default_plugin": None, "tile_color": "Blue",
+                     "setup_complete": False, "setup_step": 0, "debug_mode": False}
         try:
             loaded = json.loads(self.path.read_text())
             if not isinstance(loaded, dict) or not isinstance(
                 loaded.get("enabled", {}), dict
             ):
                 raise ValueError("invalid settings")
+            # Existing installations retain their choices; only fresh images auto-onboard.
+            self.data['setup_complete'] = loaded.get('setup_complete', True) is True
+            self.data['debug_mode'] = loaded.get('debug_mode', False) is True
+            step = loaded.get('setup_step', 0)
+            self.data['setup_step'] = step if type(step) is int and 0 <= step <= 5 else 0
             self.data["enabled"] = {
                 k: v
                 for k, v in loaded.get("enabled", {}).items()
@@ -56,6 +70,8 @@ class Preferences:
         except (ValueError, OSError):
             # Keep the file for diagnosis; a bad preference file must not stop boot.
             pass
+
+        self._saved = copy.deepcopy(self.data)
 
     def enabled(self, manifest):
         return self.data["enabled"].get(
@@ -91,24 +107,40 @@ class Preferences:
             self.data['tile_color'] = before
             raise
 
-    def save(self):
+    def save(self, force=()):
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        fd, name = tempfile.mkstemp(prefix=".settings-", dir=self.path.parent)
+        lock_fd = os.open(self.path.with_name('.'+self.path.name+'.lock'), os.O_CREAT|os.O_RDWR, 0o600)
         try:
-            with os.fdopen(fd, "w") as f:
-                json.dump(self.data, f, indent=2)
-                f.write("\n")
-                f.flush()
-                os.fsync(f.fileno())
-            os.replace(name, self.path)
-            directory = os.open(self.path.parent, os.O_RDONLY)
+            fcntl.flock(lock_fd, fcntl.LOCK_EX)
             try:
-                os.fsync(directory)
+                current = json.loads(self.path.read_text())
+                if not isinstance(current, dict): current = {}
+            except (OSError, ValueError): current = {}
+            merged = {}
+            for key, value in self.data.items():
+                if key in ('enabled','background') and isinstance(current.get(key),dict):
+                    item = dict(current[key])
+                    old = self._saved.get(key,{})
+                    item.update({k:v for k,v in value.items() if k not in item or old.get(k)!=v})
+                    merged[key] = item
+                else:
+                    merged[key] = (value if key in force or key not in current or self._saved.get(key)!=value
+                                   else current[key])
+            fd, name = tempfile.mkstemp(prefix=".settings-", dir=self.path.parent)
+            try:
+                with os.fdopen(fd, "w") as f:
+                    json.dump(merged, f, indent=2)
+                    f.write("\n"); f.flush(); os.fsync(f.fileno())
+                os.replace(name, self.path)
+                directory = os.open(self.path.parent, os.O_RDONLY)
+                try: os.fsync(directory)
+                finally: os.close(directory)
+                self.data = merged
+                self._saved = copy.deepcopy(merged)
             finally:
-                os.close(directory)
+                if os.path.exists(name): os.unlink(name)
         finally:
-            if os.path.exists(name):
-                os.unlink(name)
+            os.close(lock_fd)
 
     def set_enabled(self, manifest, enabled):
         before = json.loads(json.dumps(self.data))

@@ -12,7 +12,7 @@ import sys
 import tempfile
 import threading
 import time
-from .config import ROOT, LOG_DIR
+from .config import ROOT, LOG_DIR, STATE_DIR
 from sdk.hlauncher_sdk.buttons import BUTTONS, ACTIONS
 
 sys.path.insert(0, str(ROOT / "sdk"))
@@ -55,7 +55,7 @@ class Worker:
         self.status = "Starting " + manifest.name + "..."
         logs = LOG_DIR / "plugins" / manifest.id
         logs.mkdir(parents=True, exist_ok=True)
-        self.stderr = (logs / f"worker-{time.time_ns()}.log").open("wb")
+        self.stderr = open(os.devnull, "wb")
         env = dict(os.environ)
         env.update(
             HLAUNCHER_CONTROL_FD=str(child.fileno()),
@@ -63,6 +63,7 @@ class Worker:
             HLAUNCHER_WIDTH=str(width),
             HLAUNCHER_HEIGHT=str(height),
             HLAUNCHER_LOG_DIR=str(logs),
+            HLAUNCHER_STATE_DIR=str(STATE_DIR),
             PYTHONPATH=str(ROOT / "sdk"),
         )
         env.pop("HLAUNCHER_RADIO_ADDRESS", None)
@@ -79,10 +80,11 @@ class Worker:
                 env=env,
                 pass_fds=(child.fileno(), self.file.fileno())+((audio_socket.fileno(),) if audio_socket else ()),
                 stdin=subprocess.DEVNULL,
-                stdout=self.stderr,
-                stderr=self.stderr,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
                 start_new_session=True,
             )
+            threading.Thread(target=self.capture_output,args=(logs,),daemon=True).start()
         except Exception:
             self.socket.close()
             self.memory.close()
@@ -102,6 +104,25 @@ class Worker:
             slots=SLOTS,
             capabilities=sorted(manifest.capabilities),
         )
+
+    def capture_output(self, logs):
+        import logging
+        from logging.handlers import RotatingFileHandler
+        from sdk.hlauncher_sdk.logging import output_summary
+        handler=None
+        try:
+            try:
+                handler=RotatingFileHandler(logs/'worker.log',maxBytes=2*1024*1024,backupCount=2)
+            except OSError:
+                pass  # Keep draining the pipe even when storage is unavailable.
+            while line:=self.proc.stdout.readline(8192):
+                summary=output_summary(line)
+                if handler is not None and summary is not None:
+                    handler.emit(logging.LogRecord('plugin',logging.INFO,'',0,summary,(),None))
+        except (OSError,ValueError):pass
+        finally:
+            if handler:handler.close()
+            if self.proc.stdout:self.proc.stdout.close()
 
     def send(self, **message):
         raw = encode(message)

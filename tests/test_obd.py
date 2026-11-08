@@ -123,3 +123,19 @@ class Lifecycle(unittest.IsolatedAsyncioTestCase):
             job.cancel()
             with self.assertRaises(asyncio.CancelledError):await job
             self.assertIsNone(s.client)
+
+
+class DashboardUI(unittest.TestCase):
+    def test_disconnected_values_are_never_displayed_and_header_scales(self):
+        from hlauncher.ui.obd_dashboard import Dashboard
+        from PIL import ImageChops
+        dashboard=Dashboard(800,480)
+        with patch('hlauncher.ui.obd_dashboard.time.strftime',return_value='2026-11-07 12:00'):
+            stale=dashboard.render([200,210,2,4],connected=False)
+            empty=dashboard.render([None]*4,connected=False)
+            self.assertIsNone(ImageChops.difference(stale,empty).getbbox())
+            live=dashboard.render([200,210,2,4],connected=True)
+            self.assertIsNotNone(ImageChops.difference(empty,live).getbbox())
+            self.assertEqual(live.size,(800,480))
+            self.assertEqual(dashboard.home_box,(0,0,89,52))
+            self.assertIsNotNone(ImageChops.difference(live,dashboard.render([200,210,2,4],pressed=True)).getbbox())

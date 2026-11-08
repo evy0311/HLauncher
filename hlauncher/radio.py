@@ -29,55 +29,36 @@ class ProfileRegistry:
 
 
 def main():
-    import argparse, datetime, json, os, pathlib, socket
-    from hlauncher.config import LOG_DIR, RADIO_PATH, RADIO_ADDRESS
+    import argparse, os, pathlib, socket
+    from hlauncher.config import RADIO_PATH, RADIO_ADDRESS
     from hlauncher.protocol_diagnostics import ProtocolDiagnostics
     from hlauncher.protocol.session import StartProbe
     from hlauncher.touch import decode_touch
-    from hlauncher.launcher import Launcher
+    from hlauncher.bootstrap import BootstrapLauncher
+    from hlauncher.setup_state import SetupState, atomic_json, address
+    from hlauncher.event_log import EventLog
     import dbus, dbus.service, dbus.mainloop.glib
     from gi.repository import GLib
 
     p = argparse.ArgumentParser()
     p.add_argument("--seconds", type=int, default=900)
     a = p.parse_args()
-    if RADIO_ADDRESS == "00:00:00:00:00:00":
-        raise SystemExit(
-            "Set HLAUNCHER_RADIO_ADDRESS to the paired HandsFreeLink address"
-        )
-    root = LOG_DIR
-    root.mkdir(parents=True, exist_ok=True)
-    f = (
-        root
-        / ("listener-" + datetime.datetime.now().strftime("%Y%m%d-%H%M%S") + ".jsonl")
-    ).open("x", buffering=1)
-    import threading
-
-    log_lock = threading.Lock()
     protocols = ProtocolDiagnostics()
-    protocols.start()
-
-    def event(**v):
-        with log_lock:
-            if f.closed:
-                return
-            v["wall"] = datetime.datetime.now(datetime.timezone.utc).isoformat()
-            protocols.observe(v)
-            s = json.dumps(v)
-            print(s, flush=True)
-            f.write(s + "\n")
-
-    launcher = Launcher(event, independent_audio=True, protocol_diagnostics=protocols)
-    try:
-        launcher.home()
-        event(state="hdmi_launcher_ready")
-    except Exception:
-        launcher.close()
-        raise
+    event = EventLog(protocols)
+    state = SetupState()
+    launcher = BootstrapLauncher(event, protocols, state)
     launch_app = launcher.launch
     dbus.mainloop.glib.DBusGMainLoop(set_as_default=True)
     bus = dbus.SystemBus()
     loop = GLib.MainLoop()
+    if not state.path.exists() and RADIO_ADDRESS != '00:00:00:00:00:00':
+        try:
+            values = dbus.Interface(bus.get_object('org.bluez', RADIO_PATH),
+                                    'org.freedesktop.DBus.Properties').GetAll('org.bluez.Device1')
+            if values.get('Paired'):
+                atomic_json(state.path, {'address': address(RADIO_ADDRESS), 'verified': True})
+        except (ValueError, dbus.DBusException):
+            pass
     import signal
 
     # Normal service stops run the existing cleanup and restore console mode.
@@ -112,11 +93,19 @@ def main():
             if str(device) in self.sockets:
                 self.RequestDisconnection(device)
             n = fd.take()
-            if str(device) != RADIO_PATH:
+            try:
+                values = dbus.Interface(bus.get_object('org.bluez', device),
+                                        'org.freedesktop.DBus.Properties').GetAll('org.bluez.Device1')
+                peer = address(values.get('Address',''))
+                permitted = bool(values.get('Paired')) and state.allowed(peer)
+            except (ValueError, dbus.DBusException):
+                permitted = False
+            if not permitted:
                 os.close(n)
                 raise dbus.exceptions.DBusException(
                     "Peer not permitted", name="org.bluez.Error.Rejected"
                 )
+            launcher.set_peer(peer)
             s = socket.socket(fileno=n)
             s.setblocking(False)
             self.sockets[str(device)] = s
@@ -139,6 +128,9 @@ def main():
                     if self.uuid.endswith("cafe"):
                         events, replies = self.parsers[device].feed(b)
                         for e in events:
+                            if (e.get('state') == 'honda_authentication_result_received'
+                                    and e.get('result') == 1 and launcher.peer_address):
+                                state.verify(launcher.peer_address)
                             event(uuid=self.uuid, **e)
                             launcher.inputs.receive_iap_remote(e)
                             if e.get('state') == 'honda_frame' and e.get('message') != 0x43:
@@ -236,12 +228,20 @@ def main():
 
     def draw_tick():
         try:
+            event.refresh()
             launcher.tick()
         except Exception as exc:
             event(state="touch_overlay_error", error=str(exc))
         return True
 
     def protocol_tick():
+        import time
+        connection=dict(connected=bool(launcher.session.get('connected')),
+                        authenticated=bool(launcher.session.get('authenticated')),
+                        hondalink_ready=any(parser.vehicle_auth_sessions for _, profile in profiles
+                            for parser in profile.parsers.values()), monotonic=time.monotonic())
+        try: atomic_json(pathlib.Path('/run/hlauncher/connection.json'),connection)
+        except OSError as exc:event(state='connection_status_error',error=str(exc))
         for _, profile in profiles:
             if profile.uuid.endswith('cafe'):
                 for parser in list(profile.parsers.values()):
@@ -277,6 +277,8 @@ def main():
                 "RequireAuthorization": dbus.Boolean(False), "AutoConnect": dbus.Boolean(False),
             }))
         registry.tick()
+        event(state='bluetooth_profiles_ready')
+        GLib.idle_add(launcher.show_pairing)
         GLib.timeout_add_seconds(2, registry.tick)
         GLib.timeout_add_seconds(1, protocol_tick)
         if a.seconds > 0:
@@ -290,4 +292,4 @@ def main():
             except dbus.DBusException:
                 pass
         launcher.close()
-        f.close()
+        event.close()

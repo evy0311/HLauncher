@@ -57,7 +57,7 @@ Connect the display to the Pi 4's **HDMI0** port, nearest USB-C power. The Carli
 
 ## Setup
 
-The full [setup guide](docs/setup.md) covers pairing, display configuration, migration and troubleshooting. For a fresh Pi:
+The [first-boot guide](docs/onboarding.md) covers the image builder, automatic radio pairing, on-screen wizard, phone recovery, Debug mode and storage protection. Image building/boot acceptance still requires an ARM64 Linux host and Pi validation. The full [setup guide](docs/setup.md) covers a source installation and display troubleshooting. For an existing Pi:
 
 ### 1. Install
 
@@ -75,20 +75,9 @@ It also installs a Bluetooth workaround that disables AVRCP and restarts BlueZ a
 
 ### 2. Pair with the radio
 
-Follow the [pairing steps](docs/setup.md#bluetooth). The Pi must advertise the audio profiles as well as provide the HondaLink control connection. Confirm the pairing code and trust the HandsFreeLink device.
+Follow the [automatic pairing steps](docs/setup.md#bluetooth). Start the pairing/audio/listener services, add **HLauncher** from HandsFreeLink and confirm on the radio. A successful HondaLink handshake saves the radio; subsequent connections are restricted to it. New installations do not require editing a MAC address. Open HLauncher on the radio to choose plugins, startup app and theme in the wizard.
 
-Set the **radio's Bluetooth address**, not the Pi's address, in:
-
-```bash
-sudoedit /etc/hlauncher.env
-```
-
-```text
-HLAUNCHER_RADIO_ADDRESS=AA:BB:CC:DD:EE:FF
-HLAUNCHER_LOG_DIR=/var/log/hlauncher
-```
-
-Replace the example address with the paired radio's address. The listener only accepts that peer. Pairing records and Wi-Fi credentials are not included in this repository.
+Existing paired installations can retain their configured radio address for one-time migration. Pairing records and Wi-Fi credentials are not included in this repository.
 
 ### 3. Check the display
 
@@ -106,10 +95,10 @@ The renderer requires RGB565, 16 bits per pixel. If HDMI is not detected, follow
 Stop any older launcher or application using the same framebuffer, Bluetooth profiles or USB dongle first. Then:
 
 ```bash
-sudo systemctl enable --now hlauncher-audio hlauncher-connect hlauncher
+sudo systemctl enable --now hlauncher-firstboot hlauncher-pairing hlauncher-recovery hlauncher-audio hlauncher-connect hlauncher
 ```
 
-Open **HondaLink** on the radio. You should see CarPlay, Android Auto, OBD Gauges and Settings in the launcher. Android Auto requires its separate engine build. Open CarPlay and connect the iPhone to the dongle. The Honda icon in CarPlay returns to HLauncher; the waiting-for-phone screen also has a Back button.
+Open **HondaLink** on the radio and finish the setup wizard. The launcher then shows your enabled apps and Settings. Android Auto requires its separate engine build on source installations; the image builder includes it. Open CarPlay and connect the iPhone to the dongle. The Honda icon in CarPlay returns to HLauncher; the waiting-for-phone screen also has a Back button.
 
 ### 5. Choose your apps
 

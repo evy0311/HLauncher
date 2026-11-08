@@ -259,6 +259,8 @@ async def main():
     LOG_DIR.mkdir(parents=True,exist_ok=True)
     handler=RotatingFileHandler(LOG_DIR/'obd-ble.log',maxBytes=2*1024*1024,backupCount=2)
     handler.setFormatter(logging.Formatter('%(asctime)s %(levelname)s %(message)s'))
+    from sdk.hlauncher_sdk.logging import DebugFilter
+    handler.addFilter(DebugFilter())
     log.addHandler(handler);log.setLevel(logging.DEBUG)
     service=Service()
     task=asyncio.current_task()

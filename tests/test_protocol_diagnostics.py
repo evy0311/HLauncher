@@ -61,7 +61,9 @@ class ProtocolCapture(unittest.TestCase):
 
     def test_diagnostics_tabs_record_in_background_and_voice_output_is_separate(self):
         with tempfile.TemporaryDirectory() as folder:
-            ui=Launcher(framebuffer=Display(),preferences=Preferences(Path(folder)/'settings.json'),manifests={})
+            prefs=Preferences(Path(folder)/'settings.json')
+            prefs.data['debug_mode']=True; prefs.save()
+            ui=Launcher(framebuffer=Display(),preferences=prefs,manifests={})
             try:
                 ui.protocol_tests()
                 for page in range(4):

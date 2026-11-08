@@ -111,7 +111,9 @@ class DebugTools(unittest.TestCase):
 
     def test_pages_render_and_back_stops_audio(self):
         with tempfile.TemporaryDirectory() as folder:
-            ui=Launcher(framebuffer=Display(),preferences=Preferences(Path(folder)/'settings.json'),manifests={})
+            prefs=Preferences(Path(folder)/'settings.json')
+            prefs.data['debug_mode']=True; prefs.save()
+            ui=Launcher(framebuffer=Display(),preferences=prefs,manifests={})
             try:
                 for page in ('menu','audio','colors','inputs'):
                     ui.debug_tools(page);self.assertEqual(ui.fb.last.size,(720,480))

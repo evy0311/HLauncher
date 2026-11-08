@@ -98,11 +98,14 @@ class Architecture(unittest.TestCase):
         )
         try:
             self.assertEqual(ui.mode, "home")
-            self.assertEqual(len(ui.actions), 2)
+            self.assertEqual(len(ui.actions), 3)
             carplay_box, _ = ui.actions[0]
-            settings_box, callback = ui.actions[1]
+            _, audio_callback = ui.actions[1]
+            audio_callback()
+            self.assertEqual(ui.mode, 'audio_settings')
+            ui.home()
+            settings_box, callback = ui.actions[2]
             self.assertGreater(settings_box[0], carplay_box[0])
-            self.assertGreater(settings_box[1], carplay_box[1])
             callback()
             self.assertEqual(ui.mode, "settings")
             ui.cycle_default()
@@ -110,9 +113,11 @@ class Architecture(unittest.TestCase):
             ui.toggle_plugin("carplay")
             self.assertIsNone(prefs.data["default_plugin"])
             ui.home()
-            self.assertEqual(len(ui.actions), 1)
+            self.assertEqual(len(ui.actions), 2)
             ui.toggle_plugin("carplay")
             prefs.set_default("carplay")
+            prefs.data['setup_complete'] = True
+            prefs.save()
             with patch.object(ui, "open_plugin") as opened:
                 self.assertTrue(ui.launch("com.honda.hondalink.launcher"))
                 ui.tick()
@@ -123,6 +128,37 @@ class Architecture(unittest.TestCase):
             self.assertFalse(ui.launch("unknown"))
         finally:
             ui.close()
+
+    def test_home_pagination_keeps_audio_settings_and_plugin_callbacks(self):
+        from dataclasses import replace
+        manifests={f'app{i}':replace(self.carplay,id=f'app{i}',name=f'App {i}') for i in range(5)}
+        display=Display()
+        ui=Launcher(framebuffer=display,preferences=self.preferences(),manifests=manifests)
+        try:
+            with patch.object(ui,'open_plugin') as opened:
+                ui.draw()
+                self.assertEqual(len(ui.actions),8)  # four apps, Audio, Settings, paging
+                for index,(a,_) in enumerate(ui.actions):
+                    for b,_ in ui.actions[index+1:]:
+                        self.assertFalse(a[0]<b[2] and b[0]<a[2] and a[1]<b[3] and b[1]<a[3])
+                ui.actions[0][1]()
+                opened.assert_called_with('app0')
+                ui.actions[-1][1]()
+                self.assertEqual(ui.page,1)
+                self.assertEqual(len(ui.actions),5)
+                ui.actions[0][1]()
+                opened.assert_called_with('app4')
+                ui.actions[1][1]()
+                self.assertEqual(ui.mode,'audio_settings')
+                ui.home();ui.change_page(-1)
+                self.assertEqual(ui.page,0)
+            for size in ((640,480),(800,480)):
+                from hlauncher.ui.home import Entry,render
+                frame=render([Entry('Audio','audio',lambda:None),Entry('Settings','settings',lambda:None)],size=size)
+                self.assertEqual(frame.image.size,size)
+                for (x,y,right,bottom),_ in frame.actions:
+                    self.assertTrue(0<=x<right<size[0] and 0<=y<bottom<size[1])
+        finally:ui.close()
 
     def test_crashed_plugin_returns_home_without_waiting(self):
         home = []
@@ -244,6 +280,61 @@ class Architecture(unittest.TestCase):
             ui.host.workers.clear()
             ui.host.active = None
             ui.close()
+
+    def test_projection_child_pages_have_working_home_tab(self):
+        manifests={source:Manifest.load(ROOT/'plugins'/source,bundled=True)
+                   for source in ('carplay','android-auto')}
+        ui=Launcher(framebuffer=Display(),preferences=self.preferences(),manifests=manifests)
+        try:
+            for source in manifests:
+                ui.mode='plugin';ui.host.active=source;ui.has_frame=False
+                with patch.object(ui.host,'status',return_value='Waiting for phone'):
+                    ui.draw()
+                self.assertEqual([box for box,_ in ui.actions],[(0,0,80,52)])
+                ui.update({'contacts':[{'slot':0,'action':'down','has_position':True,
+                    'x_raw':round(32*32767/719),'y_raw':round(26*32767/479)}]})
+                ui.update({'contacts':[{'slot':0,'action':'up','has_position':False}]})
+                self.assertEqual(ui.mode,'home')
+                self.assertIsNone(ui.host.active)
+        finally:ui.close()
+
+    def test_settings_bars_preserve_navigation_and_default_selection(self):
+        ui=Launcher(framebuffer=Display(),preferences=self.preferences(),manifests={'carplay':self.carplay})
+        try:
+            ui.settings()
+            self.assertEqual(len(ui.actions),7)
+            self.assertTrue(all(box[3]-box[1]==44 for box,_ in ui.actions[1:]))
+            ui.actions[4][1]()
+            self.assertEqual(ui.prefs.data['default_plugin'],'carplay')
+            self.assertEqual(ui.mode,'settings')
+            ui.actions[3][1]()
+            self.assertEqual(ui.mode,'tile_colors')
+            ui.settings();ui.actions[5][1]()
+            self.assertEqual(ui.mode,'audio_settings')
+            ui.settings();ui.actions[1][1]()
+            self.assertEqual(ui.mode,'plugins_settings')
+            ui.settings();ui.actions[6][1]()
+            self.assertEqual(ui.mode,'system_settings')
+            ui.settings();ui.actions[0][1]()
+            self.assertEqual(ui.mode,'home')
+        finally:ui.close()
+
+    def test_themed_obd_adapter_actions_and_pagination(self):
+        ui=Launcher(framebuffer=Display(),preferences=self.preferences(),manifests={})
+        try:
+            ui.obd.state=dict(message='Ready',devices=[dict(name='Adapter '+str(i),address=str(i)) for i in range(4)])
+            with patch.object(ui.obd,'command') as command:
+                ui.obd_settings()
+                ui.actions[1][1]();command.assert_called_with('scan')
+                ui.actions[2][1]();command.assert_called_with('disconnect')
+                ui.actions[3][1]();command.assert_called_with('connect',address='0')
+                ui.actions[-1][1]()
+                self.assertEqual(ui.obd_page,1)
+                ui.actions[3][1]();command.assert_called_with('connect',address='3')
+                self.assertEqual(ui.actions[3][0][3]-ui.actions[3][0][1],44)
+                ui.actions[0][1]()
+                self.assertEqual(ui.mode,'home')
+        finally:ui.close()
 
 
 if __name__ == "__main__":

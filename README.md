@@ -1,224 +1,108 @@
 # HLauncher
 
-A Raspberry Pi app launcher for the original HondaLink head unit in my 2014 Civic.
+A Raspberry Pi launcher for the original HDMI-equipped HondaLink radio in my
+2014 Civic. It adds CarPlay, wired Android Auto and live OBD gauges through plugins.
 
-Honda never released a factory CarPlay update for this generation of Civic radio. HLauncher is my first step toward bringing it to the original hardware. Using a Pi through the existing HondaLink connection is the least invasive approach I've tested so far: the radio firmware stays intact, and we can run our own software and plugins on the Pi. It also gives us the flexibility to try things beyond CarPlay.
+The Pi acts as a phone running the older HondaLink app: HDMI carries video and
+media audio, while Bluetooth carries the HondaLink handshake and touchscreen
+input. Open **HondaLink** on the radio to use HLauncher. The radio firmware stays
+intact.
 
-Future experiments will focus on getting CarPlay running **natively on the head unit itself**. For more on the reverse engineering, experiments and progress, check out [my blog](https://www.evanhorsley.com/blog/).
-
-The radio thinks the Pi is a phone running the older HondaLink app. The Pi sends video over HDMI, while Bluetooth carries the HondaLink handshake and touchscreen input. Opening HondaLink on the radio opens HLauncher. No desktop environment or radio firmware patch is required for this connection.
-
-HLauncher handles the radio connection and provides a home screen for **plugins**. Working plugins now include **CarPlay**, **Android Auto** and **live OBD gauges**. You can enable the apps you want, choose a default, and add your own plugins without rebuilding the launcher.
-
-## Current state
-
-This is working development code, tested on a bench with a **Raspberry Pi 4 2GB**, **Raspberry Pi OS Lite Bookworm 64-bit**, and the HDMI-equipped **2014 Civic HondaLink radio**.
-
-What has been tested:
-
-- Opening the launcher from the radio's HondaLink icon.
-- A three-column, two-row tile layout, with Settings built in.
-- Enabling/disabling installed plugins and saving a default startup app.
-- CarPlay video, taps and swipes through a Carlinkit dongle connected directly to the Pi.
-- Returning to HLauncher with the Honda icon inside CarPlay.
-- Android Auto through OpenAuto, with the Android phone connected directly to the Pi over USB.
-- Live OBD gauges over a Bluetooth LE ELM327 adapter: coolant temperature, oil temperature, long-term fuel trim and MAF, where supported by the vehicle.
-- Installing and managing plugins independently of the launcher.
-- HDMI output without a Linux desktop or login cursor over the app.
-
-The touch path now retains both contacts through the plugin API, and the CarPlay bridge forwards two-finger gestures using node-CarPlay's multi-touch messages. Normal taps, swipes and Maps pinch-to-zoom—including placing both fingers together—were confirmed on the bench. Display presentation uses offscreen buffers and synchronized DRM page flips; the owner confirmed the previous horizontal tearing was gone. See the [plugin API](docs/plugins.md) and [display setup](docs/setup.md#hdmi) for details.
-
-CarPlay requests **60fps**. That is the requested stream rate, not a guarantee for every phone, dongle or Pi. The panel is **800×480**, but the working **HDMI input is 720×480**. Forcing 800×480 produced a picture with the right side cropped, so the setup uses the radio's advertised 720×480 mode. The radio scales that input to its panel; HLauncher scales video and touch to the actual framebuffer. See [HDMI setup](docs/setup.md#hdmi).
-
-What is still missing:
-
-- **Microphone forwarding.** CarPlay media audio over HDMI inside HondaLink DA is confirmed in the car. Audio & EQ provides independent bass/mid/treble controls; phone-call audio routing still needs confirmation. Microphone input is not forwarded to CarPlay.
-- A microphone test page in the new launcher. Earlier experiments received microphone PCM through Bluetooth HFP, but the radio required a hands-free call state. The core retains capture support; CarPlay does not use it yet.
-- Verification on other Honda radios, Pi models and OS releases.
-
-Android Auto and live OBD gauges are now confirmed working on the project setup.
-Android Auto's current build still hard-codes a parked state for bench testing;
-see [bench parking state](plugins/android-auto/README.md#bench-parking-state).
-OBD sensor availability depends on what the vehicle and adapter expose.
+Tested with **Raspberry Pi 4 Model B boards with 2 GB and 4 GB RAM**, running
+**Raspberry Pi OS Lite Bookworm 64-bit**. The 4 GB model was noticeably smoother,
+but the 2 GB model ran fine. Other radios, Pi models and OS versions are
+unverified. This is development software; see the plugin guides for limitations. Reverse-engineering progress
+and future native-radio experiments are on [my blog](https://www.evanhorsley.com/blog/).
 
 ## Hardware
 
-- Raspberry Pi 4, with the tested setup using 2GB RAM.
-- A microSD card running Raspberry Pi OS Lite **Bookworm, 64-bit**.
-- A HondaLink radio with HDMI input and the older phone-app integration.
-- Micro-HDMI-to-HDMI connection from the Pi to the radio.
-- Bluetooth pairing between the Pi and HandsFreeLink.
-- For CarPlay: a compatible Carlinkit USB dongle and an iPhone.
-- For Android Auto: an Android phone connected directly to a Pi USB host port.
-- For OBD Gauges: a compatible Bluetooth LE ELM327 adapter.
-- Suitable power for the Pi.
+- HDMI-equipped HondaLink radio with the older phone-app integration.
+- Raspberry Pi 4, microSD card, card reader and suitable Pi power supply.
+- Micro-HDMI-to-HDMI cable from **HDMI0** (nearest USB-C power) to the radio.
+- A phone/adapter for the plugins you want to use:
 
-Connect the display to the Pi 4's **HDMI0** port, nearest USB-C power. The Carlinkit dongle plugs into a **Pi USB host port**. HLauncher does not need a USB data connection from the Pi to the radio. USB/IP and VirtualHere are not needed for this setup.
-
-## Setup
-
-The [first-boot guide](docs/onboarding.md) covers the image builder, automatic radio pairing, on-screen wizard, phone recovery, Debug mode and storage protection. Image building/boot acceptance still requires an ARM64 Linux host and Pi validation. The full [setup guide](docs/setup.md) covers a source installation and display troubleshooting. For an existing Pi:
-
-### 1. Install
-
-```bash
-sudo apt-get update
-sudo apt-get install -y git
-git clone https://github.com/evy0311/HLauncher.git
-cd HLauncher
-sudo bash scripts/install.sh
-```
-
-The installer installs dependencies, copies the application to `/opt/hlauncher`, installs the service files and checks the USB/video runtime. It does **not** start HLauncher or edit HDMI boot settings.
-
-It also installs a Bluetooth workaround that disables AVRCP and restarts BlueZ after a daemon failure. This was needed during bench testing. Review the [Bluetooth setup](docs/setup.md#bluetooth) if the Pi already has Bluetooth services or overrides configured; only one BlueALSA daemon should run.
-
-### 2. Pair with the radio
-
-Follow the [automatic pairing steps](docs/setup.md#bluetooth). Start the pairing/audio/listener services, add **HLauncher** from HandsFreeLink and confirm on the radio. A successful HondaLink handshake saves the radio; subsequent connections are restricted to it. New installations do not require editing a MAC address. Open HLauncher on the radio to choose plugins, startup app and theme in the wizard.
-
-Existing paired installations can retain their configured radio address for one-time migration. Pairing records and Wi-Fi credentials are not included in this repository.
-
-### 3. Check the display
-
-Connect HDMI and run:
-
-```bash
-sudo fbset -depth 16
-sudo python3 /opt/hlauncher/scripts/check.py --display
-```
-
-The renderer requires RGB565, 16 bits per pixel. If HDMI is not detected, follow the [display setup](docs/setup.md#hdmi), including the optional forced output mode. The service hides the console cursor while it is running.
-
-### 4. Start HLauncher
-
-Stop any older launcher or application using the same framebuffer, Bluetooth profiles or USB dongle first. Then:
-
-```bash
-sudo systemctl enable --now hlauncher-firstboot hlauncher-pairing hlauncher-recovery hlauncher-audio hlauncher-connect hlauncher
-```
-
-Open **HondaLink** on the radio and finish the setup wizard. The launcher then shows your enabled apps and Settings. Android Auto requires its separate engine build on source installations; the image builder includes it. Open CarPlay and connect the iPhone to the dongle. The Honda icon in CarPlay returns to HLauncher; the waiting-for-phone screen also has a Back button.
-
-### 5. Choose your apps
-
-In **Settings → Plugins**, enable or disable installed plugins. Tap **Start with** to cycle between Launcher and an enabled plugin. Settings are saved to `/var/lib/hlauncher/settings.json` and survive a service restart.
-
-Launcher is the initial default. Disabling the selected default plugin resets it to Launcher. Returning through CarPlay's Honda icon always opens the launcher, even if CarPlay is the startup default.
-
-## Plugins
-
-Plugins are separate apps shown as tiles on the launcher. The bundled plugins live in `plugins/`:
-
-| Plugin | What it does | Connection |
+| Plugin | Required connection | Guide |
 | --- | --- | --- |
-| CarPlay | iPhone projection using node-CarPlay | Carlinkit USB dongle |
-| Android Auto | Android phone projection using OpenAuto | Phone connected directly over USB |
-| OBD Gauges | Live coolant/oil temperature, long-term fuel trim and MAF readings | Bluetooth LE ELM327 adapter |
+| CarPlay | iPhone and compatible Carlinkit USB adapter connected to the Pi | [CarPlay](plugins/carplay/README.md) |
+| Android Auto | Android phone connected directly to a Pi USB host port | [Android Auto](plugins/android-auto/README.md) |
+| OBD Gauges | Compatible Bluetooth LE ELM327 adapter | [OBD Gauges](plugins/obd/README.md) |
 
-All three are working and included in the default plugin catalog. Android Auto needs the optional engine build, and OBD Gauges needs a compatible BLE ELM327 connection. You can install an external plugin from a local folder or Git repository, or submit one as a pull request to include it here.
+Power currently comes from a cigarette-lighter USB plug supplying **3 A**. The Pi
+loses power whenever the car cuts power to the socket, without a clean shutdown.
+For now, this setup relies on **read-only filesystem mode (Storage protection)**
+to reduce the risk from abrupt power loss. A low-power mode or safer shutdown
+method is planned.
 
-```bash
-cd /opt/hlauncher
-sudo python3 -m hlauncher plugins list
-sudo python3 -m hlauncher plugins install /path/to/plugin
-# Or:
-sudo python3 -m hlauncher plugins install https://github.com/OWNER/REPO.git --subdir plugins/NAME
-sudo systemctl restart hlauncher
-```
+## Flash and set up
 
-External plugins are disabled until enabled in Settings. Read the author's dependency instructions before enabling one; the installer copies source without running install hooks.
+1. Download **`HLauncher-VERSION-pi4.img.xz`** and `SHA256SUMS` from
+   [Releases](https://github.com/evy0311/HLauncher/releases). Choose the disk image,
+   rather than a source archive or `.hlu` update file.
+2. Verify the download against `SHA256SUMS`; the [flashing guide](docs/install.md#download-and-verify)
+   has commands for macOS, Linux and Windows.
+3. Flash the image to your microSD card with either tool:
+   - [Raspberry Pi Imager](https://www.raspberrypi.com/software/): select
+     **Raspberry Pi 4 → Use Custom**, choose the image and card, and skip OS customisation.
+   - [balenaEtcher](https://etcher.balena.io/): choose **Flash from file**, select
+     the image, then select your card and flash.
 
-The core owns Bluetooth, the HondaLink protocol, framebuffer presentation, touch routing and radio audio access. Plugins run in separate processes and use a two-way API for lifecycle, input, frames and supported audio requests. A plugin failure can return to the launcher without stopping the radio connection.
+   **Flashing erases the selected card.** Let verification finish, then eject it.
+4. Insert the card into the Pi. Connect HDMI0 to the radio and any USB device
+   needed by your plugin, then power on the Pi.
+5. Within five minutes of booting, open **Settings → Phone → Connect a phone →
+   Add Bluetooth device** on the radio. Select **HLauncher** and confirm pairing.
+6. Open **HondaLink** on the radio and follow the setup wizard to choose your
+   apps, startup app and appearance. Enable **Storage protection** for the
+   power setup above, then restart when prompted. Wi-Fi setup is optional.
 
-See the [plugin API](docs/plugins.md) and [example plugin](examples/hello). Process separation is for failure recovery, not a security sandbox: the current services and plugins run as root.
+The image uses the tested **720×480 HDMI input**; forcing the panel's 800×480
+resolution cropped the picture. See [display setup](docs/setup.md#hdmi) for other
+hardware. To install from source instead, use the [source setup guide](docs/setup.md).
 
-## Logs and troubleshooting
+## Updates and recovery
 
-```bash
-sudo systemctl status hlauncher hlauncher-audio hlauncher-connect --no-pager
-sudo journalctl -u hlauncher -n 100 --no-pager
-sudo systemctl restart hlauncher
-```
+On update-enabled images, **Settings → System → Software updates** checks for
+signed releases and can restore the previously installed application version.
+Checks and installation are manual. A signed **`.hlu`** file can also be uploaded
+from a phone/computer through the local setup page. See [updates](docs/updates.md).
 
-Protocol logs are in `/var/log/hlauncher`; plugin logs are under `/var/log/hlauncher/plugins/ID`. Logs can contain device identifiers and packet data. Android Auto and BLE OBD logs rotate; other logs may still need manual cleanup.
+**Settings → System → Wi-Fi & pairing** shows network/setup access. On the setup
+hotspot, connect to **HLauncher-XXXX** (default password **`raspberry`**) and open
+[the setup page](http://192.168.4.1:8080). It can configure Wi-Fi, reopen radio
+pairing and install local updates. The page has no login; use a trusted local
+network. Image SSH defaults to **`pi` / `raspberry`** and can be disabled there.
+See [first boot and recovery](docs/onboarding.md) for details.
 
-If the radio cannot open HondaLink, check Bluetooth pairing, `/etc/hlauncher.env`, and the audio/reconnect services. After a Bluetooth daemon restart, restart HLauncher to register its profiles again. If the Linux console appears over HDMI, check the launcher journal and framebuffer format. See [setup and recovery](docs/setup.md#logs-and-recovery) for dongle checks and other failure cases.
+## Development and documentation
 
-## Development
-
-- `hlauncher/` — launcher, Settings, radio protocol, display, touch and audio broker.
-- `plugins/carplay/` — CarPlay worker and Node USB bridge.
-- `plugins/android-auto/` — OpenAuto adapter and Android Auto plugin worker.
-- `plugins/obd/` — live BLE ELM327 gauges with radio-first connection management.
-- `sdk/hlauncher_sdk/` — plugin control transport and shared frame buffers.
-- `bluetooth/` — background reconnect support.
-- `packaging/` — systemd service definitions.
-
-```bash
-bash scripts/test.sh
-python3 scripts/check.py
-```
-
-The tests cover protocol framing, launcher behavior, settings persistence, plugin transport and failure recovery. The runtime check decodes a video fixture. These checks do not open the dongle, register radio profiles or draw on the radio. The plugin refactor also passed a live bench test: launcher tiles responded, CarPlay displayed, and the Honda icon returned to the launcher.
-
-See [development](docs/development.md) and the [bench migration notes](docs/migration.md). A fresh installation uses the services above; the development Pi currently reuses its existing Bluetooth services through a local drop-in.
+- [Source installation and troubleshooting](docs/setup.md)
+- [Plugin installation, API and example](docs/plugins.md)
+- [Audio and EQ](docs/audio.md) · [Radio controls](docs/radio-buttons.md)
+- [Development and checks](docs/development.md)
+- [Building images and signed releases](docs/updates.md#build-a-complete-release)
 
 ## Credits and license
 
-CarPlay dongle communication uses **[node-CarPlay by Rhys Morgan](https://github.com/rhysmorgan134/node-CarPlay)**. Its source and built modules retain their MIT license.
-
-The FFmpeg decoder helper is by **[rsyrnicki](https://github.com/rsyrnicki)** and is GPL-3.0. FFmpeg, BlueZ, BlueALSA and ALSA provide the underlying video and Bluetooth support. See [third-party notices](THIRD_PARTY_NOTICES.md) for versions and licenses.
-
-HLauncher is GPL-3.0, with preservation of the original author attribution under GPLv3 section 7(b). HLauncher and its HondaLink reverse engineering are by **Evan Horsley (evy0311)**. Distributions using that original code must retain the notices in [NOTICE](NOTICE); third-party credits remain separate. This is an independent project, not affiliated with Honda, Apple or Carlinkit. No Honda firmware images, proprietary radio assets, pairing keys or device captures are included.
-
-### Android Auto
-
-The **Android Auto** plugin uses OpenAuto directly with an Android phone connected
-to the Pi's USB port; a Carlinkit dongle is not needed. HLauncher continues to own
-HondaLink, display, audio and touch. Build the separately fetched engine with
-`sudo bash scripts/install_android_auto.sh`; see
-[Android Auto setup and current limits](plugins/android-auto/README.md).
-
-Upstream node-CarPlay is now fetched at install time as well. A source checkout
-needs `python3 scripts/fetch_dependencies.py` before the CarPlay bridge checks.
-The upstream source is not committed here; our fixes are tracked as a small patch.
-
-Launcher tiles share a glass-style finish with centered app glyphs. Choose Blue,
-Red, Green, Amber, Purple or Graphite under **Settings → Tile color**; the choice
-is saved across restarts. This changes launcher tiles, not the projected phone UI.
-
-Settings, projection waiting screens and gauge chrome share the selected accent.
-Tile tint is nearly uniform, with edge highlights instead of broad gradients.
-Launcher-owned UI uses static RGB565 dithering to reduce banding; projected phone
-video and HDMI calibration patterns are unchanged.
-
-### System diagnostics
-
-Settings groups plugin controls, tile color, the startup app and diagnostics into
-separate entries. **Settings → System diagnostics** shows live HondaLink status,
-HDMI output, dongle detection and audio sources. Its System view shows Pi model,
-temperature, current/historical power warnings, memory, free storage and uptime.
-Sampling runs off the UI thread and refreshes every two seconds.
-
-**Save report** writes a JSON snapshot under `/var/lib/hlauncher/diagnostics/`.
-Reports include plugin status and audio counters; they do not contain pairing keys
-or Bluetooth addresses. This saves locally on the Pi, not automatically to USB.
-
-Launcher and plugin UI share bundled Roboto fonts, including large gauge readouts.
-The font license is in `sdk/hlauncher_sdk/assets/fonts/OFL.txt`.
-
-OBD connection setup is under **Settings > OBD Gauges > Scan**.
-The plugin uses live data only; unavailable sensors show a dash. See
-[OBD Gauges](plugins/obd/README.md) for supported BLE transports, connection
-priority and logs. The live connection is working on the project setup; other
-adapters and vehicles may expose different BLE services or supported readings.
+HLauncher and its HondaLink reverse engineering are by **Evan Horsley (evy0311)**.
+Licensed under [GPL-3.0](LICENSE), with original attribution retained as specified
+in [NOTICE](NOTICE). CarPlay uses [node-CarPlay by Rhys Morgan](https://github.com/rhysmorgan134/node-CarPlay);
+Android Auto uses OpenAuto/aasdk; the FFmpeg helper is by
+[rsyrnicki](https://github.com/rsyrnicki). See [third-party notices](THIRD_PARTY_NOTICES.md).
 
 ## Disclaimer
 
-HLauncher is an independent community project, not an official Honda product or
-endorsed by Honda, Apple or Google. Using the radio's existing HondaLink connection
+HLauncher is an independent community project. It is not affiliated with,
+sponsored by or endorsed by Honda, Apple, Google or Carlinkit. Using the radio's existing HondaLink connection
 does not mean this software has been tested or approved by those companies.
 It is provided **as is, without warranty**, under the terms of the [license](LICENSE).
 Use it at your own risk, verify compatibility with your setup, and perform setup
 and testing while parked. Do not rely on it for safety-critical vehicle functions.
+
+The driver is responsible for safe vehicle operation, maintaining attention to
+the road and complying with all applicable traffic laws. Complete setup and
+adjustments while safely parked. Do not operate HLauncher, watch video or use
+features that distract you while driving; passengers must not distract the driver.
+To the extent permitted by applicable law, the authors and contributors accept
+no liability for distracted driving, misuse, accidents, injury, property damage
+or other loss arising from use of this software. This notice does not exclude
+rights or liabilities that cannot legally be excluded.

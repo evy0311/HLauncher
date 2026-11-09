@@ -5,11 +5,11 @@ Confirmed working with a real BLE ELM327 connection on the project setup.
 Live coolant temperature (°F), oil temperature (°F), bank 1 long-term fuel trim
 (%) and mass airflow (g/s). There is no simulated data in the running plugin.
 Missing, unsupported or stale readings show a dash. When disconnected, the dials
-are disabled and direct the user to Launcher Settings > OBD Gauges.
+are disabled and direct the user to Settings → Plugins → OBD Gauges → OBD adapter.
 
 ## Connect
 
-Open **Settings > OBD Gauges > Scan**. The short BLE scan shows all
+Open **Settings → Plugins → OBD Gauges → OBD adapter → Scan**. The short BLE scan shows all
 nearby BLE devices (apart from the radio); select your ELM327-compatible device.
 The page shows discovery, connection, vehicle initialization and failure status.
 Disconnect forgets the selected device. The saved device reconnects automatically

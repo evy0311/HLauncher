@@ -1,10 +1,23 @@
-# Setup
+# Source installation and troubleshooting
+
+For a fresh card, use the [image flashing guide](install.md). This guide is for
+a separate Raspberry Pi OS installation; do not run the installer over a
+versioned release image.
 
 The reference setup is a Pi 4 running Raspberry Pi OS Lite Bookworm, 64-bit. It uses HDMI and Bluetooth to the radio and a locally connected Carlinkit dongle. No X11, Wayland, browser or desktop is required.
 
 ## Install
 
-From the Git checkout:
+On Raspberry Pi OS Lite Bookworm 64-bit:
+
+```bash
+sudo apt-get update
+sudo apt-get install -y git
+git clone https://github.com/evy0311/HLauncher.git
+cd HLauncher
+```
+
+From that checkout:
 
 ```bash
 sudo bash scripts/install.sh
@@ -34,12 +47,12 @@ Automatic enrollment and the setup wizard are described in [first boot and recov
 ```bash
 sudo systemctl disable --now bluealsa.service bluealsa-aplay.service
 sudo systemctl restart bluetooth
-sudo systemctl enable --now hlauncher-firstboot hlauncher-pairing hlauncher-recovery hlauncher-audio hlauncher-connect hlauncher
+sudo systemctl enable --now hlauncher-grow hlauncher-firstboot hlauncher-pairing hlauncher-recovery hlauncher-audio hlauncher-connect hlauncher
 ```
 
-Add **HLauncher** from the radio's HandsFreeLink settings during the five-minute pairing window. Confirm on the radio, then open HLauncher through HondaLink to complete setup. The Pi accepts a qualifying first candidate and saves its address only after a successful HondaLink handshake. Subsequent connections are limited to that saved radio. Do not run a competing `bluetoothctl` default agent during enrollment.
+On the radio, open **Settings → Phone → Connect a phone → Add Bluetooth device** and select **HLauncher** during the five-minute pairing window. Confirm on the radio, then open HLauncher through HondaLink to complete setup. The Pi accepts a qualifying first candidate and saves its address only after a successful HondaLink handshake. Subsequent connections are limited to that saved radio. Do not run a competing `bluetoothctl` default agent during enrollment.
 
-A previously paired, valid `HLAUNCHER_RADIO_ADDRESS` in `/etc/hlauncher.env` is adopted once for migration. New installations can leave it all zeroes. Use System → Radio & Wi-Fi to reopen pairing or use the authenticated phone recovery page if automatic identification fails.
+A previously paired, valid `HLAUNCHER_RADIO_ADDRESS` in `/etc/hlauncher.env` is adopted once for migration. New installations can leave it all zeroes. Use Settings → System → Wi-Fi & pairing to reopen pairing or use the local setup page if automatic identification fails.
 
 ## HDMI
 
@@ -74,7 +87,7 @@ Look for `display_backend` with `backend: drm` and `vsync: true` in the journal.
 Plug the Carlinkit dongle into a Pi USB host port. Connect the iPhone to the dongle. USB/IP and VirtualHere are not needed for the Pi 4 setup.
 
 ```bash
-sudo systemctl enable --now hlauncher-firstboot hlauncher-pairing hlauncher-recovery hlauncher-audio hlauncher-connect hlauncher
+sudo systemctl enable --now hlauncher-grow hlauncher-firstboot hlauncher-pairing hlauncher-recovery hlauncher-audio hlauncher-connect hlauncher
 ```
 
 Open HondaLink on the radio. Select CarPlay in the Pi launcher. Tapping CarPlay's Honda icon returns to the Pi launcher; it does not exit to the radio's home screen. A Home button is also available on the waiting-for-phone page.
@@ -90,11 +103,16 @@ Start the installed service again afterward with `sudo systemctl start hlauncher
 
 ## Plugins and preferences
 
-Settings is built into the launcher. It lists every installed plugin and lets you enable or disable it. Tap **Start with** to cycle between Launcher and the enabled plugins. Changes are saved in `/var/lib/hlauncher/settings.json`. Disabling the default plugin resets the default to Launcher. Returning with CarPlay's Honda icon always goes to the launcher, even when CarPlay is the default.
+Settings is built into the launcher. **Settings → Plugins** lists installed plugins
+and lets you enable or disable each one. **Settings → Startup → Start with** cycles
+between Launcher and the enabled plugins. Changes are saved in `/var/lib/hlauncher/settings.json`. Disabling the default plugin resets the default to Launcher. Returning with CarPlay's Honda icon always goes to the launcher, even when CarPlay is the default.
 
-CarPlay, Android Auto and OBD Gauges are included; the setup wizard chooses which to enable. OBD Gauges supports compatible BLE ELM327 adapters. Android Auto requires the separately built OpenAuto engine: run `sudo bash scripts/install_android_auto.sh`, then connect an Android phone directly to the Pi USB port. It is experimental pending phone testing. See [plugins](plugins.md) for installing an external plugin or writing one.
+CarPlay, Android Auto and OBD Gauges are included; the setup wizard chooses which to enable. OBD Gauges supports compatible BLE ELM327 adapters. Android Auto requires the separately built OpenAuto engine: run `sudo bash scripts/install_android_auto.sh`, then connect an Android phone directly to the Pi USB port. It is confirmed working on the project setup; microphone/call integration remains unavailable. See [plugins](plugins.md) for installing an external plugin or writing one.
 
-The core exposes an opt-in microphone capture API. The radio still gates live microphone samples behind its hands-free call state. CarPlay output PCM is routed through HDMI; normal media playback inside HondaLink DA is confirmed by the owner. Phone-call routing is separate. No automatic call simulation is added; the earlier microphone experiment remains documented in Git history.
+CarPlay media audio uses HDMI. Its voice/call path requests the radio microphone
+through the core capture API and defaults identified voice output to Bluetooth
+SCO. End-to-end Siri and call behavior still needs in-car validation; see the
+[CarPlay guide](../plugins/carplay/README.md#audio-and-microphone).
 
 ## Logs and recovery
 
@@ -119,7 +137,7 @@ If the display shows the Linux console, inspect the HLauncher journal and frameb
 To stop the installation:
 
 ```bash
-sudo systemctl disable --now hlauncher hlauncher-connect hlauncher-audio hlauncher-pairing hlauncher-recovery hlauncher-firstboot
+sudo systemctl disable --now hlauncher hlauncher-connect hlauncher-audio hlauncher-pairing hlauncher-recovery hlauncher-firstboot hlauncher-grow
 ```
 
 The BlueZ workaround is `/etc/systemd/system/bluetooth.service.d/90-hlauncher.conf`. Remove that file and restart Bluetooth only if you also want to undo the workaround. Keep your pairing records.
@@ -140,9 +158,9 @@ to 48 kHz stereo; `config/alsa-hdmi.conf` selects `vc4hdmi0`
 (the HDMI connector nearest the Pi 4 power connector). The mixer preserves PCM in 32-bit float and uses SoXR VHQ 28-bit linear-phase
 conversion for source rates other than 48 kHz. PipeWire EQ and its bridge retain
 float PCM; the HDMI endpoint requests S32_LE at 48 kHz. ALSA performs HDMI IEC958
-framing. See [audio fidelity](audio.md#audio-fidelity) for receiver validation. System-wide audio defaults are
-unchanged. Music, prompts and received call audio use this output; microphone
-capture remains separate. Audio control/volume messages are logged; automatic
+framing. See [audio fidelity](audio.md#signal-level-diagnostics) for receiver validation. System-wide audio defaults are
+unchanged. Ordinary media uses this output; identified Siri/call streams default to
+Bluetooth SCO. See the [CarPlay audio guide](../plugins/carplay/README.md#audio-and-microphone). Audio control/volume messages are logged; automatic
 media ducking is not implemented yet.
 
 `audio_hdmi_open`, `audio_hdmi_progress` and `audio_hdmi_alsa` in the launcher journal
@@ -150,54 +168,6 @@ show device selection, PCM writes/drops and ALSA diagnostics. Successful writes
 verify software delivery, not that HondaLink selected that physical input.
 The main ALSA endpoint is fixed to HDMI; diagnostics report the requested format.
 Playback failures retry after five seconds and do not stop video or HondaLink.
-
-### CarPlay picture controls
-
-Open **Settings → CarPlay color** for saturation, contrast and brightness sliders.
-The changes affect only decoded CarPlay video; launcher colors and HDMI mode/range
-remain unchanged. **Reset** restores saturation 100%, contrast 100%, brightness 0.
-**Preview CarPlay** returns to the plugin with the new values.
-
-For adjustment while CarPlay remains visible, SSH to the Pi and run:
-
-```bash
-cd /opt/hlauncher
-sudo python3 -m hlauncher colors --interactive
-```
-
-Up/Down selects a slider, Left/Right adjusts it, R resets, Q exits. A one-shot edit:
-
-```bash
-sudo python3 -m hlauncher colors --saturation 85
-sudo python3 -m hlauncher colors --contrast 95 --brightness 0
-sudo python3 -m hlauncher colors --reset
-```
-
-These controls share `/var/lib/hlauncher/carplay-color.json`. Writes are atomic,
-values are validated, and the video worker checks for changes every 100 ms.
-A retained decoder frame allows adjustments to redraw even when the phone is not
-sending new pictures. No plugin restart or radio firmware change is needed.
-Changes are applied by libswscale during its existing YUV-to-RGB conversion;
-there is no extra full-frame Python pixel filter. The decoder honors declared H.264 color matrix and input range metadata.
-When metadata is unspecified, the original conversion defaults are retained.
-HDMI output range and launcher colors are unchanged. Logs include `carplay_picture_applied`.
-
-`carplay_color_conversion` records the declared codec color space/range and the
-selected conversion. Matrix code 1 is BT.709; source-range 1 is full and 0 limited.
-Unspecified codec metadata is logged and does not trigger a guessed conversion.
-
-Picture-control regression check (no radio or dongle access):
-
-```bash
-python3 scripts/check_picture.py
-```
-
-This exercises successive legacy full-range YUVJ frames. Their converter context
-can be rebuilt at the same address, so pointer identity alone cannot establish
-that color controls remain configured. The decoder normalizes the equivalent
-YUV layout, retains full-range semantics, and reasserts controls after every
-context acquisition. This also avoids repeated full-range context allocations.
-
 
 ### HDMI color range
 
@@ -207,53 +177,22 @@ pale map colors; Limited restored them with neutral CarPlay picture controls.
 This is an HDMI output setting, separate from the decoder and CarPlay sliders.
 Failures are logged and do not prevent the launcher from opening.
 
-Settings → CarPlay color → HDMI test pattern compares Auto, Full and Limited.
+Settings → Plugins → CarPlay → CarPlay picture → HDMI test compares Auto, Full and Limited.
 Leaving the test restores the range that was active when it opened, normally
 Limited. For other displays, `HLAUNCHER_HDMI_RGB=auto` or `full` overrides the
 default through the service environment. No radio firmware change is involved.
-
-### Watch song metadata over SSH
-
-With CarPlay open and music playing:
-
-```bash
-cd /opt/hlauncher
-python3 scripts/now_playing.py
-```
-
-Press Ctrl+C to stop the viewer; playback continues. For one snapshot or streaming
-JSON, use `python3 -m hlauncher now-playing` or
-`python3 -m hlauncher now-playing --watch --json`. Missing reports show a waiting
-message, never invented song data. Track reports remain local. Bluetooth AVRCP
-exposes only the selected source title (`Carplay` or `Android Auto`) and artist
-`HLauncher`. Returning to Settings or a non-audio plugin retains a background
-audio source; stopping that source clears the radio metadata. Display availability
-depends on the radio screen and its AVRCP connection.
 
 PipeWire defaults to off on each HLauncher service start. The audio process starts
 the private graph only when the setting is enabled, and stops the graph and its
 playback clients when disabled. The graph unit is not enabled at boot.
 
 
-### Background audio and gauges
+### Projection plugins
 
-Start CarPlay and play music, then tap its Honda-logo return item (labelled
-HLauncher) to return to the launcher. Open OBD Gauges; CarPlay audio continues.
-The four Civic Si-style gauges show simulated coolant/oil temperature (°F), RPM
-and battery voltage. The demo label is hidden by request; these are still simulated values, not live vehicle data.
-
-Settings → CarPlay → Background On/Off controls whether it survives leaving the
-screen. Background On is the default. Turning it off closes a background CarPlay
-worker immediately, or closes it when leaving if it is currently foreground.
-Video RGB conversion and presentation pause in the background; compressed video
-is still decoded to preserve reference frames and resume a current picture.
-USB traffic, PCM audio, keepalives and media messages continue. No second CarPlay
-process is started when returning. OBD Gauges has no background mode and closes
-on Back or when another plugin replaces it. Disabling CarPlay stops its audio.
-
-The return-item label is sent through the adapter's standard icon configuration
-before Open; the existing OEM icon PNG is not replaced. A phone reconnection may
-be needed for the label change to appear.
+See [CarPlay](../plugins/carplay/README.md),
+[Android Auto](../plugins/android-auto/README.md) and
+[OBD Gauges](../plugins/obd/README.md) for connection steps, background behavior
+and plugin-specific limits. OBD uses live data; unavailable readings show a dash.
 
 ### Radio media and phone buttons
 
@@ -268,7 +207,7 @@ roll back. Pairing and HDMI settings do not need resetting.
 
 ### Record a HondaLink drive test
 
-Open Settings → Diagnostics → HondaLink. Capture starts automatically with the
+Open Settings → Diagnostics → HondaLink. With Debug enabled, capture starts with the
 HLauncher service and continues while using CarPlay, Android Auto or Settings.
 Connection, Vehicle data, Calls/mic and Traffic tabs show received activity.
 Vehicle messages remain identified by session/message until their sensor fields
@@ -316,3 +255,7 @@ sudo python3 scripts/protocol_capture.py
 
 The summary includes test markers, command/message counts, call/Siri transitions,
 voice routing, microphone byte counts and errors without printing packet payloads.
+
+### HDMI range calibration
+
+The HDMI range page uses an XRGB8888 test surface so near-black and near-white steps retain all eight source bits per channel. Normal launcher and plugin frames keep their existing RGB565 path. Range changes are serialized with scanout and committed atomically with modesetting allowed. Auto/Full/Limited are previews; Back restores the previous range. Save HDMI range persists the selected default in `/var/lib/hlauncher/hdmi-output.json`, which takes precedence over the legacy `HLAUNCHER_HDMI_RGB` environment default. The last connector state and any errors are retained in `hdmi-diagnostics.json`. A framebuffer fallback is labelled and cannot control HDMI range. Verify the visible result on the actual radio.

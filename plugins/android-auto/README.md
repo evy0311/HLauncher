@@ -7,6 +7,9 @@ CarPlay. Android Auto is confirmed working on the project setup.
 
 ## Install the engine
 
+Release images already include the engine. This build is only needed for source
+installations. Enable the plugin under **Settings → Plugins → Android Auto**.
+
 From the HLauncher checkout on Raspberry Pi OS Bookworm (64-bit):
 
 ```bash
@@ -40,9 +43,10 @@ can open, but capture requests explicitly fail as unavailable. The session senso
 endpoint currently reports a fixed parked bench policy and a default day display
 appearance. It does not synthesize parking, GPS or
 speed information.
-Those require separate integration and testing. CarPlay and Android Auto should
-not both be playing media simultaneously; the launcher currently mixes the
-submitted audio streams rather than coordinating exclusive phone audio focus.
+Those require separate integration and testing. CarPlay and Android Auto share
+an exclusive projection lease. Selecting the other plugin stops the previous
+session and waits for USB release; automatic CarPlay startup does not take over
+a running Android Auto session.
 
 ## Logs and checks
 

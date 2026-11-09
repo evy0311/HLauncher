@@ -124,9 +124,9 @@ class SetupState:
         path = self.folder/'recovery.json'
         try:
             item = json.loads(path.read_text())
-            if len(item['password']) >= 12: return item
+            if isinstance(item.get('password'),str) and len(item['password']) >= 8: return item
         except (OSError, ValueError, KeyError, TypeError): pass
         item = {'ssid': 'HLauncher-'+secrets.token_hex(2).upper(),
-                'password': secrets.token_urlsafe(12)}
+                'password': 'raspberry'}
         atomic_json(path, item)
         return item

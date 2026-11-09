@@ -157,11 +157,11 @@ class Setup(unittest.TestCase):
         state.open_pairing()
         self.assertFalse(state.allowed(PEER))
 
-    def test_unique_recovery_credentials_survive_restart(self):
+    def test_hotspot_name_and_simple_default_password_survive_restart(self):
         first=SetupState(self.root).credentials()
         self.assertEqual(first,SetupState(self.root).credentials())
         self.assertNotEqual(first,SetupState(self.root/'other').credentials())
-        self.assertGreaterEqual(len(first['password']),12)
+        self.assertEqual(first['password'],'raspberry')
         self.assertEqual((self.root/'recovery.json').stat().st_mode & 0o777,0o600)
 
     def test_bootstrap_defers_heavy_ui_and_restores_session(self):
@@ -248,15 +248,15 @@ class Setup(unittest.TestCase):
                 finish.reset_mock();left[1]();finish.assert_called_once_with()
         finally:ui.close()
 
-    def test_recovery_http_requires_password_and_rejects_cross_origin_posts(self):
+    def test_recovery_http_opens_without_password_and_rejects_cross_origin_posts(self):
         state=SetupState(self.root);maintenance=Maintenance(state)
         server=ThreadingHTTPServer(('127.0.0.1',0),handler_for(state,maintenance))
         thread=threading.Thread(target=server.serve_forever,daemon=True);thread.start()
         connection=http.client.HTTPConnection(*server.server_address,timeout=3)
         try:
-            connection.request('GET','/');response=connection.getresponse();self.assertEqual(response.status,401);response.read()
+            connection.request('GET','/');response=connection.getresponse();self.assertEqual(response.status,200);response.read()
             auth='Basic '+base64.b64encode(('hlauncher:'+state.credentials()['password']).encode()).decode()
-            headers={'Authorization':auth,'Content-Type':'application/json','Origin':'http://evil.invalid'}
+            headers={'Content-Type':'application/json','Origin':'http://evil.invalid'}
             connection.request('POST','/api/debug','{}',headers)
             response=connection.getresponse();self.assertEqual(response.status,403);response.read()
             headers.pop('Origin')

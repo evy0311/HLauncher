@@ -39,7 +39,7 @@ sudo systemctl enable --now hlauncher-firstboot hlauncher-pairing hlauncher-reco
 
 On the radio, open **Settings → Phone → Connect a phone → Add Bluetooth device** and select **HLauncher** during the five-minute pairing window. Confirm on the radio, then open HLauncher through HondaLink to complete setup. The Pi accepts a qualifying first candidate and saves its address only after a successful HondaLink handshake. Subsequent connections are limited to that saved radio. Do not run a competing `bluetoothctl` default agent during enrollment.
 
-A previously paired, valid `HLAUNCHER_RADIO_ADDRESS` in `/etc/hlauncher.env` is adopted once for migration. New installations can leave it all zeroes. Use System → Radio & Wi-Fi to reopen pairing or use the authenticated phone recovery page if automatic identification fails.
+A previously paired, valid `HLAUNCHER_RADIO_ADDRESS` in `/etc/hlauncher.env` is adopted once for migration. New installations can leave it all zeroes. Use System → Radio & Wi-Fi to reopen pairing or use the local setup page if automatic identification fails.
 
 ## HDMI
 

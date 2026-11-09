@@ -40,7 +40,7 @@ class Preferences:
     def __init__(self, path=None):
         self.path = Path(path) if path else STATE_DIR / "settings.json"
         self.data = {"enabled": {}, "background": {}, "default_plugin": None, "tile_color": "Red", "custom_color": "#198B96",
-                     "setup_complete": False, "setup_step": 0, "debug_mode": False, "show_clock": False}
+                     "setup_complete": False, "setup_step": 0, "debug_mode": False, "show_clock": False, "ssh_enabled": True}
         try:
             loaded = json.loads(self.path.read_text())
             if not isinstance(loaded, dict) or not isinstance(
@@ -51,6 +51,7 @@ class Preferences:
             self.data['setup_complete'] = loaded.get('setup_complete', True) is True
             self.data['debug_mode'] = loaded.get('debug_mode', False) is True
             self.data['show_clock'] = loaded.get('show_clock', False) is True
+            self.data['ssh_enabled'] = loaded.get('ssh_enabled', True) is True
             step = loaded.get('setup_step', 0)
             self.data['setup_step'] = step if type(step) is int and 0 <= step <= 5 else 0
             self.data["enabled"] = {

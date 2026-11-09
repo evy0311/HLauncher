@@ -44,13 +44,12 @@ def network(ui):
     connection=network_status(ui.prefs.path.parent);address=connection.get('address')
     if not address or address=='192.168.4.1':return hotspot(ui)
     p=page_for(ui,'Wi-Fi & pairing',getattr(ui,'recovery_return',ui.system_settings))
-    creds=SetupState(ui.prefs.path.parent).credentials()
     p.label((24,128),'http://'+address+':8080',26)
     p.text((24,176),'Open this page on a device on the same network as the Pi',17)
-    p.panel((24,216,696,312))
-    for y,label,value in ((236,'Username','hlauncher'),(272,'Password',creds['password'])):
-        p.text((42,y),label,16);p.text((240,y),value,17,fill='#efedf6')
-    p.button((24,348,696,392),'Use setup hotspot instead',ui.hotspot_page,size=21,secondary=True)
+    from ..ssh_access import status
+    ssh=status(ui.prefs.path.parent)
+    p.bar((24,224,696,280),'SSH access',ui.ssh_settings,value='On' if ssh['enabled'] else 'Off',size=30)
+    p.button((24,316,696,364),'Use setup hotspot instead',ui.hotspot_page,size=21,secondary=True)
     p.text((24,420),'Use the page to connect Wi-Fi, pair a radio or install an update',16)
     p.notice(ui.banner)
     present(ui,p)
@@ -62,20 +61,37 @@ def hotspot(ui):
     creds=SetupState(ui.prefs.path.parent).credentials()
     connection=network_status(ui.prefs.path.parent);ready=connection.get('address')=='192.168.4.1'
     p.text((24,116),'Connect your phone or computer to this temporary network',17)
-    p.panel((24,156,696,280))
-    for y,label,value in ((172,'Network',creds['ssid']),(204,'Password',creds['password']),
-                           (236,'Page login','hlauncher · same password')):
+    p.panel((24,156,696,244))
+    for y,label,value in ((172,'Network',creds['ssid']),(208,'Password',creds['password'])):
         p.text((42,y),label,16);p.text((240,y),p.fit(value,432,17),17,fill='#efedf6')
-    p.label((24,304),'http://192.168.4.1:8080',25)
+    p.label((24,268),'http://192.168.4.1:8080',25)
     result=job_status(ui.prefs.path.parent)
     queued=(ui.prefs.path.parent/'maintenance-request.json').exists()
     busy=queued or result.get('status')=='Working'
-    if busy:p.text((24,372),'Applying connection changes…',20,fill='#efedf6')
-    else:p.button((24,360,696,404),'Restart hotspot' if ready else 'Start setup hotspot',lambda:ui.maintenance('hotspot'),size=22)
+    if busy:p.text((24,334),'Applying connection changes…',20,fill='#efedf6')
+    else:p.button((24,316,696,364),'Restart hotspot' if ready else 'Start setup hotspot',lambda:ui.maintenance('hotspot'),size=22)
+    from ..ssh_access import status
+    ssh=status(ui.prefs.path.parent)
+    p.bar((24,380,696,436),'SSH access',ui.ssh_settings,value='On' if ssh['enabled'] else 'Off',size=30)
     message=ui.banner or (result.get('message','') if result.get('status')=='Failed' else '')
-    if message:p.notice(message,420)
-    else:p.text((24,420),'This temporarily disconnects the Pi from its current Wi-Fi',15)
-    p.text((24,452),'Use the setup page to connect the Pi to your normal Wi-Fi',14)
+    if message:p.notice(message)
+    else:p.text((24,452),'Starting the hotspot disconnects the Pi from its current Wi-Fi',14)
+    present(ui,p)
+
+
+def ssh(ui):
+    from ..ssh_access import status
+    info=status(ui.prefs.path.parent)
+    p=page_for(ui,'SSH access',getattr(ui,'ssh_return',ui.recovery_page))
+    p.bar((24,128,696,184),'SSH',lambda:ui.set_ssh(not info['enabled']),toggle=info['enabled'],size=30)
+    p.panel((24,216,696,328))
+    p.text((42,236),'Username',20);p.text((292,236),info['username'],22,fill='#efedf6')
+    p.text((42,280),'Default password',20);p.text((292,280),info['password'],22,fill='#efedf6')
+    address=network_status(ui.prefs.path.parent).get('address')
+    if address:p.text((24,368),'ssh '+info['username']+'@'+address,24,fill='#efedf6')
+    result=job_status(ui.prefs.path.parent)
+    busy=(ui.prefs.path.parent/'maintenance-request.json').exists() or result.get('status')=='Working'
+    p.notice('Applying SSH setting…' if busy else result.get('message','') if result.get('status')=='Failed' else ui.banner)
     present(ui,p)
 
 
@@ -241,6 +257,6 @@ def waiting(ui):
     present(ui,p)
 
 
-PAGES={'adapter_branding':adapter_branding,'appearance_settings':appearance,'startup_settings':startup,'system_settings':system,'recovery_settings':network,'hotspot_settings':hotspot,'storage_confirm':storage,
+PAGES={'ssh_settings':ssh,'adapter_branding':adapter_branding,'appearance_settings':appearance,'startup_settings':startup,'system_settings':system,'recovery_settings':network,'hotspot_settings':hotspot,'storage_confirm':storage,
        'plugins_settings':plugins,'plugin_detail':plugin_detail,'tile_colors':themes,'colors':picture,'hdmi_test':hdmi,
        'shutdown_confirm':shutdown,'shutdown_pending':shutdown}

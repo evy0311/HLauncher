@@ -70,14 +70,14 @@ There is no emulated macOS or x86 image build in these scripts.
 
 ```bash
 sudo bash scripts/build_release.sh 0.2.0 /images/bookworm-arm64-lite.img US \
-  /secure/location/hlauncher-release.pem /releases/hlauncher-0.2.0
+  /secure/location/hlauncher-release.pem /releases/hlauncher-0.2.0 /releases/notes-0.2.0.md
 ```
 
 The script builds native/Node dependencies once inside the image, then creates:
 
 - `HLauncher-0.2.0-pi4.img.xz`: flashable fresh-install image.
 - `HLauncher-0.2.0-pi4-arm64.tar.xz`: full application and native runtime bundle.
-- `HLauncher-0.2.0-local-update.hlu`: signed container for authenticated local upload.
+- `HLauncher-0.2.0-local-update.hlu`: signed container for local network upload.
 - `hlauncher-release.json` and `.sig`: signed compatibility/checksum metadata.
 - `HLauncher-0.2.0-sources.tar.xz`: project and fetched external sources.
 - `release.pub`, `os-packages.txt`, `SHA256SUMS`, and `RELEASE-NOTES.md`.
@@ -89,7 +89,16 @@ Build output must use a fresh directory and should remain outside the repository
 Unsigned direct `build_image.sh` development builds do not get update trust/layout.
 The country argument remains build-time configuration in this version.
 
-Push the source commit, test the image and edit its release notes, then upload
+Keep release notes short: changes since the previous release, plus essential
+installation or compatibility information. Supply that notes file to the build;
+it is copied into the release and covered by SHA256SUMS. Leave test reports and
+build details out of the release notes.
+
+Every future release must include both a production fresh-install image and all
+signed updater files. `scripts/validate_release.py` blocks incomplete releases,
+missing checksums, invalid signatures and local-test images before upload.
+
+Push the source commit, test the image, then upload
 all artifacts as a GitHub **draft** using authenticated GitHub CLI:
 
 ```bash
@@ -129,10 +138,10 @@ tampered and incompatible files cannot activate. Interrupted uploads can be
 retried; an interrupted activation uses normal boot recovery. This endpoint is
 not a shell or an unsigned-install bypass.
 
-For a development image with unique key-only SSH access, explicitly set
+For a private development image with an additional SSH key, explicitly set
 `HLAUNCHER_LOCAL_TEST_SSH_KEY` to an Ed25519 public-key path during the build.
-The private SSH key never enters the image. The fresh image's `pi` account uses
-key-only login with password authentication disabled. The signed manifest marks
+The private SSH key never enters the image. The standard `pi` / `raspberry` login remains available, and the private test
+image additionally accepts that development key. The signed manifest marks
 it `local_test`, and the publishing script refuses to publish such an image.
 This option is for private first-flash diagnostics, not public releases.
 

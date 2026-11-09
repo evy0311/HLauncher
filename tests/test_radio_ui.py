@@ -45,7 +45,7 @@ class RadioUI(unittest.TestCase):
     def test_every_settings_and_diagnostics_page_has_identical_header_and_valid_actions(self):
         ui=self.ui
         ui.system_settings();header=ui.fb.last.crop((80,0,720,52))
-        methods=[ui.adapter_branding_page,ui.appearance_settings,ui.startup_settings,ui.recovery_page,lambda:ui.storage_confirm(True),ui.plugin_settings,lambda:ui.plugin_detail('carplay'),lambda:ui.plugin_detail('obd'),ui.tile_colors,
+        methods=[ui.ssh_settings,ui.adapter_branding_page,ui.appearance_settings,ui.startup_settings,ui.recovery_page,lambda:ui.storage_confirm(True),ui.plugin_settings,lambda:ui.plugin_detail('carplay'),lambda:ui.plugin_detail('obd'),ui.tile_colors,
                  ui.color_settings,ui.system_diagnostics,ui.protocol_tests,
                  lambda:ui.debug_tools('menu'),lambda:ui.debug_tools('audio'),
                  lambda:ui.debug_tools('colors'),lambda:ui.debug_tools('inputs'),ui.shutdown_page]

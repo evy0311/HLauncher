@@ -86,7 +86,12 @@ def validate_manifest(item, config):
     version(item.get('version'))
     if item.get('format')!=FORMAT or item.get('updater')!=FORMAT:
         raise ValueError('This release requires a newer image/updater')
-    if item.get('platform')!=config['platform'] or item.get('system_contract')!=config['system_contract']:
+    # Only the trusted on-device configuration may approve an older compatible
+    # OS contract. Release metadata cannot grant itself compatibility.
+    previous=config.get('compatible_contracts',[])
+    if not isinstance(previous,list):previous=[]
+    trusted=[config['system_contract'],*(value for value in previous if isinstance(value,str))]
+    if item.get('platform')!=config['platform'] or item.get('system_contract') not in trusted:
         raise ValueError('This release needs a different system image')
     if item.get('state_schema')!=SCHEMA:
         raise ValueError('This release cannot preserve rollback-compatible settings')

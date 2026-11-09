@@ -238,7 +238,7 @@ class Updates(unittest.TestCase):
         self.assertEqual(self.installer.current(),'1.0.0')
         self.assertFalse((self.root/'escaped').exists())
 
-    def test_authenticated_upload_queues_local_import(self):
+    def test_local_network_upload_queues_signed_import(self):
         import base64,http.client,threading
         from http.server import ThreadingHTTPServer
         from hlauncher import recovery
@@ -250,10 +250,10 @@ class Updates(unittest.TestCase):
         connection=http.client.HTTPConnection(*server.server_address,timeout=3)
         try:
             with patch.object(recovery,'UPDATER_CONFIG',config_path):
-                connection.request('POST','/api/update-file',b'file',{'Content-Type':'application/octet-stream'})
-                response=connection.getresponse();self.assertEqual(response.status,401);response.read()
+                connection.request('POST','/api/update-file',b'file',{'Content-Type':'application/octet-stream','Origin':'http://unrelated.invalid'})
+                response=connection.getresponse();self.assertEqual(response.status,403);response.read()
                 auth='Basic '+base64.b64encode(('hlauncher:'+state.credentials()['password']).encode()).decode()
-                headers={'Authorization':auth,'Content-Type':'application/octet-stream'}
+                headers={'Content-Type':'application/octet-stream'}
                 connection.request('POST','/api/update-file',b'container bytes',headers)
                 response=connection.getresponse();self.assertEqual(response.status,202);response.read()
                 self.assertEqual((self.root/'inbox/local-update.hlu').read_bytes(),b'container bytes')
@@ -272,6 +272,21 @@ class Updates(unittest.TestCase):
         size=package_release.archive_tree(target,[('app',app)])
         updater.unpack(target,self.folder/'links',size)
         self.assertEqual((self.folder/'links/app/bin/run').read_bytes(),(app/'hlauncher/__init__.py').read_bytes())
+
+
+class ContractCompatibility(unittest.TestCase):
+    def test_only_trusted_device_config_can_allow_older_contract(self):
+        item=dict(format=1,updater=1,state_schema=1,platform=updater.PLATFORM,
+                  system_contract='a'*64,version='0.2.4',archive='HLauncher-0.2.4-pi4-arm64.tar.xz',
+                  size=10,unpacked_size=20,sha256='b'*64)
+        config=dict(platform=updater.PLATFORM,system_contract='c'*64)
+        with self.assertRaises(ValueError):updater.validate_manifest(item,config)
+        item['compatible_contracts']=['a'*64]
+        with self.assertRaises(ValueError):updater.validate_manifest(item,config)
+        config['compatible_contracts']=['a'*64]
+        self.assertEqual(updater.validate_manifest(item,config),item)
+        item['platform']='different-platform'
+        with self.assertRaises(ValueError):updater.validate_manifest(item,config)
 
 
 class ReleaseImage(unittest.TestCase):

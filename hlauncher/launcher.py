@@ -227,6 +227,20 @@ class Launcher:
         self.banner=''
         self.draw()
 
+    def ssh_settings(self):
+        self.ssh_return=self.hotspot_page if self.mode=='hotspot_settings' else self.recovery_page
+        self.host.deactivate()
+        self.mode='ssh_settings';self.press=None;self.banner='';self.draw()
+
+    def set_ssh(self,enabled):
+        from .recovery import request_job
+        try:
+            request_job('ssh',enabled=enabled)
+            self.banner=''
+        except FileExistsError:self.banner='A setup operation is already queued'
+        except (OSError,ValueError):self.banner='Could not request the SSH setting'
+        self.draw()
+
     def hotspot_page(self):
         self.mode='hotspot_settings'
         self.press=None
@@ -807,7 +821,7 @@ class Launcher:
                 from .storage import status
                 self.storage_info = status()
             threading.Thread(target=inspect_storage,daemon=True).start()
-        if self.mode in ('onboarding','system_settings','recovery_settings','hotspot_settings','storage_confirm','updates','update_notes','adapter_branding'):
+        if self.mode in ('onboarding','system_settings','recovery_settings','hotspot_settings','storage_confirm','updates','update_notes','adapter_branding','ssh_settings'):
             if time.monotonic()-getattr(self,'setup_redraw',0)>1:
                 self.setup_redraw=time.monotonic()
                 if self.mode=='updates' and self.banner=='Requested':self.banner=''

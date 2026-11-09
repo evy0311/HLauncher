@@ -1,10 +1,12 @@
 #!/bin/bash
 # Produce the image, signed updater bundle, sources and SHA256SUMS from one build.
 set -euo pipefail
-if [[ $# != 5 ]]; then
-  echo "Usage: sudo $0 VERSION BASE.img WIFI_COUNTRY ED25519_PRIVATE_KEY OUTPUT_DIRECTORY"; exit 2
+if [[ $# != 6 ]]; then
+  echo "Usage: sudo $0 VERSION BASE.img WIFI_COUNTRY ED25519_PRIVATE_KEY OUTPUT_DIRECTORY RELEASE_NOTES.md"; exit 2
 fi
-version=$1; base=$2; country=$3; key=$4; output=$5
+version=$1; base=$2; country=$3; key=$4; output=$5; notes=$(realpath "$6")
+[[ -s $notes ]] || { echo 'Supply short release notes: changes since the previous release and essential compatibility information.'; exit 1; }
+[[ -z ${HLAUNCHER_LOCAL_TEST_SSH_KEY:-} ]] || { echo 'Public releases must not include developer SSH access.'; exit 1; }
 [[ $version =~ ^[0-9]{1,5}\.[0-9]{1,5}\.[0-9]{1,5}$ ]] || { echo 'Use a stable version such as 0.2.0'; exit 1; }
 [[ $EUID == 0 && $(uname -s) == Linux && $(uname -m) == aarch64 ]] || { echo 'Use an ARM64 Linux host as root.'; exit 1; }
 source_root=$(cd -- "$(dirname -- "$0")/.." && pwd)
@@ -20,23 +22,8 @@ export HLAUNCHER_RELEASE_COMMIT=$(git rev-parse HEAD)
 bash scripts/build_image.sh "$base" "$output/HLauncher-$version-pi4.img" "$country"
 xz -T0 "$output/HLauncher-$version-pi4.img"
 rm "$output/HLauncher-$version-pi4.img.sha256"
-cat > "$output/RELEASE-NOTES.md" <<EOF
-HLauncher $version
-
-Source commit: $HLAUNCHER_RELEASE_COMMIT
-Platform: Raspberry Pi 4, ARM64, Raspberry Pi OS Bookworm
-Local test SSH image: ${HLAUNCHER_LOCAL_TEST_SSH_KEY:+YES - DO NOT PUBLISH}
-
-Fresh install: flash HLauncher-$version-pi4.img.xz with Raspberry Pi Imager.
-Existing update-enabled images: Settings > System > Software updates.
-The signed update bundle keeps settings, pairing and user plugins, and retains
-one previous installed version for manual restore. OS/platform contract changes
-require a new image or a separately validated system migration.
-
-The source archive includes the HLauncher build tree and fetched external sources.
-See THIRD_PARTY_NOTICES.md inside it for dependency licenses and source origins.
-Validate this image from fresh setup on a spare SD card before publishing.
-EOF
-(cd "$output" && sha256sum ./*.xz ./*.hlu ./*.json ./*.sig ./*.pub ./*.txt > SHA256SUMS)
+cp "$notes" "$output/RELEASE-NOTES.md"
+(cd "$output" && sha256sum ./*.xz ./*.hlu hlauncher-release.json hlauncher-release.sig release.pub os-packages.txt RELEASE-NOTES.md > SHA256SUMS)
+python3 scripts/validate_release.py "$version" "$output" >/dev/null
 echo "Release artifacts: $output"
 echo "Test them, then: bash scripts/publish_release.sh $version $output"

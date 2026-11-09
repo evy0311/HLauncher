@@ -1,10 +1,9 @@
 #!/usr/bin/env python3
-"""Opt-in local-test SSH access on an OFFLINE image; never embeds private keys."""
+"""Optional development SSH public key on an OFFLINE image; no private keys."""
 import argparse
 import os
 from pathlib import Path
 import re
-import secrets
 import subprocess
 
 
@@ -22,21 +21,18 @@ def configure(root, public_key):
         subprocess.run(['chroot',str(root),'usermod','-aG','sudo','-s','/bin/bash','pi'],check=True)
     else:
         subprocess.run(['chroot',str(root),'useradd','-m','-s','/bin/bash','-G','sudo','pi'],check=True)
-    # An unknown random password hash unlocks key authentication; passwords are disabled below.
-    hashed=subprocess.run(['openssl','passwd','-6','-stdin'],input=secrets.token_urlsafe(48)+'\n',
-                          text=True,capture_output=True,check=True).stdout.strip()
-    subprocess.run(['chroot',str(root),'usermod','-p',hashed,'pi'],check=True)
+    subprocess.run(['chroot',str(root),'chpasswd'],input='pi:raspberry\n',text=True,check=True,capture_output=True)
     uid=int(subprocess.run(['chroot',str(root),'id','-u','pi'],capture_output=True,text=True,check=True).stdout)
     gid=int(subprocess.run(['chroot',str(root),'id','-g','pi'],capture_output=True,text=True,check=True).stdout)
     ssh=root/'home/pi/.ssh';ssh.mkdir(mode=0o700)
     (ssh/'authorized_keys').write_text(key+'\n');(ssh/'authorized_keys').chmod(0o600)
     for path in (ssh,ssh/'authorized_keys'):os.chown(path,uid,gid)
     dropin=root/'etc/ssh/sshd_config.d';dropin.mkdir(parents=True,exist_ok=True)
-    (dropin/'00-hlauncher-local-test.conf').write_text('PasswordAuthentication no\nKbdInteractiveAuthentication no\nPermitRootLogin no\n')
+    (dropin/'00-hlauncher-local-test.conf').write_text('PasswordAuthentication yes\nKbdInteractiveAuthentication no\nPermitRootLogin no\n')
     sudo=root/'etc/sudoers.d/hlauncher-local-test';sudo.write_text('pi ALL=(ALL) NOPASSWD: ALL\n');sudo.chmod(0o440)
     subprocess.run(['systemctl','--root',str(root),'enable','ssh.service'],check=True,capture_output=True)
     boot=root/'boot/firmware' if (root/'boot/firmware/config.txt').exists() else root/'boot'
-    (boot/'HLAUNCHER-LOCAL-TEST.txt').write_text('LOCAL TEST IMAGE - DO NOT PUBLISH\nSSH user: pi\nSSH requires the unique local-test private key; password login is disabled.\nNo previous radio pairing, Wi-Fi or HLauncher settings are included.\n')
+    (boot/'HLAUNCHER-LOCAL-TEST.txt').write_text('LOCAL TEST IMAGE - DO NOT PUBLISH\nSSH user: pi\nDefault SSH password: raspberry. An optional local development key is also installed.\nNo previous radio pairing, Wi-Fi or HLauncher settings are included.\n')
 
 
 if __name__=='__main__':

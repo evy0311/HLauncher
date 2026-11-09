@@ -1,0 +1,53 @@
+--- a/include/aasdk/Common/Log.hpp
++++ b/include/aasdk/Common/Log.hpp
+@@ -137,4 +137,50 @@
+ // Fallback to boost logging
+ #include <boost/log/trivial.hpp>
+ #define AASDK_LOG(severity) BOOST_LOG_TRIVIAL(severity) << "[AASDK] "
++#define AASDK_LOG_CATEGORY(category, severity, message) \
++    do { AASDK_LOG(severity) << "[" #category "] " << message; } while (0)
++
++// Basic categories
++#define AASDK_LOG_TRANSPORT(severity, message) AASDK_LOG_CATEGORY(TRANSPORT, severity, message)
++#define AASDK_LOG_CHANNEL(severity, message) AASDK_LOG_CATEGORY(CHANNEL, severity, message) 
++#define AASDK_LOG_USB(severity, message) AASDK_LOG_CATEGORY(USB, severity, message)
++#define AASDK_LOG_TCP(severity, message) AASDK_LOG_CATEGORY(TCP, severity, message)
++#define AASDK_LOG_MESSENGER(severity, message) AASDK_LOG_CATEGORY(MESSENGER, severity, message)
++#define AASDK_LOG_PROTOCOL(severity, message) AASDK_LOG_CATEGORY(PROTOCOL, severity, message)
++#define AASDK_LOG_AUDIO(severity, message) AASDK_LOG_CATEGORY(AUDIO, severity, message)
++#define AASDK_LOG_VIDEO(severity, message) AASDK_LOG_CATEGORY(VIDEO, severity, message)
++#define AASDK_LOG_INPUT(severity, message) AASDK_LOG_CATEGORY(INPUT, severity, message)
++#define AASDK_LOG_SENSOR(severity, message) AASDK_LOG_CATEGORY(SENSOR, severity, message)
++#define AASDK_LOG_BLUETOOTH(severity, message) AASDK_LOG_CATEGORY(BLUETOOTH, severity, message)
++#define AASDK_LOG_WIFI(severity, message) AASDK_LOG_CATEGORY(WIFI, severity, message)
++#define AASDK_LOG_SYSTEM(severity, message) AASDK_LOG_CATEGORY(SYSTEM, severity, message)
++#define AASDK_LOG_GENERAL(severity, message) AASDK_LOG_CATEGORY(GENERAL, severity, message)
++
++// Detailed channel categories
++#define AASDK_LOG_CHANNEL_CONTROL(severity, message) AASDK_LOG_CATEGORY(CHANNEL_CONTROL, severity, message)
++#define AASDK_LOG_CHANNEL_BLUETOOTH(severity, message) AASDK_LOG_CATEGORY(CHANNEL_BLUETOOTH, severity, message)
++#define AASDK_LOG_CHANNEL_MEDIA_SINK(severity, message) AASDK_LOG_CATEGORY(CHANNEL_MEDIA_SINK, severity, message)
++#define AASDK_LOG_CHANNEL_MEDIA_SOURCE(severity, message) AASDK_LOG_CATEGORY(CHANNEL_MEDIA_SOURCE, severity, message)
++#define AASDK_LOG_CHANNEL_INPUT_SOURCE(severity, message) AASDK_LOG_CATEGORY(CHANNEL_INPUT_SOURCE, severity, message)
++#define AASDK_LOG_CHANNEL_SENSOR_SOURCE(severity, message) AASDK_LOG_CATEGORY(CHANNEL_SENSOR_SOURCE, severity, message)
++#define AASDK_LOG_CHANNEL_NAVIGATION(severity, message) AASDK_LOG_CATEGORY(CHANNEL_NAVIGATION, severity, message)
++#define AASDK_LOG_CHANNEL_PHONE_STATUS(severity, message) AASDK_LOG_CATEGORY(CHANNEL_PHONE_STATUS, severity, message)
++#define AASDK_LOG_CHANNEL_RADIO(severity, message) AASDK_LOG_CATEGORY(CHANNEL_RADIO, severity, message)
++#define AASDK_LOG_CHANNEL_NOTIFICATION(severity, message) AASDK_LOG_CATEGORY(CHANNEL_NOTIFICATION, severity, message)
++#define AASDK_LOG_CHANNEL_VENDOR_EXT(severity, message) AASDK_LOG_CATEGORY(CHANNEL_VENDOR_EXT, severity, message)
++#define AASDK_LOG_CHANNEL_WIFI_PROJECTION(severity, message) AASDK_LOG_CATEGORY(CHANNEL_WIFI_PROJECTION, severity, message)
++#define AASDK_LOG_CHANNEL_MEDIA_BROWSER(severity, message) AASDK_LOG_CATEGORY(CHANNEL_MEDIA_BROWSER, severity, message)
++#define AASDK_LOG_CHANNEL_PLAYBACK_STATUS(severity, message) AASDK_LOG_CATEGORY(CHANNEL_PLAYBACK_STATUS, severity, message)
++
++// Audio channel categories
++#define AASDK_LOG_AUDIO_GUIDANCE(severity, message) AASDK_LOG_CATEGORY(AUDIO_GUIDANCE, severity, message)
++#define AASDK_LOG_AUDIO_MEDIA(severity, message) AASDK_LOG_CATEGORY(AUDIO_MEDIA, severity, message)
++#define AASDK_LOG_AUDIO_SYSTEM(severity, message) AASDK_LOG_CATEGORY(AUDIO_SYSTEM, severity, message)
++#define AASDK_LOG_AUDIO_TELEPHONY(severity, message) AASDK_LOG_CATEGORY(AUDIO_TELEPHONY, severity, message)
++#define AASDK_LOG_AUDIO_MICROPHONE(severity, message) AASDK_LOG_CATEGORY(AUDIO_MICROPHONE, severity, message)
++
++// Video channel categories
++#define AASDK_LOG_VIDEO_SINK(severity, message) AASDK_LOG_CATEGORY(VIDEO_SINK, severity, message)
++#define AASDK_LOG_VIDEO_CHANNEL(severity, message) AASDK_LOG_CATEGORY(VIDEO_CHANNEL, severity, message)
++
+ #endif

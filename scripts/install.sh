@@ -1,0 +1,52 @@
+#!/bin/bash
+set -euo pipefail
+cd -- "$(dirname -- "$0")/.."
+if [[ $EUID -ne 0 ]]; then
+  echo 'Run: sudo bash scripts/install.sh'
+  exit 1
+fi
+. /etc/os-release
+if [[ ${VERSION_CODENAME:-} != bookworm || $(uname -m) != aarch64 ]]; then
+  echo 'This installer targets Raspberry Pi OS Bookworm (64-bit).'
+  exit 1
+fi
+apt-get update
+apt-get install -y python3 python3-pil python3-numpy python3-dbus python3-gi python3-bleak \
+  bluez bluez-alsa-utils libasound2-plugin-bluez alsa-utils openssl pipewire pipewire-bin libspa-0.2-modules libsamplerate0 libsoxr0 \
+  nodejs npm patch libudev-dev libusb-1.0-0 libdrm2 libavcodec59 libavutil57 libswscale6 \
+  fonts-dejavu-core fbset usbutils build-essential pkg-config libpipewire-0.3-dev network-manager iw rfkill raspi-config initramfs-tools
+bash scripts/install_button_audio.sh
+root=/opt/hlauncher
+if [[ $(pwd -P) == "$root" ]]; then
+  echo 'Run the installer from your Git checkout, outside /opt/hlauncher.'
+  exit 1
+fi
+stamp=$(date +%Y%m%d-%H%M%S)
+if [[ -d $root ]]; then
+  cp -a "$root" "/opt/hlauncher.backup-$stamp"
+fi
+install -d "$root" /var/log/hlauncher /var/lib/hlauncher /etc/systemd/system/bluetooth.service.d
+for path in hlauncher sdk plugins examples bluetooth scripts packaging config docs tests third_party native LICENSE NOTICE README.md THIRD_PARTY_NOTICES.md; do
+  cp -a "$path" "$root/"
+done
+bash "$root/scripts/build_pipewire_pcm.sh"
+python3 "$root/scripts/fetch_dependencies.py"
+npm ci --prefix "$root/plugins/carplay/runtime/usb" --omit=dev --ignore-scripts --no-audit --no-fund
+if [[ ! -f /etc/hlauncher.env ]]; then
+  install -m 600 hlauncher.env.example /etc/hlauncher.env
+fi
+for unit in hlauncher.service hlauncher-audio.service hlauncher-connect.service hlauncher-pipewire.service hlauncher-pairing.service hlauncher-recovery.service hlauncher-firstboot.service hlauncher-updater.service hlauncher-grow.service; do
+  install -m 644 "packaging/$unit" "/etc/systemd/system/$unit"
+done
+dropin=/etc/systemd/system/bluetooth.service.d/90-hlauncher.conf
+if [[ -f $dropin ]]; then cp -a "$dropin" "$dropin.backup-$stamp"; fi
+install -m 644 packaging/90-hlauncher.conf "$dropin"
+python3 "$root/scripts/configure_phone_identity.py" --apply
+systemctl daemon-reload
+systemctl disable hlauncher-pipewire.service
+# Offline image builds have no running systemd instance to stop.
+if [[ -d /run/systemd/system ]]; then systemctl stop hlauncher-pipewire.service; fi
+/usr/bin/python3 "$root/scripts/check.py"
+echo
+echo 'Installed. No HLauncher services were started.'
+echo 'Enable the first-boot services using docs/onboarding.md, then pair from HandsFreeLink.'

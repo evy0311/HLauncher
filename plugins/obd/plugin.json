@@ -1,0 +1,10 @@
+{
+  "api_version": 1,
+  "id": "obd",
+  "name": "OBD Gauges",
+  "entrypoint": ["python3", "worker.py"],
+  "capabilities": ["display", "touch"],
+  "default_enabled": true,
+  "keep_alive": false,
+  "color": "#790f18"
+}

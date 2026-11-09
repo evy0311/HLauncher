@@ -1,0 +1,19 @@
+[Unit]
+Description=HLauncher HDMI and HondaLink control
+Wants=hlauncher-updater.service bluetooth.service hlauncher-audio.service hlauncher-connect.service hlauncher-pairing.service hlauncher-recovery.service
+After=hlauncher-updater.service bluetooth.service hlauncher-audio.service hlauncher-pairing.service
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+EnvironmentFile=-/etc/hlauncher.env
+Environment=PYTHONUNBUFFERED=1
+WorkingDirectory=/opt/hlauncher
+ExecStartPre=/usr/bin/python3 -m hlauncher.audio_settings --disable-pipewire
+ExecStart=/usr/bin/python3 -m hlauncher run --seconds 0
+Restart=on-failure
+RestartSec=3
+TimeoutStopSec=10
+
+[Install]
+WantedBy=multi-user.target

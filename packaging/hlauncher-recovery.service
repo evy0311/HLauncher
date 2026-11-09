@@ -1,0 +1,17 @@
+[Unit]
+Description=HLauncher local setup and recovery
+Wants=NetworkManager.service
+After=NetworkManager.service hlauncher-firstboot.service
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+EnvironmentFile=-/etc/hlauncher.env
+WorkingDirectory=/opt/hlauncher
+ExecStart=/usr/bin/python3 -m hlauncher.recovery
+Restart=on-failure
+RestartSec=3
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

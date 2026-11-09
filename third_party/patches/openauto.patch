@@ -1,0 +1,39 @@
+--- a/src/autoapp/App.cpp
++++ b/src/autoapp/App.cpp
+@@ -31,7 +31,7 @@
+       : ioService_(ioService), usbWrapper_(usbWrapper), tcpWrapper_(tcpWrapper), strand_(ioService_),
+         androidAutoEntityFactory_(androidAutoEntityFactory), usbHub_(std::move(usbHub)),
+         connectedAccessoriesEnumerator_(std::move(connectedAccessoriesEnumerator)),
+-        acceptor_(ioService, boost::asio::ip::tcp::endpoint(boost::asio::ip::tcp::v4(), 5000)), isStopped_(false) {
++        acceptor_(ioService, boost::asio::ip::tcp::endpoint(boost::asio::ip::address_v4::loopback(), 0)), isStopped_(false) {
+ 
+   }
+ 
+--- a/src/autoapp/Service/AndroidAutoEntity.cpp
++++ b/src/autoapp/Service/AndroidAutoEntity.cpp
+@@ -179,7 +179,7 @@
+           serviceDiscoveryResponse.mutable_channels()->Reserve(256);
+           serviceDiscoveryResponse.set_driver_position(aap_protobuf::service::control::message::DriverPosition::DRIVER_POSITION_RIGHT);
+           // serviceDiscoveryResponse.set_can_play_native_media_during_vr(false); // Deprecated function removed
+-          serviceDiscoveryResponse.set_display_name("Crankshaft-NG");
++          serviceDiscoveryResponse.set_display_name("HLauncher");
+           serviceDiscoveryResponse.set_probe_for_support(false);
+ 
+           auto *connectionConfiguration = serviceDiscoveryResponse.mutable_connection_configuration();
+@@ -193,13 +193,13 @@
+ 
+           auto *headUnitInfo = serviceDiscoveryResponse.mutable_headunit_info();
+ 
+-          serviceDiscoveryResponse.set_display_name("Crankshaft-NG");
++          serviceDiscoveryResponse.set_display_name("HLauncher");
+           headUnitInfo->set_make("Crankshaft");
+           headUnitInfo->set_model("Universal");
+           headUnitInfo->set_year("2018");
+-          headUnitInfo->set_vehicle_id("2024110822150988");
++          headUnitInfo->set_vehicle_id("");
+           headUnitInfo->set_head_unit_make("f1x");
+-          headUnitInfo->set_head_unit_model("Crankshaft-NG Autoapp");
++          headUnitInfo->set_head_unit_model("HLauncher OpenAuto");
+           headUnitInfo->set_head_unit_software_build("1");
+           headUnitInfo->set_head_unit_software_version("1.0");
+ 

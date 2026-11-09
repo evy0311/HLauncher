@@ -1,0 +1,18 @@
+[Unit]
+Description=HLauncher first-boot Bluetooth enrollment
+Wants=bluetooth.service hlauncher-firstboot.service
+After=bluetooth.service hlauncher-firstboot.service
+Before=hlauncher.service
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+EnvironmentFile=-/etc/hlauncher.env
+WorkingDirectory=/opt/hlauncher
+ExecStart=/usr/bin/python3 -m hlauncher.pairing
+Restart=on-failure
+RestartSec=2
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

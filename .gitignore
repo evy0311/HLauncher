@@ -1,0 +1,28 @@
+__pycache__/
+*.py[cod]
+node_modules/
+.npm-cache/
+.venv/
+.env
+captures/
+logs/
+*.jsonl
+*.btsnoop
+*.pcap*
+*.img
+*.mef
+*.pem
+*.key
+.DS_Store
+build/
+
+# Generated upstream dependencies
+.dependency-cache/
+plugins/carplay/runtime/usb/vendor/node-carplay/
+
+# Generated investigation evidence belongs outside the application repository
+artifacts/
+
+# Release artifacts and signing material stay outside source control
+dist/
+*.img.xz

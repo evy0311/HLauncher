@@ -1,0 +1,19 @@
+HLauncher
+Copyright (C) 2026 Evan Horsley (evy0311)
+
+HLauncher and its HondaLink protocol integration are based on reverse-engineering
+work by Evan Horsley (evy0311).
+Project: https://github.com/evy0311/HLauncher
+
+HLauncher original code is licensed under GNU GPL version 3. Under GPLv3
+section 7(b), distributions containing this original code or adaptations of it
+must preserve the copyright and author-attribution notices above in their legal
+notices. A legal-notices file or an accessible About / Licenses page is suitable;
+a startup banner or credit on every screen is not required.
+
+This attribution term applies only to HLauncher's original material. It does not
+replace third-party notices, claim authorship of third-party code, require
+endorsement, or impose a condition on merely running the software. Third-party
+components retain their respective licenses; see THIRD_PARTY_NOTICES.md.
+
+HLauncher is provided WITHOUT ANY WARRANTY; see LICENSE for the full terms.

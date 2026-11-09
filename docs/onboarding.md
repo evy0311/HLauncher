@@ -91,3 +91,5 @@ card triggers expansion again; repeated boots on the same geometry do no work.
 This changes the immutable system contract. Existing images require a reflash
 to adopt the compact layout/runtime; subsequent compatible app updates retain
 the normal signed update and rollback mechanism.
+
+Bluetooth audio owns `org.bluealsa` exclusively; the stock `bluealsa.service` is masked. HLauncher reports systemd readiness after HondaLink profiles register. Radio reconnects react to BlueZ events, with bounded retry backoff. Display preparation runs independently after profile registration. First-boot SSH/network/storage maintenance follows readiness rather than blocking pairing.

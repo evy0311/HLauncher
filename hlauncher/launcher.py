@@ -6,7 +6,7 @@ import subprocess
 from sdk.hlauncher_sdk.fonts import font as ui_font
 from . import __version__
 from .debug_tools import InputMonitor, ToneTest
-from .config import RADIO_ADDRESS
+from . import config
 from .diagnostics import Diagnostics
 from .obd import ObdManager
 from .audio_settings import AudioSettings, EQ_BANDS
@@ -58,7 +58,7 @@ class Launcher:
         self.protocol_redraw = 0
         from .voice_audio import VoiceAudio
         self.voice_audio=VoiceAudio(self.prefs.path.with_name('voice-audio.json'))
-        self.inputs = InputMonitor(event, RADIO_ADDRESS)
+        self.inputs = InputMonitor(event, config.RADIO_ADDRESS)
         self.inputs.start()
         self.tone_test = ToneTest(self.audio.playback)
         self.debug_touch = {}

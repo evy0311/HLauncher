@@ -156,3 +156,5 @@ python3 scripts/build_test_update.py --base /releases/local-0.2.0 \
 
 Upload its `.hlu`, verify 0.2.1 is installed, then choose Restore version 0.2.0 in
 Settings. This helper refuses production release inputs and never publishes.
+
+Boot services are installed from the signed application release. Activation, rollback and interrupted-update recovery restore the matching service files and reload systemd. Updates that change boot services require SD card protection to be disabled and a reboot first. The recovery daemon itself remains outside the release. Older images require a one-time verified updater preparation before accepting a release with a new system contract.

@@ -4,7 +4,6 @@ import re
 from pathlib import Path
 import subprocess
 from .setup_state import SetupState, atomic_json
-from .storage import finish_transition
 
 
 def write_recovery_card(credentials, boot):
@@ -25,6 +24,9 @@ def write_recovery_card(credentials, boot):
 
 
 def main():
+    # Runs after HondaLink profile readiness, outside the connection critical path.
+    from .audio_settings import PipeWireService
+    PipeWireService().set_enabled(False)
     state = SetupState()
     credentials = state.credentials()
     marker = state.folder/'initialized.json'
@@ -42,6 +44,7 @@ def main():
     if MANAGED.exists():
         from .config import Preferences
         apply(Preferences(state.folder/'settings.json').data.get('ssh_enabled',True),state.folder,boot=True)
+    from .storage import finish_transition
     finish_transition()
 
 

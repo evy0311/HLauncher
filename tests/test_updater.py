@@ -37,6 +37,31 @@ class Updates(unittest.TestCase):
         self.state=self.folder/'state';self.state.mkdir()
         (self.state/'settings.json').write_text('{"tile_color":"Red","enabled":{"carplay":true}}')
 
+    def test_release_units_reload_for_update_rollback_and_interruption(self):
+        self.config.update(release_units=True,unit_root=str(self.folder/'system'))
+        for release in ('1.0.0',):
+            folder=self.root/'releases'/release/'app/packaging';folder.mkdir(parents=True)
+            for name in (*updater.UNITS,'hlauncher-firstboot.service','hlauncher-pipewire.service','hlauncher-grow.service'):
+                (folder/name).write_text('[Unit]\nDescription=old\n')
+        self.installer.install(*self.bundle(boot_units=True))
+        self.assertIn(['systemctl','daemon-reload'],self.calls)
+        self.assertIn('new',(self.folder/'system/etc/systemd/system/hlauncher.service').read_text())
+        self.calls.clear();self.installer.rollback()
+        self.assertIn(['systemctl','daemon-reload'],self.calls)
+        self.assertIn('old',(self.folder/'system/etc/systemd/system/hlauncher.service').read_text())
+        self.calls.clear()
+        updater.atomic(self.installer.state_path,dict(current='1.0.0',previous=None,pending={'from':'1.0.0','to':'1.1.0'}))
+        self.installer.recover()
+        self.assertIn(['systemctl','daemon-reload'],self.calls)
+
+    def test_boot_update_rejects_overlay_before_stopping_or_switching(self):
+        self.config['release_units']=True
+        self.installer.run=lambda args,**kw:SimpleNamespace(returncode=0,stdout='overlay\n')
+        with self.assertRaisesRegex(ValueError,'SD card protection'):
+            self.installer.install(*self.bundle(boot_units=True))
+        self.assertEqual(self.installer.current(),'1.0.0')
+        self.assertNotIn('pending',updater.read(self.installer.state_path))
+
     def tearDown(self):self.temp.cleanup()
 
     def manifest(self, version, **changes):
@@ -45,9 +70,14 @@ class Updates(unittest.TestCase):
                          unpacked_size=1,sha256='a'*64),**changes)
 
     def bundle(self, version='1.1.0', **changes):
+        boot_units=changes.pop('boot_units',False)
         folder=self.folder/('bundle-'+version);folder.mkdir(exist_ok=True)
         app=folder/'app';(app/'hlauncher').mkdir(parents=True,exist_ok=True)
         (app/'hlauncher/__init__.py').write_text('__version__ = '+repr(version))
+        if boot_units:
+            (app/'packaging').mkdir()
+            for name in (*updater.UNITS,'hlauncher-firstboot.service','hlauncher-pipewire.service','hlauncher-grow.service'):
+                (app/'packaging'/name).write_text('[Unit]\nDescription=new\n')
         runtime=folder/'runtime';runtime.mkdir(exist_ok=True)
         (runtime/'library.so').write_text('native fixture')
         archive=folder/f'HLauncher-{version}-pi4-arm64.tar.xz'

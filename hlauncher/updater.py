@@ -234,6 +234,34 @@ class Installer:
             time.sleep(.5)
         raise RuntimeError('The new version did not become healthy')
 
+    def sync_units(self, release, apply=True):
+        if self.config.get('release_units') is not True:return
+        packaging=self.root/'releases'/release/'app/packaging'
+        destination=Path(self.config.get('unit_root','/'))/'etc/systemd/system'
+        names=(*UNITS,'hlauncher-firstboot.service','hlauncher-pipewire.service','hlauncher-grow.service')
+        files={name:(packaging/name).read_bytes() for name in names}
+        if any(len(data)>65536 or not data.startswith(b'[Unit]') for data in files.values()):
+            raise ValueError('Invalid boot service definitions')
+        changed={name:data for name,data in files.items()
+                 if not (destination/name).is_file() or (destination/name).read_bytes()!=data}
+        if changed and 'unit_root' not in self.config:
+            result=self.run(['findmnt','-no','FSTYPE','/'],check=True,capture_output=True,text=True,timeout=5)
+            if result.stdout.strip()=='overlay':
+                raise ValueError('Turn off SD card protection and restart before updating boot services')
+        if not apply:return
+        destination.mkdir(parents=True,exist_ok=True)
+        for name,data in changed.items():
+            path=destination/name
+            if path.is_symlink():raise ValueError('Unexpected boot service symlink')
+            fd,tmp=tempfile.mkstemp(prefix='.'+name,dir=destination)
+            try:
+                with os.fdopen(fd,'wb') as output:
+                    output.write(data);output.flush();os.fsync(output.fileno());os.fchmod(output.fileno(),0o644)
+                os.replace(tmp,path);sync_dir(destination)
+            finally:
+                if os.path.exists(tmp):os.unlink(tmp)
+        self.run(['systemctl','daemon-reload'],check=True,capture_output=True,timeout=20)
+
     def recover(self):
         """Runs before application services on boot, before any new update requests."""
         for path in self.root.glob('.staging-*'):
@@ -244,6 +272,7 @@ class Installer:
             old=state['pending']['from'];version(old)
             if not (self.root/'releases'/old/'release.json').is_file():raise ValueError('Recovery version is missing')
             switch(self.root,old)
+            self.sync_units(old)
             atomic(self.state_path,dict(current=old,previous=state.get('previous'),
                                         recovered=True,resume_units=state.get('units',[]),
                                         last_error='Interrupted update restored the previous version'))
@@ -253,6 +282,7 @@ class Installer:
         if target==old:raise ValueError('That version is already installed')
         info=read(self.root/'releases'/target/'release.json');validate_manifest(info,self.config)
         if info['version']!=target:raise ValueError('Installed release metadata does not match its version')
+        self.sync_units(target,apply=False)
         previous=read(self.state_path).get('previous')
         units=self.active_units()
         if 'hlauncher.service' not in units:units.append('hlauncher.service')
@@ -260,6 +290,7 @@ class Installer:
         try:
             self.stop(units)
             switch(self.root,target)
+            self.sync_units(target)
             self.start(units)
             self.run(['/usr/bin/python3','scripts/check.py'],cwd=self.root/'releases'/target/'app',
                      check=True,capture_output=True,timeout=90)
@@ -269,7 +300,7 @@ class Installer:
         except Exception as error:
             # Leave pending durable until both pointer restoration and restart succeed.
             try:
-                self.stop(units);switch(self.root,old);self.start(units)
+                self.stop(units);switch(self.root,old);self.sync_units(old);self.start(units)
             except Exception as restore_error:
                 raise RecoveryRequired('Restarting updater to finish restoring the previous version') from restore_error
             atomic(self.state_path,dict(current=old,previous=previous,last_error='New version failed; previous version restored'))

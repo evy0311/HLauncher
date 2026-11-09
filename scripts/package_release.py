@@ -111,7 +111,7 @@ def package(root, persist, version, key, output, commit):
     app=release/'app'
     (app/'hlauncher/__init__.py').write_text('"""HLauncher application version."""\n__version__ = '+repr(version)+'\n')
     config=dict(root='/persist/hlauncher',public_key='/etc/hlauncher-updater/release.pub',
-                platform=updater.PLATFORM,system_contract=system_contract)
+                platform=updater.PLATFORM,system_contract=system_contract,release_units=True)
     updater.atomic(app/'build-info.json',dict(version=version,commit=commit,platform=updater.PLATFORM,
                                              system_contract=system_contract))
     filename=f'HLauncher-{version}-pi4-arm64.tar.xz'
@@ -135,6 +135,15 @@ def package(root, persist, version, key, output, commit):
     for name in ('updater.py','update_service.py'):shutil.copy2(app/'hlauncher'/name,stable/name)
     trust=root/'etc/hlauncher-updater';trust.mkdir(parents=True,exist_ok=True)
     shutil.copy2(output/'release.pub',trust/'release.pub');updater.atomic(trust/'config.json',config)
+    # Cache real boot units on root: systemd reads them before /persist is mounted.
+    (root/'etc/systemd/system').mkdir(parents=True,exist_ok=True)
+    for name in (*updater.UNITS,'hlauncher-firstboot.service','hlauncher-pipewire.service','hlauncher-grow.service'):
+        path=root/'etc/systemd/system'/name
+        if (app/'packaging'/name).is_file():
+            path.unlink(missing_ok=True)
+            shutil.copy2(app/'packaging'/name,path)
+    stock=root/'etc/systemd/system/bluealsa.service'
+    stock.unlink(missing_ok=True);stock.symlink_to('/dev/null')
     # Retain the OS package inventory used to compile native artifacts.
     shutil.copy2(root/'var/lib/dpkg/status',output/'os-packages.txt')
     return item

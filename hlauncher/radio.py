@@ -281,10 +281,19 @@ def main():
                 "Channel": dbus.UInt16(channel), "RequireAuthentication": dbus.Boolean(True),
                 "RequireAuthorization": dbus.Boolean(False), "AutoConnect": dbus.Boolean(False),
             }))
-        registry.tick()
-        event(state='bluetooth_profiles_ready')
-        GLib.idle_add(launcher.show_pairing)
-        GLib.timeout_add_seconds(2, registry.tick)
+        from hlauncher.boot import notify_ready
+        announced=False
+        def ready_tick():
+            nonlocal announced
+            registry.tick()
+            if not announced and all(profile.registered for _,profile in profiles):
+                announced=True
+                event(state='bluetooth_profiles_ready')
+                notify_ready()
+                launcher.prepare()
+            return True
+        ready_tick()
+        GLib.timeout_add_seconds(2, ready_tick)
         GLib.timeout_add_seconds(1, protocol_tick)
         if a.seconds > 0:
             GLib.timeout_add_seconds(a.seconds, lambda: (loop.quit(), False)[1])

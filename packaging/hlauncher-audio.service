@@ -6,7 +6,8 @@ Conflicts=bluealsa.service
 StartLimitIntervalSec=0
 
 [Service]
-Type=simple
+Type=dbus
+BusName=org.bluealsa
 ExecStart=/opt/hlauncher-deps/bluealsa-buttons/bin/bluealsa -p a2dp-source -p hfp-ag
 Restart=on-failure
 RestartSec=3

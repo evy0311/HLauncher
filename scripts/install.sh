@@ -42,6 +42,8 @@ dropin=/etc/systemd/system/bluetooth.service.d/90-hlauncher.conf
 if [[ -f $dropin ]]; then cp -a "$dropin" "$dropin.backup-$stamp"; fi
 install -m 644 packaging/90-hlauncher.conf "$dropin"
 python3 "$root/scripts/configure_phone_identity.py" --apply
+systemctl disable bluealsa.service
+systemctl mask bluealsa.service
 systemctl daemon-reload
 systemctl disable hlauncher-pipewire.service
 # Offline image builds have no running systemd instance to stop.

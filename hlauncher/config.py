@@ -24,7 +24,7 @@ RADIO_PATH = "/org/bluez/hci0/dev_" + RADIO_ADDRESS.replace(":", "_")
 RFCOMM_PATH = "/org/bluealsa/hci0/dev_" + RADIO_ADDRESS.replace(":", "_") + "/rfcomm"
 
 
-from sdk.hlauncher_sdk.theme import PALETTE as TILE_COLORS, normalize_color
+from sdk.hlauncher_sdk.palette import PALETTE as TILE_COLORS, normalize_color
 
 
 def serial_number():

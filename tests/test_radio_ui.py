@@ -60,6 +60,16 @@ class RadioUI(unittest.TestCase):
                     for b,_ in ui.actions[i+1:]:
                         self.assertFalse(a[0]<b[2] and b[0]<a[2] and a[1]<b[3] and b[1]<a[3],ui.mode)
 
+    def test_projection_disconnect_with_unchanged_status_restores_back_control(self):
+        ui=self.ui;ui.mode='plugin';ui.host.active='carplay';ui.has_frame=True
+        ui.last_status='iPhone disconnected';ui.projection_checked=time.monotonic()
+        worker=SimpleNamespace(video_available=False,status='iPhone disconnected')
+        with patch.object(ui.host,'workers',{'carplay':worker}),patch.object(ui.host,'tick'),patch.object(ui.host,'frame',return_value=None):
+            ui.tick()
+            self.assertFalse(ui.has_frame)
+            self.assertTrue(any(action==ui.home for _,action in ui.actions))
+        ui.host.active=None
+
     def test_picture_slider_drag_still_saves_and_storage_requires_completed_change(self):
         ui=self.ui;ui.color_settings();key,box=ui.picture_sliders[0]
         ui.color_touch('down',(box[2],(box[1]+box[3])//2));ui.color_touch('up',(box[2],(box[1]+box[3])//2))

@@ -51,6 +51,17 @@ class Projection(unittest.TestCase):
         old.lease.close();self.host.projection_retry=0;self.host._projection_tick()
         self.assertEqual(list(self.host.workers),['android-auto'])
         self.assertEqual(self.host.active,'android-auto')
+    def test_disconnected_projection_discards_and_releases_queued_frame(self):
+        from unittest.mock import Mock
+        worker=SimpleNamespace(video_available=False,take_frame=Mock(return_value=b'stale'))
+        with patch.object(self.host,'workers',{'carplay':worker}):
+            self.host.active='carplay'
+            self.assertIsNone(self.host.frame())
+            worker.take_frame.assert_called_once()
+            worker.video_available=True
+            self.assertEqual(self.host.frame(),b'stale')
+        self.host.active=None
+
     def test_background_detection_does_not_steal_android_auto(self):
         self.host.activate('android-auto');self.host.ensure_background_carplay()
         self.assertEqual(list(self.host.workers),['android-auto'])

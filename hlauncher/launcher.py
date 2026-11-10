@@ -919,6 +919,10 @@ class Launcher:
                 self.open_plugin(plugin_id)
         if self.mode != "plugin":
             return
+        worker=self.host.workers.get(self.host.active)
+        projection_cleared=(self.host.active in ('carplay','android-auto') and self.has_frame
+                            and worker is not None and not worker.video_available)
+        if projection_cleared:self.has_frame=False
         try:
             frame = self.host.frame()
         except (OSError, ValueError, RuntimeError) as exc:
@@ -932,7 +936,7 @@ class Launcher:
             self.last_frame_at = time.monotonic()
         else:
             status = self.host.status()
-            if status != self.last_status:
+            if status != self.last_status or projection_cleared:
                 self.last_status = status
                 # A disconnect/error replaces stale CarPlay pixels with a waiting page.
                 worker = self.host.workers.get(self.host.active)

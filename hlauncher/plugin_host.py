@@ -557,7 +557,10 @@ class PluginHost:
 
     def frame(self):
         worker = self.workers.get(self.active)
-        return worker.take_frame() if worker else None
+        frame=worker.take_frame() if worker else None
+        # Consume/release queued leases, but never display a disconnected phone.
+        if self.active in PROJECTIONS and worker and not worker.video_available:return None
+        return frame
 
     def status(self):
         worker = self.workers.get(self.active)

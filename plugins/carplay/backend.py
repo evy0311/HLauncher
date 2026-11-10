@@ -40,6 +40,7 @@ class CarplayHDMI:
         self.proc = None
         self.stop_event = threading.Event()
         self.frame = None
+        self.phone_connected = False
         self.version = 0
         self.status = "Select CarPlay"
         self.status_version = 0
@@ -86,6 +87,7 @@ class CarplayHDMI:
         self.adapter_branding_error=''
         self.touch_router = TouchRouter()
         self.frame = None
+        self.phone_connected = False
         self.frames = 0
         self.host_ui_requested = False
         self.adapter_branding="waiting"
@@ -289,7 +291,16 @@ class CarplayHDMI:
 
     def snapshot(self):
         with self.lock:
-            return self.version, self.frame, self.status_version, self.status
+            return self.version, self.frame if self.phone_connected else None, self.status_version, self.status
+
+    def receive_connection_state(self, state):
+        if state.get('state')=='phone_connected':
+            with self.lock:self.phone_connected=True
+        elif state.get('state') in ('phone_disconnected','usb_failure','waiting_dongle','dongle_ready'):
+            with self.lock:
+                self.phone_connected=False
+                self.frame=None
+                self.version+=1
 
     def run(self, w, h):
         decoder = None
@@ -335,7 +346,7 @@ class CarplayHDMI:
                 while not self.stop_event.is_set():
                     visible = self.visible.is_set()
                     if visible and not last_visible:
-                        preview = decoder.decoder.redraw()
+                        preview = decoder.decoder.redraw() if self.phone_connected else None
                         if preview is not None:
                             with self.lock:
                                 self.frame = preview
@@ -345,7 +356,7 @@ class CarplayHDMI:
                         picture_check = time.monotonic()
                         if picture.refresh():
                             decoder.decoder.picture = dict(picture.values)
-                            preview = decoder.decoder.redraw() if visible else None
+                            preview = decoder.decoder.redraw() if visible and self.phone_connected else None
                             if preview is not None:
                                 with self.lock:
                                     self.frame = preview
@@ -370,6 +381,7 @@ class CarplayHDMI:
                             self.decode_max_ms = max(self.decode_max_ms, elapsed * 1000)
                         for frame in pictures:
                             with self.lock:
+                                if not self.phone_connected:continue
                                 self.frame = frame
                                 self.version += 1
                                 self.frames += 1
@@ -401,6 +413,7 @@ class CarplayHDMI:
                                 self.notify("carplay_audio_forward_error", error=str(exc))
                     else:
                         state = json.loads(data)
+                        self.receive_connection_state(state)
                         self.notify("carplay_hdmi_status", bridge=state)
                         if state.get('state')=='adapter_branding':
                             with self.lock:

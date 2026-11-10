@@ -9,6 +9,8 @@ work before exposing these through plugins. Recovered payload formats and
 vehicle-tested features are identified separately. The [meter-guidance trace](meter-guidance.md)
 records the outgoing display/text-data family and the stock Civic parser gates
 that currently prevent using it through the recovered HondaLink sender.
+The [i-MID Apps audio investigation](imid-audio.md) separates Connect audio
+state, firmware AppMode status, AVRCP metadata and HLauncher source-only labels.
 
 The listener registers an authenticated serial profile on RFCOMM channel 10 and the Honda control profile `00000000-deca-fade-deca-deafdecacafe` on channel 11. The configured HandsFreeLink peer is the only accepted device.
 

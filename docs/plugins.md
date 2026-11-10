@@ -113,9 +113,13 @@ failures are logged and do not interrupt playback.
 
 Read `/run/hlauncher/now-playing.json` or call the host's `media.snapshot()` for the
 latest state. This volatile snapshot is written atomically at most five times per
-second. It is a local observation interface, not a radio protocol. No media data
-is forwarded to the radio, Bluetooth or iMID. A future vehicle-output integration
-can consume this contract without adding dongle-specific code to the host.
+second. It is a local observation interface, not a radio protocol. Actual song fields
+are not forwarded to the radio, Bluetooth or iMID. The radio metadata helper
+exports only the selected source label and HLauncher as artist. A future
+vehicle-output integration can consume the local contract without adding
+dongle-specific code to the host. See the
+[i-MID Apps audio investigation](imid-audio.md) for the current source-label
+exception and why AVRCP support does not establish Apps-mode song display.
 
 CarPlay forwards `MediaData` subtype 1 (title/artist/album/player/duration/position).
 Album artwork is not forwarded through this text interface. Unknown play-state

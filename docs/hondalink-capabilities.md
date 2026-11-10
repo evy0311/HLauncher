@@ -27,7 +27,7 @@ material or downloaded customer data is included in this repository.
 | Radio clock correction | Local calendar, base UTC offset and DST flag in binary data type 3 | Not implemented; useful for clock synchronization if the radio advertises support. |
 | Voice recognition lifecycle | Availability, start/capability and end notices; incoming start callback | Partial radio/HFP/voice observation exists, but this HondaLink lifecycle is not a complete plugin service. |
 | Exit phone display | A short control message asks to exit the phone display | Not exposed as a plugin command. Different from returning to HLauncher's own Home page. |
-| Meter navigation guidance | Heading, destination direction, guidance flags/types, language and distance become CAN-data type 4 | Not implemented. Separate transmit feature, disabled by the original Connect feature settings; compatibility with the Civic meter is unproven. |
+| Meter navigation guidance | Heading, destination direction, guidance flags/types, language and distance become CAN-data type 4 | Not implemented. Constructors recovered, but stock Civic parser rejects the query and packet form; see the meter-guidance trace. |
 | VIN, head-unit identity, location, ignition count | Virtual records alongside physical CAN data | Aggregate parsing/diagnostics implemented; no general plugin telemetry subscription API yet. |
 | DTC / freeze-frame context | Normal data type 0; B-CAN DTC 1; F-CAN DTC 2; F-CAN freeze-frame 3 | Diagnostics subscribe and retain records; friendly diagnostic decoding/presentation is incomplete. No ECU fault-clearing API is established. |
 | Helpnet | CAN-data type 7 has special multipart assembly | No complete assembly/consumer implementation; do not treat each part as a full report. |
@@ -162,13 +162,18 @@ Calendar edge cases and radio interpretation remain untested.
 
 ### Meter guidance is a separate transmit feature
 
-`sendMeterDisplayGuidanceRequest...` (`0xD8D70`) checks enabled-features bit
-`0x02`, calls `LPACanMessage.meterDisplayGuidanceRequestMessages...`, then sends
-CAN-data type 4. The original Connect initialization selects features 9
-(`0x09`), so that bit is off. This flag is distinct from B1's call-capability
-bit, which happens to have the same numerical value. Exact meter record
-layouts and Civic compatibility need separate tracing; this is not an
-arbitrary-CAN-write plugin API or part of the read-only gauge path.
+The [meter-guidance trace](meter-guidance.md) now covers all three native
+constructors: display fields (CAN-data type 4), multipart guidance data (5),
+and multipart current-location data (6). Their record IDs match the factory
+navigation family. A dedicated meter-support query uses short-message type
+`0x0B`; all three senders require local enabled-features bit `0x02`, which
+Connect's default features `0x09` leave off.
+
+The inspected stock Civic firmware rejects both that query type and the
+`C2 00 02` packet form used by these senders. Phone-side implementation alone
+is therefore insufficient for this baseline. Text schema, maneuver codes,
+radio forwarding and display behavior still need separate work. This path
+is not part of the read-only gauge subscription.
 
 ## Vehicle receive protocol recovered from native code
 

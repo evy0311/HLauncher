@@ -6,7 +6,9 @@ See [legacy HondaLink capabilities and extension roadmap](hondalink-capabilities
 for findings from the recovered Connect native SDK: call and navigation handoff,
 clock correction, voice notices, meter guidance, telemetry, and the remaining
 work before exposing these through plugins. Recovered payload formats and
-vehicle-tested features are identified separately.
+vehicle-tested features are identified separately. The [meter-guidance trace](meter-guidance.md)
+records the outgoing display/text-data family and the stock Civic parser gates
+that currently prevent using it through the recovered HondaLink sender.
 
 The listener registers an authenticated serial profile on RFCOMM channel 10 and the Honda control profile `00000000-deca-fade-deca-deafdecacafe` on channel 11. The configured HandsFreeLink peer is the only accepted device.
 

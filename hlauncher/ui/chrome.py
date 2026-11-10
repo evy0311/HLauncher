@@ -19,7 +19,7 @@ def scale_bounds(box,size):
     return tuple(round(value*size[i%2]/(720 if i%2==0 else 480)) for i,value in enumerate(box))
 
 
-def render(theme, *, child=False, clock=None, pressed=False):
+def render(theme, *, child=False, clock=None, pressed=False, show_clock=False):
     image=art.background(theme,child).copy();d=ImageDraw.Draw(image)
     if child and pressed:
         overlay=Image.new('RGBA',(50,40))
@@ -31,5 +31,6 @@ def render(theme, *, child=False, clock=None, pressed=False):
     credit_x=92+d.textlength('HLauncher',font=title_font)+12
     baseline=16-title_font.getbbox('HLauncher',anchor='ls')[1]
     d.text((credit_x,baseline),'by Evan Horsley',font=interface_font(14),fill='#9a9aa6',anchor='ls')
-    d.text((698,8),clock or datetime.now().strftime('%-I:%M'),font=clock_font(39),fill='#f4f4f7',anchor='rt')
+    if show_clock:
+        d.text((698,8),clock or datetime.now().strftime('%-I:%M'),font=clock_font(39),fill='#f4f4f7',anchor='rt')
     return image

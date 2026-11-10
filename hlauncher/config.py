@@ -24,7 +24,7 @@ RADIO_PATH = "/org/bluez/hci0/dev_" + RADIO_ADDRESS.replace(":", "_")
 RFCOMM_PATH = "/org/bluealsa/hci0/dev_" + RADIO_ADDRESS.replace(":", "_") + "/rfcomm"
 
 
-from sdk.hlauncher_sdk.theme import PALETTE as TILE_COLORS
+from sdk.hlauncher_sdk.palette import PALETTE as TILE_COLORS, normalize_color
 
 
 def serial_number():
@@ -39,8 +39,8 @@ def serial_number():
 class Preferences:
     def __init__(self, path=None):
         self.path = Path(path) if path else STATE_DIR / "settings.json"
-        self.data = {"enabled": {}, "background": {}, "default_plugin": None, "tile_color": "Blue",
-                     "setup_complete": False, "setup_step": 0, "debug_mode": False}
+        self.data = {"enabled": {}, "background": {}, "default_plugin": None, "tile_color": "Red", "custom_color": "#198B96",
+                     "setup_complete": False, "setup_step": 0, "debug_mode": False, "show_clock": False, "ssh_enabled": True}
         try:
             loaded = json.loads(self.path.read_text())
             if not isinstance(loaded, dict) or not isinstance(
@@ -50,6 +50,8 @@ class Preferences:
             # Existing installations retain their choices; only fresh images auto-onboard.
             self.data['setup_complete'] = loaded.get('setup_complete', True) is True
             self.data['debug_mode'] = loaded.get('debug_mode', False) is True
+            self.data['show_clock'] = loaded.get('show_clock', False) is True
+            self.data['ssh_enabled'] = loaded.get('ssh_enabled', True) is True
             step = loaded.get('setup_step', 0)
             self.data['setup_step'] = step if type(step) is int and 0 <= step <= 5 else 0
             self.data["enabled"] = {
@@ -62,6 +64,13 @@ class Preferences:
                 self.data['background'] = {k:v for k,v in background.items() if isinstance(k,str) and type(v) is bool}
             if isinstance(loaded.get("tile_color"), str) and loaded["tile_color"] in TILE_COLORS:
                 self.data["tile_color"] = loaded["tile_color"]
+            try:self.data['custom_color']=normalize_color(loaded.get('custom_color',self.data['custom_color']))
+            except ValueError:pass
+            if isinstance(loaded.get('tile_color'),str) and loaded['tile_color'] not in TILE_COLORS:
+                try:
+                    self.data['tile_color']=normalize_color(loaded['tile_color'])
+                    self.data['custom_color']=self.data['tile_color']
+                except ValueError:pass
             value = loaded.get("default_plugin")
             if value is None or isinstance(value, str):
                 self.data["default_plugin"] = value
@@ -97,14 +106,14 @@ class Preferences:
             raise
 
     def set_tile_color(self, name):
-        if name not in TILE_COLORS:
-            raise ValueError("Unknown tile color")
-        before = self.data['tile_color']
+        if not isinstance(name,str) or name not in TILE_COLORS:name=normalize_color(name)
+        before = (self.data['tile_color'],self.data['custom_color'])
         self.data['tile_color'] = name
+        if name.startswith('#'):self.data['custom_color']=name
         try:
             self.save()
         except OSError:
-            self.data['tile_color'] = before
+            self.data['tile_color'],self.data['custom_color'] = before
             raise
 
     def save(self, force=()):
@@ -116,7 +125,7 @@ class Preferences:
                 current = json.loads(self.path.read_text())
                 if not isinstance(current, dict): current = {}
             except (OSError, ValueError): current = {}
-            merged = {}
+            merged = dict(current)  # Preserve settings introduced by a newer release during rollback.
             for key, value in self.data.items():
                 if key in ('enabled','background') and isinstance(current.get(key),dict):
                     item = dict(current[key])

@@ -242,6 +242,11 @@ def main():
                             for parser in profile.parsers.values()), monotonic=time.monotonic())
         try: atomic_json(pathlib.Path('/run/hlauncher/connection.json'),connection)
         except OSError as exc:event(state='connection_status_error',error=str(exc))
+        from hlauncher import __version__
+        try: atomic_json(pathlib.Path('/run/hlauncher/update-health.json'),
+                         dict(version=__version__,monotonic=time.monotonic(),
+                              profiles_ready=all(profile.registered for _,profile in profiles)))
+        except OSError as exc:event(state='update_health_error',error=str(exc))
         for _, profile in profiles:
             if profile.uuid.endswith('cafe'):
                 for parser in list(profile.parsers.values()):
@@ -276,10 +281,19 @@ def main():
                 "Channel": dbus.UInt16(channel), "RequireAuthentication": dbus.Boolean(True),
                 "RequireAuthorization": dbus.Boolean(False), "AutoConnect": dbus.Boolean(False),
             }))
-        registry.tick()
-        event(state='bluetooth_profiles_ready')
-        GLib.idle_add(launcher.show_pairing)
-        GLib.timeout_add_seconds(2, registry.tick)
+        from hlauncher.boot import notify_ready
+        announced=False
+        def ready_tick():
+            nonlocal announced
+            registry.tick()
+            if not announced and all(profile.registered for _,profile in profiles):
+                announced=True
+                event(state='bluetooth_profiles_ready')
+                notify_ready()
+                launcher.prepare()
+            return True
+        ready_tick()
+        GLib.timeout_add_seconds(2, ready_tick)
         GLib.timeout_add_seconds(1, protocol_tick)
         if a.seconds > 0:
             GLib.timeout_add_seconds(a.seconds, lambda: (loop.quit(), False)[1])

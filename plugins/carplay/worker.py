@@ -11,6 +11,8 @@ def main():
     client = Client()
     backend = CarplayHDMI(lambda **event: print(json.dumps(event), flush=True), audio=client.playback)
     active = False
+    started=False
+    restart_at=0
     last_frame = -1
     last_status = -1
     heartbeat = 0
@@ -32,11 +34,12 @@ def main():
                 subscribed = client.subscribe_buttons(CARPLAY)
             while message := client.receive(0):
                 kind = message["type"]
-                if kind == "host.activate":
-                    active = True
-                    backend.set_visible(True)
+                if kind in ("host.activate","host.start"):
+                    active = kind=="host.activate"
+                    backend.set_visible(active)
                     last_frame = last_status = -1
                     backend.start(client.width, client.height)
+                    started=True
                 elif kind in ("host.deactivate", "touch.cancel"):
                     backend.touch({"contacts": []})
                     if kind == "host.deactivate":
@@ -44,6 +47,8 @@ def main():
                         backend.set_visible(False)
                 elif kind == "touch" and active:
                     backend.touch(message)
+                elif kind == "host.adapter.branding":
+                    backend.apply_branding(message.get("request_id"))
                 elif kind == "radio.button":
                     result = backend.button(message)
                     client.send(type='radio.button.result', button=message.get('button'),
@@ -62,6 +67,9 @@ def main():
                     capture_requested=False;backend.mic_format=None
                 elif kind == "host.stop":
                     return
+            if started and backend.thread and not backend.thread.is_alive() and time.monotonic()>=restart_at:
+                backend.start(client.width,client.height)
+                restart_at=time.monotonic()+3
             voice=backend.voice_snapshot()
             if voice!=voice_sent or time.monotonic()-voice_sent_at>2:
                 if voice_sent and (voice_sent['call_audio'] or voice_sent['siri']) and not (voice['call_audio'] or voice['siri']):

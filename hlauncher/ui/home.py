@@ -44,8 +44,8 @@ class Frame:
     page: int
 
 
-def render(entries, *, theme='Blue', size=(720,480), page=0, clock=None,
-           banner='', change_page=None, pressed=None):
+def render(entries, *, theme='Red', size=(720,480), page=0, clock=None,
+           banner='', change_page=None, pressed=None, show_clock=False):
     """Render from a canonical 720×480 layout and return matching touch regions.
 
     Up to four plugin entries per page, followed by persistent Audio/Settings.
@@ -54,7 +54,7 @@ def render(entries, *, theme='Blue', size=(720,480), page=0, clock=None,
     plugins=list(entries[:-2]);utilities=list(entries[-2:])
     pages=max(1,(len(plugins)+3)//4);page=max(0,min(page,pages-1))
     visible=plugins[page*4:page*4+4]+utilities
-    image=render_chrome(theme,clock=clock);d=ImageDraw.Draw(image)
+    image=render_chrome(theme,clock=clock,show_clock=show_clock);d=ImageDraw.Draw(image)
     sx,sy=size[0]/720,size[1]/480
     def bounds(box):return tuple(round(v*(sx if i%2==0 else sy)) for i,v in enumerate(box))
     actions=[]
@@ -62,6 +62,8 @@ def render(entries, *, theme='Blue', size=(720,480), page=0, clock=None,
     for i,entry in enumerate(visible):
         # 28 px above/below the grid, measured from the bottom of the header.
         x=46+(i%3)*(tw+20);y=80+(i//3)*(th+20);box=(x,y,x+tw,y+th)
+        shadow=art.tile_shadow(tw,th)
+        image.paste(shadow,(x-8,y-5),shadow)
         surface=art.tile(theme)
         image.paste(surface,(x,y),surface)
         icon_size=80;icon_x=(tw-icon_size)//2;caption_y=th-40
@@ -111,7 +113,7 @@ def draw_launcher(launcher):
     entries += [Entry('Audio','audio',launcher.audio_page),Entry('Settings','settings',launcher.settings)]
     frame=render(entries,theme=launcher.prefs.data['tile_color'],size=(launcher.fb.w,launcher.fb.h),
                  page=launcher.page,banner=launcher.banner,change_page=launcher.change_page,
-                 pressed=launcher.pressed_box if launcher.press is not None else None)
+                 pressed=launcher.pressed_box if launcher.press is not None else None,show_clock=launcher.prefs.data['show_clock'])
     launcher.actions=frame.actions;launcher.page=frame.page
     launcher.home_clock=datetime.now().strftime('%Y-%m-%d %H:%M')
     # Preserve the existing RGB565 dithering path; home handles its own touch style.

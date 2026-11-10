@@ -3,6 +3,7 @@
 // stdin: JSON lines: single touch or two fixed-slot multitouch contacts (normalized x/y).
 import fs from 'node:fs';
 import readline from 'node:readline';
+import {applyBranding} from './branding.mjs';
 import { format } from 'node:util';
 import { DongleDriver, DEFAULT_CONFIG, VideoData, AudioData, Plugged, Unplugged,
          SendTouch, SendMultiTouch, SendCommand, SendAudio, Command, MediaData, SoftwareVersion, ManufacturerInfo, BoxInfo, Opened } from './vendor/node-carplay/dist/modules/index.js';
@@ -32,6 +33,25 @@ let touchChain=Promise.resolve(), touchSequence=0;
 let voice={call_audio:false,siri:false,recording:false};
 let micChain=Promise.resolve(),micPending=0,micBytes=0,micDropped=0,micErrors=0;
 let mediaSchema='',mediaState='';
+let brandingBusy=false, brandingPending=null, adapterOpened=false, initialBrandingOK=false;
+async function brandAdapter(requestId=null) {
+  if(brandingBusy){if(requestId!==null)brandingPending=requestId;return false;}
+  brandingBusy=true;
+  try {
+    const result=await applyBranding(driver,(result,error)=>status('adapter_branding',{
+      result:result==='sent'?'transferred':result,label:'HLauncher',request_id:requestId,error,
+      verified:false,stage:adapterOpened?'opened':'initializing'}));
+    return result;
+  } finally {
+    brandingBusy=false;
+    if(brandingPending!==null && connected && adapterOpened){const id=brandingPending;brandingPending=null;void brandAdapter(id);}
+  }
+}
+function requestBranding(id) {
+  brandingPending=String(id || 'manual');
+  status('adapter_branding',{result:'waiting',request_id:brandingPending,label:'HLauncher',verified:false});
+  if(connected && adapterOpened){const pending=brandingPending;brandingPending=null;void brandAdapter(pending);}
+}
 function voiceChange(fields) {
   voice={...voice,...fields};status('projection_voice',{fields:voice});
 }
@@ -119,7 +139,9 @@ function touch(m) {
 }
 if (!process.argv.includes('--self-test')) readline.createInterface({input:process.stdin}).on('line',line=>{
   if (line.length>1024) return;
-  try { const m=JSON.parse(line);if(m.type==='microphone')microphone(m);else touch(m); } catch(e) { console.error('Bridge input:',String(e)); }
+  try { const m=JSON.parse(line);if(m.type==='adapter.branding') {
+    requestBranding(m.request_id);
+  }else if(m.type==='microphone')microphone(m);else touch(m); } catch(e) { console.error('Bridge input:',String(e)); }
 });
 async function stop() {
   if (shutting) return; shutting=true;
@@ -191,6 +213,14 @@ if (process.argv.includes('--self-test')) {
   if(mic.length!==18 || mic.readUInt32LE(0)!==5 || mic.readUInt32LE(8)!==3 || !mic.subarray(12).equals(pcm))throw Error('Microphone serialization failed');
   handleCommand(2);microphone({pcm:pcm.toString('base64')});await micChain;
   if(micSent.length!==1)throw Error('Microphone continued after recording stopped');
+  const brandFiles=[];driver={send:async m=>{brandFiles.push(m);return true;}};
+  connected=false;adapterOpened=false;
+  requestBranding('queued-fixture');
+  if(brandFiles.length || brandingPending!=='queued-fixture')throw Error('Branding request was lost before adapter readiness');
+  connected=true;adapterOpened=true;
+  const pendingBrand=brandingPending;brandingPending=null;
+  await brandAdapter(pendingBrand);
+  if(brandFiles.length!==6 || !testStatuses.some(s=>s.state==='adapter_branding' && s.request_id==='queued-fixture' && s.result==='transferred' && s.verified===false))throw Error('Queued branding was not transferred after readiness');
   status('self_test_ok',{touch_messages:sent.length});
   await new Promise(resolve=>write(Buffer.alloc(0),resolve));
   process.exit(0);
@@ -220,6 +250,12 @@ if(process.env.CIVIC_CARPLAY_RESET==='1') {
   device=await webusb.requestDevice({filters:DongleDriver.knownDevices});await device.open();
 }
 driver=new DongleDriver();
+// Serialize protocol transfers, including the driver's parallel startup messages.
+const originalSend=driver.send.bind(driver);let usbWrites=Promise.resolve();
+driver.send=message=>{
+  const sent=usbWrites.then(()=>originalSend(message));
+  usbWrites=sent.catch(()=>{});return sent;
+};
 const usbTypes={}, mediaSubtypes={};
 driver.on('protocol_message',m=>{
   usbTypes[m.type]=(usbTypes[m.type]||0)+1;
@@ -243,6 +279,9 @@ driver.on('message',message=>{
     console.error(JSON.stringify({state:'dongle_box_info',settings:message.settings}));
   }
   else if(message instanceof Opened) {
+    adapterOpened=true;
+    if(brandingPending!==null){const pending=brandingPending;brandingPending=null;void brandAdapter(pending);}
+    else if(!initialBrandingOK)void brandAdapter();
     console.error(JSON.stringify({state:'dongle_opened',width:message.width,height:message.height,fps:message.fps,iBox:message.iBox,phoneMode:message.phoneMode}));
   }
   else if(message instanceof MediaData) { handleMedia(message); }
@@ -277,8 +316,11 @@ driver.on('message',message=>{
 });
 const fps=Number(process.env.CIVIC_CARPLAY_FPS || 15);
 const config={...DEFAULT_CONFIG,width:800,height:480,fps:Number.isFinite(fps)?Math.max(5,Math.min(60,fps)):15,
-  boxName:'CivicCarPlay',micType:'os',audioTransferMode:false};
-await driver.initialise(device);await driver.start(config);connected=true;
+  boxName:'HLauncher',micType:'os',audioTransferMode:false};
+await driver.initialise(device);
+initialBrandingOK=await brandAdapter();
+await driver.start(config);connected=true;
+if(adapterOpened && brandingPending!==null){const pending=brandingPending;brandingPending=null;void brandAdapter(pending);}
 status('metadata_requested',{DashboardInfo:1});
 status('dongle_ready',{width:800,height:480,fps:config.fps,audio_forwarding:'launcher_hdmi'});
 const keyframe=setInterval(()=>driver.send(new SendCommand('frame')),5000);

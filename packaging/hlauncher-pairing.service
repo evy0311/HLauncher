@@ -1,7 +1,7 @@
 [Unit]
 Description=HLauncher first-boot Bluetooth enrollment
-Wants=bluetooth.service hlauncher-firstboot.service
-After=bluetooth.service hlauncher-firstboot.service
+Wants=bluetooth.service
+After=bluetooth.service
 Before=hlauncher.service
 StartLimitIntervalSec=0
 

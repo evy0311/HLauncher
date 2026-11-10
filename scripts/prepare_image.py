@@ -47,6 +47,9 @@ UUID={state_uuid} /persist ext4 defaults,noatime 0 2
 tmpfs /var/log tmpfs defaults,noatime,nosuid,nodev,size=32m,mode=0755 0 0
 '''
     fstab.write_text(text)
+    (root/'etc/hlauncher-ssh-managed').write_text('1\n')
+    dns=root/'etc/NetworkManager/dnsmasq-shared.d';dns.mkdir(parents=True,exist_ok=True)
+    shutil.copy2(root/'opt/hlauncher/packaging/hlauncher-hotspot-dns.conf',dns/'90-hlauncher.conf')
     (root/'etc/hlauncher.env').write_text('HLAUNCHER_RADIO_ADDRESS=00:00:00:00:00:00\nHLAUNCHER_LOG_DIR=/var/log/hlauncher\nHLAUNCHER_WIFI_COUNTRY='+country+'\n')
     (root/'etc/modprobe.d/hlauncher-country.conf').write_text('options cfg80211 ieee80211_regdom='+country+'\n')
     journal=root/'etc/systemd/journald.conf.d';journal.mkdir(parents=True,exist_ok=True)
@@ -54,9 +57,14 @@ tmpfs /var/log tmpfs defaults,noatime,nosuid,nodev,size=32m,mode=0755 0 0
     # Fresh images should not boot an account-creation wizard on the radio console.
     for service in ('userconfig.service','userconfig-pi.service','resize2fs_once.service'):
         subprocess.run(['systemctl','--root',str(root),'mask',service],check=True,capture_output=True)
-    for service in ('hlauncher','hlauncher-audio','hlauncher-connect','hlauncher-pairing','hlauncher-recovery','hlauncher-firstboot'):
+    for service in ('hlauncher','hlauncher-audio','hlauncher-connect','hlauncher-pairing','hlauncher-recovery','hlauncher-firstboot','hlauncher-grow'):
         subprocess.run(['systemctl','--root',str(root),'enable',service+'.service'],check=True,capture_output=True)
-    subprocess.run(['systemctl','--root',str(root),'disable','ssh.service'],check=True,capture_output=True)
+    if (root/'etc/hlauncher-updater/config.json').is_file():
+        subprocess.run(['systemctl','--root',str(root),'enable','hlauncher-updater.service'],check=True,capture_output=True)
+    ssh_unit=root/'etc/systemd/system/ssh.service.d';ssh_unit.mkdir(parents=True,exist_ok=True)
+    shutil.copy2(root/'opt/hlauncher/packaging/90-hlauncher-ssh.conf',ssh_unit/'90-hlauncher.conf')
+    subprocess.run(['systemctl','--root',str(root),'enable','ssh.service'],check=True,capture_output=True)
+    subprocess.run(['systemctl','--root',str(root),'disable','ssh.socket'],check=False,capture_output=True)
     # Kernel/partitions cannot expand past the state partition. The builder sizes root first.
     for path in (root/'boot/cmdline.txt', root/'boot/firmware/cmdline.txt'):
         if path.exists():

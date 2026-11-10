@@ -1,4 +1,4 @@
-"""Main Settings menu: stock-style thin bars, shared header, existing actions."""
+"""Settings categories in the factory-style two-column layout."""
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Callable
@@ -18,32 +18,23 @@ class Row:
     action: Callable
 
 
-def render(rows, back, *, theme='Blue', size=(720,480), clock=None,
-           pressed=None, banner='', version=''):
+def render(rows, back, *, theme='Red', size=(720,480), clock=None,
+           pressed=None, banner='', version='', show_clock=False):
     back_box=scale_bounds(BACK_BOUNDS,size)
-    image=render_chrome(theme,child=True,clock=clock,pressed=pressed==back_box)
+    image=render_chrome(theme,child=True,clock=clock,pressed=pressed==back_box,show_clock=show_clock)
     d=ImageDraw.Draw(image)
     heading=caption('Settings',28)
     image.paste(heading,(24,72),heading)
     actions=[(back_box,back)]
-    surface=art.tile(theme,672,44,radius=6)
     for i,row in enumerate(rows):
-        y=112+i*52;box=(24,y,696,y+44);actual=scale_bounds(box,size)
-        image.paste(surface,(24,y),surface)
+        x=24+(i%2)*344;y=144+(i//2)*88
+        box=(x,y,x+328,y+76);actual=scale_bounds(box,size)
+        image.paste(art.settings_bar(theme,328,76),(x,y))
         if pressed==actual:
-            overlay=Image.new('RGBA',(672,44))
-            ImageDraw.Draw(overlay).rounded_rectangle((0,0,671,43),radius=6,
-                fill=(255,255,255,24),outline=(*art.blend(art.accent(theme),(245,243,255),.65),180),width=2)
-            image.paste(overlay,(24,y),overlay)
-        title=caption(row.title,24)
-        image.paste(title,(42,y+(44-title.height)//2),title)
-        detail=str(row.detail);font=interface_font(16)
-        available=648-(42+title.width+24)
-        if d.textlength(detail,font=font)>available:
-            while detail and d.textlength(detail+'…',font=font)>available:detail=detail[:-1]
-            detail+='…'
-        d.text((648,y+22),detail,font=font,fill='#c2c0cc',anchor='rm')
-        d.line([(672,y+16),(678,y+22),(672,y+28)],fill='#ddd9e9',width=2,joint='curve')
+            overlay=Image.new('RGBA',(328,76),(255,255,255,25))
+            image.paste(overlay,(x,y),overlay)
+        title=caption(row.title,29)
+        image.paste(title,(x+(328-title.width)//2,y+(76-title.height)//2),title)
         actions.append((actual,row.action))
     if version:d.text((24,452),'HLauncher '+version,font=interface_font(14),fill='#93929e',anchor='lt')
     if banner:
@@ -55,20 +46,15 @@ def render(rows, back, *, theme='Blue', size=(720,480), clock=None,
 
 
 def draw_launcher(launcher):
-    selected=launcher.prefs.data['default_plugin']
-    manifest=launcher.manifests.get(selected)
-    default=manifest.name if manifest and launcher.prefs.enabled(manifest) else 'Launcher'
-    # An older Pi deployment may still expose the direct diagnostics destination.
-    system=getattr(launcher,'system_settings',launcher.system_diagnostics)
-    rows=[Row('Plugins','Apps and CarPlay picture',launcher.plugin_settings),
-          Row('OBD Gauges','Bluetooth LE adapter',launcher.obd_settings),
-          Row('Tile color',launcher.prefs.data['tile_color'],launcher.tile_colors),
-          Row('Start with',default,launcher.cycle_default),
-          Row('Audio & EQ','HDMI audio',launcher.audio_page),
-          Row('System','Setup and diagnostics' if hasattr(launcher,'system_settings') else 'Connections and diagnostics',system)]
+    rows=[Row('Plugins','',launcher.plugin_settings),
+          Row('Appearance','',launcher.appearance_settings),
+          Row('Audio & EQ','',launcher.audio_page),
+          Row('OBD Gauges','',launcher.obd_settings),
+          Row('Startup','',launcher.startup_settings),
+          Row('System','',launcher.system_settings)]
     frame=render(rows,launcher.home,theme=launcher.prefs.data['tile_color'],
                  size=(launcher.fb.w,launcher.fb.h),banner=launcher.banner,version=__version__,
-                 pressed=launcher.pressed_box if launcher.press is not None else None)
+                 pressed=launcher.pressed_box if launcher.press is not None else None,show_clock=launcher.prefs.data['show_clock'])
     launcher.actions=frame.actions
     launcher.home_clock=datetime.now().strftime('%Y-%m-%d %H:%M')
     launcher.fb.image(dither_rgb565(frame.image))

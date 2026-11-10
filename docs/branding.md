@@ -1,28 +1,31 @@
-# Official projection logos
+# UI artwork
 
-Checked 2026-10-28 for the requested HLauncher tile branding.
+Projection tiles use the CarPlay and Android Auto artwork requested for the UI.
+The source URLs, authors and SHA-256 hashes are recorded in
+`hlauncher/ui/assets/icons/sources.json`; notices are in
+`THIRD_PARTY_NOTICES.md`. The artwork identifies the corresponding integrations.
 
-Apple's general third-party trademark guidelines require an express written
-trademark license to use Apple-owned logos/icons in a product. The CarPlay
-developer page directs vehicle-system integration to the MFi program. No public
-CarPlay-logo license covering this independent Linux launcher was established.
+The HLauncher OEM icon uses the approved full-name artwork: a red tachometer
+and white HLauncher wordmark on a graphite tile, generated in the icon-design
+chat. The unchanged master is `hlauncher/ui/assets/branding/hlauncher-source.png`.
+`scripts/build_brand_icon.py` sizes that master into 120, 180, 256 and 512 pixel
+PNGs while preserving its transparency. It is included under the repository
+license. No radio firmware assets are used.
 
-- https://www.apple.com/legal/intellectual-property/guidelinesfor3rdparties.html
-- https://developer.apple.com/carplay/
+## CarPlay adapter icon
 
-Google's Android Auto visual-identity page supplies an official launcher-icon
-PNG and restricts that icon to UI screens or material explicitly referring to the
-mobile app. Its broader Android brand guidelines also specify approval for
-Android Auto product/service branding. The UI-use guidance alone was not treated
-as confirmation of permission to redistribute the asset in HLauncher.
+`plugins/carplay/runtime/usb/branding.mjs` uploads the packaged PNGs to the
+adapter's existing OEM/120/180/256 icon paths, then sends the HLauncher box name
+and OEM label. This runs before the adapter opens a phone session, and can also
+be requested in Settings → Plugins → CarPlay → Adapter icon.
 
-- https://partnermarketinghub.withgoogle.com/brands/android-auto/visual-identity/visual-identity/
-- https://developer.android.com/distribute/marketing-tools/brand-guidelines
-- https://partnermarketinghub.withgoogle.com/asset-approval/
+Uploads use node-CarPlay's existing SendFile and SendIconConfig messages, not a
+firmware replacement. Settings and pairing on HLauncher are unchanged. Failed
+transfers are logged and may be retried; they do not prevent normal CarPlay
+startup. The transfer result means USB delivery, not confirmation that adapter
+firmware persisted the files or the iPhone refreshed its cached icon. Reconnect
+the phone to refresh the icon. Firmware without OEM icon support may ignore it.
+Selecting the OEM icon uses the existing adapter home command to return to
+HLauncher.
 
-No official logo files were added or deployed. The current tiles use locally
-drawn illustrative glyphs. These glyphs are not represented as official assets.
-The source-code licenses of OpenAuto and node-CarPlay do not grant rights to
-Apple's or Google's branding. Revisit this when applicable owner permission or a
-clear license covering this use is available; retain that permission and any
-required brand notices alongside the asset provenance.
+Adapter icon requests from Settings are saved until the CarPlay worker and adapter are ready; opening the CarPlay tile first is not required. Files and protocol writes are serialized. The UI reports a transfer, not firmware read-back or a refreshed iPhone cache. Reconnect the phone to check the OEM icon and label. A failed request can be retried with Apply.

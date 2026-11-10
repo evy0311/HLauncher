@@ -41,7 +41,7 @@ A plugin is a directory with `plugin.json`, an entrypoint and any private depend
 }
 ```
 
-Entrypoints can be Python or Node. `default_enabled` affects bundled plugins only. `keep_alive: true` declares support for background mode. CarPlay and Android Auto always retain their worker while another screen is visible; their background mode is automatic. Other plugins may expose a background toggle in Settings. Without this declaration the host terminates it on exit. CarPlay stays warm so returning home does not disconnect the dongle.
+Entrypoints can be Python or Node. `default_enabled` affects bundled plugins only. `keep_alive: true` declares support for background mode. CarPlay and Android Auto retain their worker while menus are visible, but share one exclusive projection lease. Selecting either stops the other and waits for its USB process tree to exit. CarPlay can start in the background when its adapter appears, without opening its tile. Other plugins may expose a background toggle in Settings. Without this declaration the host terminates it on exit. CarPlay stays warm so returning home does not disconnect the dongle.
 
 Add a plugin under `plugins/ID` in a pull request to bundle it. Include its dependency instructions, license, tests and a README describing what hardware it needs. Use `examples/hello` as a small starting point. An external repository can use exactly the same directory structure.
 
@@ -57,6 +57,7 @@ Host to plugin:
 | --- | --- |
 | `host.hello` | API version, viewport, RGB565LE format, display slots, max contacts and granted capabilities |
 | `host.activate`, `host.deactivate` | Foreground lifecycle |
+| `host.start` | Start a backend in the background, without presenting video |
 | `radio.session` | Bluetooth control connection and authentication state |
 | `touch` | Both stable contact IDs, raw/normalized/viewport coordinates and elapsed time |
 | `touch.cancel` | Release active contacts when leaving the app |

@@ -1,4 +1,4 @@
-"""RGB565 KMS buffers, presented on vertical blank by a dedicated thread."""
+"""RGB565 scanout plus exact XRGB8888 calibration, presented by one thread."""
 
 import ctypes as C
 import ctypes.util
@@ -161,6 +161,7 @@ class KMSDisplay:
         self.dropped = 0
         self.stop = threading.Event()
         self.condition = threading.Condition()
+        self.io_lock=threading.RLock()
         self.thread = None
         try:
             self.connect()
@@ -170,8 +171,8 @@ class KMSDisplay:
             self.changed = True
             # The Civic HDMI receiver preserves pale shades with limited RGB.
             # Apply on every display open, including after a Pi reboot.
-            from .hdmi_calibration import broadcast_rgb
-            range_name = os.environ.get('HLAUNCHER_HDMI_RGB', 'limited').lower()
+            from .hdmi_calibration import broadcast_rgb,startup_range
+            range_name=startup_range()
             ranges = {'auto': 0, 'full': 1, 'limited': 2}
             try:
                 if range_name not in ranges:
@@ -262,15 +263,15 @@ class KMSDisplay:
         checked(self.lib.drmSetMaster(self.fd), "DRM master")
         self.master = True
 
-    def allocate(self):
-        req = CreateDumb(height=self.h, width=self.w, bpp=16)
+    def allocate(self,bpp=16):
+        req = CreateDumb(height=self.h, width=self.w, bpp=bpp)
         fcntl.ioctl(self.fd, 0xC02064B2, req, True)
         fb = U32()
         memory = None
         try:
             checked(
                 self.lib.drmModeAddFB(
-                    self.fd, self.w, self.h, 16, 16, req.pitch, req.handle, C.byref(fb)
+                    self.fd, self.w, self.h, 16 if bpp==16 else 24, bpp, req.pitch, req.handle, C.byref(fb)
                 ),
                 "Add RGB565 framebuffer",
             )
@@ -313,7 +314,7 @@ class KMSDisplay:
         )
 
     def present(self, raw):
-        if len(raw) != self.w * self.h * 2:
+        if len(raw) not in (self.w*self.h*2,self.w*self.h*4):
             raise ValueError("DRM frame size mismatch")
         if self.error:
             raise RuntimeError("DRM presentation failed: " + self.error)
@@ -343,6 +344,7 @@ class KMSDisplay:
 
     def run(self):
         front = 0
+        bpp=16
         last_log = time.monotonic()
         try:
             while not self.stop.is_set():
@@ -352,27 +354,23 @@ class KMSDisplay:
                     if self.stop.is_set():
                         break
                     frame, self.pending = self.pending, None
-                back = 1 - front
-                buffer = self.buffers[back]
-                memory = buffer["memory"]
-                pitch = buffer["pitch"]
-                if pitch == self.w * 2:
-                    memory[: len(frame)] = frame
-                else:
-                    for row in range(self.h):
-                        memory[row * pitch : row * pitch + self.w * 2] = frame[
-                            row * self.w * 2 : (row + 1) * self.w * 2
-                        ]
-                # No ASYNC flag: the kernel switches the complete buffer at vblank.
-                checked(
-                    self.lib.drmModePageFlip(
-                        self.fd, self.original.crtc_id, buffer["fb"], 1, None
-                    ),
-                    "Queue page flip",
-                )
-                if not self.wait_flip():
-                    break
-                front = back
+                with self.io_lock:
+                    frame_bpp=16 if len(frame)==self.w*self.h*2 else 32
+                    if frame_bpp==32 and len(self.buffers)<4:
+                        while len(self.buffers)<4:self.buffers.append(self.allocate(32))
+                    group=self.buffers[:2] if frame_bpp==16 else self.buffers[2:4]
+                    if frame_bpp!=bpp:
+                        self.set_crtc(group[front]['fb']);bpp=frame_bpp
+                        self.event(state='display_calibration_format',bits=bpp)
+                    back=1-front;buffer=group[back];memory=buffer['memory'];pitch=buffer['pitch']
+                    width_bytes=self.w*(bpp//8)
+                    if pitch==width_bytes:memory[:len(frame)]=frame
+                    else:
+                        for row in range(self.h):
+                            memory[row*pitch:row*pitch+width_bytes]=frame[row*width_bytes:(row+1)*width_bytes]
+                    checked(self.lib.drmModePageFlip(self.fd,self.original.crtc_id,buffer['fb'],1,None),'Queue page flip')
+                    if not self.wait_flip():break
+                    front=back
                 self.frames += 1
                 if time.monotonic() - last_log > 5:
                     self.event(
@@ -395,6 +393,9 @@ class KMSDisplay:
             self.thread.join(timeout=2)
 
     def cleanup(self):
+        with self.io_lock:self._cleanup()
+
+    def _cleanup(self):
         if self.fd is None:
             return
         if self.changed:

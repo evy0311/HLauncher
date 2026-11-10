@@ -2,6 +2,7 @@
 
 import os, fcntl, struct
 from array import array
+from functools import lru_cache
 try:
     import numpy as np
 except ImportError:
@@ -15,6 +16,7 @@ class Framebuffer:
         self.fd = None
         self.tty_fd = None
         self.tty_mode = None
+        self.picture_inset = False
 
     def open(self):
         if self.fd is not None:
@@ -42,6 +44,9 @@ class Framebuffer:
                 os.close(tty)
                 raise
             self.fd = fd
+            from .hdmi_calibration import HDMISettings
+            self.picture_inset=HDMISettings().picture_inset
+            self.event(state='display_picture',inset=self.picture_inset)
             if os.environ.get("HLAUNCHER_DISPLAY", "drm") != "fbdev":
                 try:
                     from .drm import KMSDisplay
@@ -65,10 +70,11 @@ class Framebuffer:
             os.close(fd)
             raise
 
-    def blit(self, raw):
+    def blit(self, raw, *, apply_picture=True):
         self.open()
         if len(raw) != self.w * self.h * 2:
             raise ValueError("frame size mismatch")
+        if apply_picture and self.picture_inset:raw=inset_rgb565(raw)
         if self.kms is not None:
             try:
                 self.kms.present(raw)
@@ -91,6 +97,26 @@ class Framebuffer:
     def image(self, im):
         self.blit(encode(im))
 
+    def image_exact(self,im, *, apply_picture=True):
+        """Keep all 8 bits per channel on the HDMI calibration screen only."""
+        self.open()
+        if self.kms is None:
+            self.blit(encode(im),apply_picture=apply_picture);return False
+        try:
+            rgb=im.convert('RGB')
+            if apply_picture and self.picture_inset:rgb=rgb.point(INSET_CHANNEL*3)
+            self.kms.present(rgb.tobytes('raw','BGRX'))
+            return True
+        except RuntimeError as exc:
+            self.event(state='display_fallback',reason=str(exc))
+            self.kms.close();self.kms=None
+            self.blit(encode(im),apply_picture=apply_picture);return False
+
+    def image_test(self,im, *, exact=True):
+        """Calibration owns its stimulus; do not apply the global inset twice."""
+        if exact:return self.image_exact(im,apply_picture=False)
+        self.blit(encode(im),apply_picture=False);return False
+
     def close(self):
         if self.kms is not None:
             self.kms.close()
@@ -107,6 +133,30 @@ class Framebuffer:
         if self.fd is not None:
             os.close(self.fd)
             self.fd = None
+
+
+INSET_CHANNEL=tuple(16+(v*219+127)//255 for v in range(256))
+
+
+@lru_cache(maxsize=1)
+def inset_table():
+    """One final-output lookup for every RGB565 value; no video decoder changes."""
+    five=[(16+(v*219+15)//31)>>3 for v in range(32)]
+    six=[(16+(v*219+31)//63)>>2 for v in range(64)]
+    return array('H',((five[v>>11]<<11)|(six[(v>>5)&63]<<5)|five[v&31] for v in range(65536)))
+
+
+def inset_rgb565(raw):
+    table=inset_table()
+    if np is not None:
+        source=np.frombuffer(raw,dtype='<u2')
+        return np.frombuffer(table,dtype=np.uint16)[source].astype('<u2',copy=False).tobytes()
+    import sys
+    source=array('H');source.frombytes(raw)
+    if sys.byteorder!='little':source.byteswap()
+    result=array('H',(table[v] for v in source))
+    if sys.byteorder!='little':result.byteswap()
+    return result.tobytes()
 
 
 def encode(im):

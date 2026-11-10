@@ -51,7 +51,8 @@ class Engine:
                 raise RuntimeError('OpenAuto is not installed. Run scripts/install_android_auto.sh on the Pi.')
             with self.lifecycle_lock:
                 if self.done.is_set():return
-                self.proc=subprocess.Popen([str(ENGINE)],stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.PIPE,bufsize=0)
+                from hlauncher_sdk.projection import inherited_fds
+                self.proc=subprocess.Popen([str(ENGINE)],stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.PIPE,bufsize=0,pass_fds=inherited_fds())
             threading.Thread(target=self.capture_logs,daemon=True).start()
             threading.Thread(target=self.send_inputs,daemon=True).start()
             decoder=H264StreamDecoder(self.client.width,self.client.height)
@@ -155,10 +156,15 @@ def main():
         while True:
             while message:=client.receive(0):
                 kind=message['type']
-                if kind=='host.activate':
-                    active=True;engine.visible.set();last_frame=-1
+                if kind in ('host.activate','host.start'):
+                    active=kind=='host.activate'
+                    if active:engine.visible.set()
+                    else:engine.visible.clear()
+                    last_frame=-1
                     if not started or engine.done.is_set():
-                        if started:engine=Engine(client);engine.visible.set()
+                        if started:
+                            engine=Engine(client)
+                            if active:engine.visible.set()
                         engine.start();started=True
                 elif kind=='host.deactivate':
                     active=False;engine.visible.clear();engine.touch({'contacts':[]})

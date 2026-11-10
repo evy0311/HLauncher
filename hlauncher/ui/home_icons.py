@@ -1,10 +1,11 @@
-"""Original colored home glyphs with a restrained stock-radio material finish.
+"""Home glyphs and fitted brand artwork with a restrained radio finish.
 
 Drawn from geometry at 3× resolution; no Honda firmware artwork is used.
 Branded source colors stay fixed when the launcher accent theme changes.
 """
 import math
-from PIL import Image, ImageDraw, ImageChops
+from PIL import Image, ImageDraw, ImageChops, ImageOps
+from pathlib import Path
 
 S=3
 
@@ -30,26 +31,10 @@ def render_icon(kind, size):
         mask=Image.new('L',canvas.size);draw(ImageDraw.Draw(mask))
         material(mask,(255,255,255),(196,208,225))
     if kind in ('carplay','android-auto'):
-        green=kind=='carplay'
-        top,bottom=((112,229,105),(13,142,52)) if green else ((104,191,249),(23,87,191))
-        mask=Image.new('L',canvas.size)
-        ImageDraw.Draw(mask).rounded_rectangle(box(8,7,56,56),radius=12*S,fill=255)
-        material(mask,top,bottom)
-        rim=(167,244,161) if green else (163,215,252)
-        d.rounded_rectangle(box(8,7,56,56),radius=12*S,outline=rim,width=S)
-        # Small top bevel, not a broad reflective sweep.
-        line([(19,9),(53,9)],(214,255,219,200) if green else (212,238,255,210),1)
-        if green:
-            # Circular CarPlay-style mark, rather than the old generic monitor.
-            def symbol(q):
-                q.ellipse(box(18,17,36,36),outline=255,width=4*S)
-                q.polygon(points([(31,24),(31,46),(47,35)]),fill=255)
-            white_symbol(symbol)
-        else:
-            def symbol(q):
-                q.polygon(points([(36,16),(54,51),(42,45),(36,32),(30,45),(18,51)]),fill=255)
-                q.polygon(points([(36,39),(40,47),(36,51),(32,47)]),fill=255)
-            white_symbol(symbol)
+        # User-selected brand artwork; fit without redrawing or changing its shape.
+        with Image.open(Path(__file__).parent/'assets/icons'/(kind+'.png')) as source:
+            icon=ImageOps.contain(source.convert('RGBA'),(56*S,56*S),Image.Resampling.LANCZOS)
+        canvas.alpha_composite(icon,((canvas.width-icon.width)//2,7*S))
     elif kind=='obd':
         # One instrument, with a silver bezel, dark dial and a colored redline.
         mask=Image.new('L',canvas.size);q=ImageDraw.Draw(mask)

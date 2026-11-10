@@ -1,5 +1,6 @@
 """Glass tile surfaces and vector app glyphs, drawn without external assets."""
 import math
+import re
 from PIL import Image, ImageDraw, ImageFilter
 
 
@@ -79,8 +80,7 @@ def draw_icon(image,kind,center,size=76):
 
 
 # Shared chrome uses flatter surfaces than the large launcher tiles.
-PALETTE = {'Blue':'#377bb5','Red':'#c9384a','Green':'#318f69',
-           'Amber':'#d68c32','Purple':'#9369c4','Graphite':'#8796aa'}
+from .palette import PALETTE, normalize_color
 
 
 def load_accent():
@@ -88,10 +88,10 @@ def load_accent():
     from pathlib import Path
     try:
         settings=Path(os.environ.get('HLAUNCHER_STATE_DIR','/var/lib/hlauncher'))/'settings.json'
-        value=json.loads(settings.read_text()).get('tile_color','Blue')
-        return PALETTE.get(value,PALETTE['Blue'])
+        value=json.loads(settings.read_text()).get('tile_color','Red')
+        return PALETTE[value] if value in PALETTE else normalize_color(value)
     except (OSError,ValueError,TypeError,AttributeError):
-        return PALETTE['Blue']
+        return PALETTE['Red']
 
 
 def button_surface(draw,box,color,pressed=False,scale=1):

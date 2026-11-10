@@ -298,18 +298,23 @@ class Architecture(unittest.TestCase):
                 self.assertIsNone(ui.host.active)
         finally:ui.close()
 
-    def test_settings_bars_preserve_navigation_and_default_selection(self):
+    def test_settings_categories_preserve_navigation_and_default_selection(self):
         ui=Launcher(framebuffer=Display(),preferences=self.preferences(),manifests={'carplay':self.carplay})
         try:
             ui.settings()
             self.assertEqual(len(ui.actions),7)
-            self.assertTrue(all(box[3]-box[1]==44 for box,_ in ui.actions[1:]))
-            ui.actions[4][1]()
+            ui.actions[5][1]()
+            self.assertEqual(ui.mode,'startup_settings')
+            ui.actions[1][1]()
             self.assertEqual(ui.prefs.data['default_plugin'],'carplay')
-            self.assertEqual(ui.mode,'settings')
-            ui.actions[3][1]()
+            self.assertEqual(ui.mode,'startup_settings')
+            ui.settings();ui.actions[2][1]()
+            self.assertEqual(ui.mode,'appearance_settings')
+            ui.actions[1][1]()
             self.assertEqual(ui.mode,'tile_colors')
-            ui.settings();ui.actions[5][1]()
+            ui.actions[0][1]()
+            self.assertEqual(ui.mode,'appearance_settings')
+            ui.settings();ui.actions[3][1]()
             self.assertEqual(ui.mode,'audio_settings')
             ui.settings();ui.actions[1][1]()
             self.assertEqual(ui.mode,'plugins_settings')
@@ -319,7 +324,7 @@ class Architecture(unittest.TestCase):
             self.assertEqual(ui.mode,'home')
         finally:ui.close()
 
-    def test_themed_obd_adapter_actions_and_pagination(self):
+    def test_themed_obd_adapter_actions_and_scrolling(self):
         ui=Launcher(framebuffer=Display(),preferences=self.preferences(),manifests={})
         try:
             ui.obd.state=dict(message='Ready',devices=[dict(name='Adapter '+str(i),address=str(i)) for i in range(4)])
@@ -328,10 +333,11 @@ class Architecture(unittest.TestCase):
                 ui.actions[1][1]();command.assert_called_with('scan')
                 ui.actions[2][1]();command.assert_called_with('disconnect')
                 ui.actions[3][1]();command.assert_called_with('connect',address='0')
+                self.assertGreater(ui.scroll_view['maximum'],0)
                 ui.actions[-1][1]()
-                self.assertEqual(ui.obd_page,1)
-                ui.actions[3][1]();command.assert_called_with('connect',address='3')
-                self.assertEqual(ui.actions[3][0][3]-ui.actions[3][0][1],44)
+                self.assertEqual(ui.scroll_view['offset'],ui.scroll_view['maximum'])
+                next(action for box,action in ui.actions if box[0]==24 and box[1]>=360)()
+                command.assert_called_with('connect',address='3')
                 ui.actions[0][1]()
                 self.assertEqual(ui.mode,'home')
         finally:ui.close()

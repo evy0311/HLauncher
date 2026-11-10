@@ -128,6 +128,7 @@ class InputDisplay(unittest.TestCase):
         display.error = None
         display.stop = threading.Event()
         display.condition = threading.Condition()
+        display.io_lock=threading.RLock()
         display.event = Mock()
         display.cleanup = Mock()
         display.fd = 9

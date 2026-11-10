@@ -53,7 +53,7 @@ class ShutdownUI(unittest.TestCase):
             ui=Launcher(framebuffer=Display(),preferences=Preferences(Path(folder)/'settings.json'),manifests={})
             try:
                 ui.mode='diagnostics';ui.draw()
-                action=next(action for box,action in ui.actions if box==(560,14,696,56))
+                action=next(action for _,action in ui.actions if action==ui.shutdown_page)
                 with patch('hlauncher.launcher.subprocess.run') as command:
                     action()
                     self.assertEqual(ui.mode,'shutdown_confirm')

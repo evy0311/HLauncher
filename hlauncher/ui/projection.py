@@ -33,10 +33,10 @@ def wrap_status(text, draw, font, width):
     return lines or ['Starting app…']
 
 
-def render(source, status, back, *, theme='Blue', size=(720,480), clock=None, pressed=None):
+def render(source, status, back, *, theme='Red', size=(720,480), clock=None, pressed=None, show_clock=False):
     name,hint=SOURCES[source]
     back_box=scale_bounds(BACK_BOUNDS,size)
-    image=render_chrome(theme,child=True,clock=clock,pressed=pressed==back_box)
+    image=render_chrome(theme,child=True,clock=clock,pressed=pressed==back_box,show_clock=show_clock)
     d=ImageDraw.Draw(image)
     icon=art.glyph(source,96);x=(720-icon.width)//2;y=88
     image.paste(icon,(x,y),icon)
@@ -60,7 +60,7 @@ def render(source, status, back, *, theme='Blue', size=(720,480), clock=None, pr
 def draw_launcher(launcher):
     frame=render(launcher.host.active,launcher.host.status(),launcher.home,
                  theme=launcher.prefs.data['tile_color'],size=(launcher.fb.w,launcher.fb.h),
-                 pressed=launcher.pressed_box if launcher.press is not None else None)
+                 pressed=launcher.pressed_box if launcher.press is not None else None,show_clock=launcher.prefs.data['show_clock'])
     launcher.actions=frame.actions
     launcher.home_clock=datetime.now().strftime('%Y-%m-%d %H:%M')
     launcher.fb.image(dither_rgb565(frame.image))

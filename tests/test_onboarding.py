@@ -157,11 +157,11 @@ class Setup(unittest.TestCase):
         state.open_pairing()
         self.assertFalse(state.allowed(PEER))
 
-    def test_unique_recovery_credentials_survive_restart(self):
+    def test_hotspot_name_and_simple_default_password_survive_restart(self):
         first=SetupState(self.root).credentials()
         self.assertEqual(first,SetupState(self.root).credentials())
         self.assertNotEqual(first,SetupState(self.root/'other').credentials())
-        self.assertGreaterEqual(len(first['password']),12)
+        self.assertEqual(first['password'],'raspberry')
         self.assertEqual((self.root/'recovery.json').stat().st_mode & 0o777,0o600)
 
     def test_bootstrap_defers_heavy_ui_and_restores_session(self):
@@ -235,7 +235,10 @@ class Setup(unittest.TestCase):
             self.assertEqual(ui.wizard.step,2)
             ui.wizard.save(setup_step=4);ui.draw()
             with patch.object(ui,'maintenance') as maintenance:
+                ui.actions[1][1]();self.assertEqual(ui.mode,'recovery_settings')
                 ui.actions[1][1]();maintenance.assert_called_once_with('hotspot')
+                ui.actions[0][1]();self.assertEqual(ui.mode,'onboarding')
+                self.assertEqual(ui.wizard.step,4)
             ui.wizard.save(setup_step=5);ui.storage_info['available']=True;ui.draw()
             with patch.object(ui,'setup_finish') as finish:
                 left,right=sorted(ui.actions[1:],key=lambda item:item[0][0])
@@ -245,15 +248,15 @@ class Setup(unittest.TestCase):
                 finish.reset_mock();left[1]();finish.assert_called_once_with()
         finally:ui.close()
 
-    def test_recovery_http_requires_password_and_rejects_cross_origin_posts(self):
+    def test_recovery_http_opens_without_password_and_rejects_cross_origin_posts(self):
         state=SetupState(self.root);maintenance=Maintenance(state)
         server=ThreadingHTTPServer(('127.0.0.1',0),handler_for(state,maintenance))
         thread=threading.Thread(target=server.serve_forever,daemon=True);thread.start()
         connection=http.client.HTTPConnection(*server.server_address,timeout=3)
         try:
-            connection.request('GET','/');response=connection.getresponse();self.assertEqual(response.status,401);response.read()
+            connection.request('GET','/');response=connection.getresponse();self.assertEqual(response.status,200);response.read()
             auth='Basic '+base64.b64encode(('hlauncher:'+state.credentials()['password']).encode()).decode()
-            headers={'Authorization':auth,'Content-Type':'application/json','Origin':'http://evil.invalid'}
+            headers={'Content-Type':'application/json','Origin':'http://evil.invalid'}
             connection.request('POST','/api/debug','{}',headers)
             response=connection.getresponse();self.assertEqual(response.status,403);response.read()
             headers.pop('Origin')
@@ -264,24 +267,18 @@ class Setup(unittest.TestCase):
         finally:
             connection.close();server.shutdown();server.server_close();thread.join(3)
 
-    def test_protection_refuses_unverified_persistence_and_uses_fixed_commands(self):
+    def test_protection_refuses_unverified_persistence(self):
         commands=[]
         def run(args,**kwargs):commands.append(args);return SimpleNamespace(stdout='0')
         with patch('hlauncher.storage.status',return_value=dict(available=False,message='No persistent partition')):
             with self.assertRaises(ValueError):storage.configure(True,run,self.root)
             self.assertFalse(commands)
-        with patch('hlauncher.storage.status',return_value=dict(available=True,protected=False)):
-            self.assertIn('Restart required',storage.configure(True,run,self.root))
-            self.assertEqual(commands,[['/usr/bin/raspi-config','nonint','do_overlayfs','0'],
-                ['/usr/bin/raspi-config','nonint','get_overlay_conf'],
-                ['/usr/bin/raspi-config','nonint','get_bootro_conf']])
-            self.assertEqual(json.loads((self.root/'storage-transition.json').read_text())['target'],'protected')
 
-    def test_protection_detects_silent_configuration_failure(self):
-        def run(args,**kwargs):return SimpleNamespace(stdout='1')
-        with patch('hlauncher.storage.status',return_value=dict(available=True,protected=False)):
-            with self.assertRaises(ValueError):storage.configure(True,run,self.root)
-        self.assertEqual(json.loads((self.root/'storage-transition.json').read_text())['target'],'failed')
+    def test_protection_refuses_missing_boot_support_before_configuring(self):
+        with patch('hlauncher.storage.status',return_value=dict(available=True,protected=False)), \
+             patch('hlauncher.storage.verify_support',side_effect=ValueError('Missing boot support')):
+            with self.assertRaisesRegex(ValueError,'Missing boot support'):storage.configure(True,state_dir=self.root)
+        self.assertFalse((self.root/'storage-transition.json').exists())
 
 
 if __name__=='__main__':unittest.main()

@@ -8,9 +8,9 @@ from . import home_art as art
 
 def draw_launcher(launcher):
     values=launcher.audio_settings.values
-    page=Page('Audio & EQ',launcher.home,launcher.prefs.data['tile_color'],
+    page=Page('Audio & EQ',getattr(launcher,'audio_return',launcher.home),launcher.prefs.data['tile_color'],
               (launcher.fb.w,launcher.fb.h),
-              launcher.pressed_box if launcher.press is not None else None)
+              launcher.pressed_box if launcher.press is not None else None,show_clock=launcher.prefs.data['show_clock'])
     controls=[('PipeWire '+('On' if values['pipewire'] else 'Off'),
                lambda:launcher.change_audio(pipewire=not values['pipewire']),values['pipewire']),
               ('EQ '+('On' if values['eq'] else 'Off'),

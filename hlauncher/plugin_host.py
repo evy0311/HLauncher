@@ -13,6 +13,7 @@ import tempfile
 import threading
 import time
 from .config import ROOT, LOG_DIR, STATE_DIR
+from .projection import PROJECTIONS, ProjectionLease, ProjectionBusy
 from sdk.hlauncher_sdk.buttons import BUTTONS, ACTIONS
 
 sys.path.insert(0, str(ROOT / "sdk"))
@@ -28,6 +29,7 @@ def channel():
 
 class Worker:
     def __init__(self, manifest, width, height, event, playback=None):
+        self.lease=ProjectionLease() if manifest.id in PROJECTIONS else None
         self.manifest = manifest
         self.event = event
         self.width, self.height = width, height
@@ -48,6 +50,7 @@ class Worker:
         self.frames_copied = 0
         self.video_available = False
         self.ready = False
+        self.metrics = {}
         self.button_subscription = frozenset()
         self.closed = False
         self.active = False
@@ -67,6 +70,7 @@ class Worker:
             PYTHONPATH=str(ROOT / "sdk"),
         )
         env.pop("HLAUNCHER_RADIO_ADDRESS", None)
+        if self.lease:env["HLAUNCHER_PROJECTION_FD"]=str(self.lease.fd)
         command = [
             sys.executable if manifest.entrypoint[0] == "python3" else "/usr/bin/node",
             manifest.entrypoint[1],
@@ -78,7 +82,7 @@ class Worker:
                 command,
                 cwd=manifest.path,
                 env=env,
-                pass_fds=(child.fileno(), self.file.fileno())+((audio_socket.fileno(),) if audio_socket else ()),
+                pass_fds=(child.fileno(), self.file.fileno())+((audio_socket.fileno(),) if audio_socket else ())+((self.lease.fd,) if self.lease else ()),
                 stdin=subprocess.DEVNULL,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
@@ -86,6 +90,7 @@ class Worker:
             )
             threading.Thread(target=self.capture_output,args=(logs,),daemon=True).start()
         except Exception:
+            if self.lease:self.lease.close()
             self.socket.close()
             self.memory.close()
             self.file.close()
@@ -226,22 +231,29 @@ class Worker:
 
         def reap():
             try:
-                self.proc.wait(timeout=3)
-            except subprocess.TimeoutExpired:
-                try:
-                    os.killpg(self.proc.pid, signal.SIGKILL)
-                except ProcessLookupError:
-                    pass
-                try:
-                    self.proc.wait(timeout=2)
-                except subprocess.TimeoutExpired:
-                    self.event(state="plugin_cleanup_pending", plugin=self.manifest.id)
+                deadline=time.monotonic()+3
+                while time.monotonic()<deadline:
+                    self.proc.poll()
+                    try:os.killpg(self.proc.pid,0)
+                    except ProcessLookupError:break
+                    except PermissionError:
+                        try:self.proc.wait(timeout=3)
+                        except subprocess.TimeoutExpired:self.proc.kill();self.proc.wait(timeout=2)
+                        break
+                    time.sleep(.05)
+                else:
+                    try:os.killpg(self.proc.pid,signal.SIGKILL)
+                    except ProcessLookupError:pass
+                try:self.proc.wait(timeout=2)
+                except subprocess.TimeoutExpired:self.event(state='plugin_cleanup_pending',plugin=self.manifest.id)
+            finally:
+                if self.lease:self.lease.close()
 
         threading.Thread(target=reap, daemon=True).start()
 
 
 class PluginHost:
-    def __init__(self, manifests, width, height, event, home, audio, background_allowed=None):
+    def __init__(self, manifests, width, height, event, home, audio, background_allowed=None, state_dir=None):
         self.manifests = manifests
         self.width = width
         self.height = height
@@ -251,6 +263,13 @@ class PluginHost:
         self.background_allowed = background_allowed or (lambda m: m.keep_alive)
         self.workers = {}
         self.active = None
+        self.projection_request=None
+        self.projection_deadline=0
+        self.projection_retry=0
+        self.projection_notice=''
+        from .adapter_branding import BrandingRequests
+        self.branding=BrandingRequests((Path(state_dir) if state_dir else STATE_DIR)/'adapter-branding.json')
+        self.branding_sent=None
         self.session = {"connected": False, "authenticated": False}
         self.button_results = {}
         self.button_pending = {}
@@ -260,27 +279,70 @@ class PluginHost:
         from .projection_voice import ProjectionVoice
         self.voice = ProjectionVoice(event)
 
-    def activate(self, plugin_id):
-        if plugin_id not in self.manifests:
-            raise ValueError("plugin not installed")
-        self.deactivate()
-        worker = self.workers.get(plugin_id)
+    def _start(self,plugin_id,foreground):
+        worker=self.workers.get(plugin_id)
         if worker is None:
-            worker = Worker(
-                self.manifests[plugin_id], self.width, self.height, self.event,
-                playback=getattr(self.audio,'playback',None)
-            )
-            self.workers[plugin_id] = worker
-        self.active = plugin_id
+            worker=Worker(self.manifests[plugin_id],self.width,self.height,self.event,
+                          playback=getattr(self.audio,'playback',None))
+            self.workers[plugin_id]=worker
+        worker.active=foreground
+        worker.background_enabled=self.background_allowed(worker.manifest)
         if 'audio.playback' in worker.manifest.capabilities:
             self.media.select_source(plugin_id)
             if hasattr(self.audio,'select_source'):self.audio.select_source(plugin_id)
-        worker.active = True
-        if hasattr(getattr(self.audio,'playback',None),'enable'):self.audio.playback.enable(plugin_id,True)
-        worker.background_enabled = self.background_allowed(worker.manifest)
-        worker.send(type="radio.session", **self.session)
-        worker.send(type="host.activate")
-        self.event(state="plugin_activated", plugin=plugin_id)
+            if hasattr(getattr(self.audio,'playback',None),'enable'):self.audio.playback.enable(plugin_id,True)
+        worker.send(type='radio.session',**self.session)
+        worker.send(type='host.activate' if foreground else 'host.start',visible=foreground)
+        self.event(state='plugin_activated' if foreground else 'plugin_background_started',plugin=plugin_id)
+        return worker
+
+    def request_projection(self,plugin_id,foreground=False):
+        if plugin_id not in self.manifests or plugin_id not in PROJECTIONS:raise ValueError('Projection plugin unavailable')
+        for other in list(self.workers):
+            if other in PROJECTIONS and other!=plugin_id:self.stop(other)
+        if foreground:self.active=plugin_id
+        if self.projection_request!=plugin_id:self.projection_deadline=time.monotonic()+10
+        self.projection_request=plugin_id
+        self.projection_retry=0
+        self._projection_tick()
+
+    def _projection_tick(self):
+        plugin_id=self.projection_request
+        if not plugin_id or time.monotonic()<self.projection_retry:return
+        try:
+            self._start(plugin_id,self.active==plugin_id)
+        except ProjectionBusy as exc:
+            self.projection_notice=str(exc);self.projection_retry=time.monotonic()+.2
+            if time.monotonic()>self.projection_deadline:
+                self.projection_request=None
+                self.failed(plugin_id,'Previous projection session has not released USB; retry after disconnecting the adapter')
+            return
+        self.projection_request=None;self.projection_notice=''
+
+    def activate(self, plugin_id):
+        if plugin_id not in self.manifests:raise ValueError('plugin not installed')
+        self.deactivate()
+        if plugin_id in PROJECTIONS:self.request_projection(plugin_id,True)
+        else:
+            self.active=plugin_id;self._start(plugin_id,True)
+
+    def ensure_background_carplay(self):
+        if 'carplay' not in self.manifests:return
+        if self.projection_request or any(key in PROJECTIONS for key in self.workers):return
+        self.request_projection('carplay',False)
+
+    def request_branding(self):
+        if 'carplay' not in self.manifests:raise ValueError('CarPlay is not installed')
+        request=self.branding.request();self.branding_sent=None
+        self.request_projection('carplay',False)
+        return request
+
+    def _branding_tick(self):
+        if not self.branding.pending:return
+        worker=self.workers.get('carplay')
+        if not worker or not worker.ready:return
+        key=(self.branding.data.get('request_id'),worker.proc.pid)
+        if self.branding_sent!=key and worker.send(type='host.adapter.branding',request_id=key[0]):self.branding_sent=key
 
     def deactivate(self):
         plugin_id = self.active
@@ -304,6 +366,7 @@ class PluginHost:
                 self.stop(plugin_id)
 
     def stop(self, plugin_id):
+        if self.projection_request==plugin_id:self.projection_request=None
         if self.active == plugin_id:
             self.active = None
         self.audio.stop(plugin_id)
@@ -407,6 +470,8 @@ class PluginHost:
             self.home(str(error)[:120])
 
     def tick(self):
+        self._projection_tick()
+        self._branding_tick()
         for sequence, (record, deadline) in list(self.button_pending.items()):
             if time.monotonic() >= deadline:
                 record['result'] = 'Plugin command acknowledgement timed out'
@@ -432,6 +497,10 @@ class PluginHost:
                         break
                     elif kind == "health":
                         if isinstance(message.get("metrics"), dict):
+                            worker.metrics = message["metrics"]
+                            if plugin_id=='carplay':
+                                self.branding.update(worker.metrics.get('adapter_branding_request_id'),
+                                                     worker.metrics.get('adapter_branding'),worker.metrics.get('adapter_branding_error',''))
                             self.event(
                                 state="plugin_frame_stats",
                                 plugin=plugin_id,
@@ -492,8 +561,9 @@ class PluginHost:
 
     def status(self):
         worker = self.workers.get(self.active)
-        return worker.status if worker else ""
+        return worker.status if worker else self.projection_notice or "Starting projection…"
 
     def close(self):
+        self.projection_request=None
         for plugin_id in list(self.workers):
             self.stop(plugin_id)

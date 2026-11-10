@@ -1,8 +1,9 @@
 # Radio-style UI
 
-Home, projection connection pages, the main Settings menu, Audio, OBD and the
-setup wizard share the stock-era appearance. Remaining settings and diagnostics
-screens retain their existing renderers until migrated.
+Every built-in launcher page now uses the shared stock-era header, typography,
+backgrounds and controls, including System, network setup, storage, plugins,
+picture calibration, diagnostics, hardware tests, shutdown and first pairing.
+Phone-provided projection video remains unchanged.
 
 - `hlauncher/ui/home.py` lays out the header, clock, enabled apps, Audio and
   Settings, and returns touch regions to the existing input handler.
@@ -69,8 +70,7 @@ touch coordinates. No clock redraw can cover live projection. The shared header 
 Home-return button. Six 44 px bars use the tile gradients and beveled outlines;
 labels stay on the left, descriptions/current values on the right. Existing
 plugin, OBD, theme, default-app, audio and System callbacks remain core-owned.
-The clock updates while this page is open. Audio and OBD child pages use the
-shared UI; remaining child settings screens retain their existing renderers.
+The clock updates while this page is open. All child settings and diagnostics screens use the same shared UI controls.
 
 
 ## Audio and OBD pages
@@ -95,3 +95,51 @@ resumable preference writes and guarded storage-protection behavior. Repeated
 helper text and save-status footers are omitted; adapter requirements and
 network credentials remain visible where needed. Screenshots
 use temporary preferences and demonstration Wi-Fi credentials.
+
+
+## Secondary settings and diagnostics
+
+`ui/pages.py` owns the System menu, network/hotspot pages, storage confirmation,
+plugin management, theme picker, picture controls, HDMI calibration, shutdown
+and generic app waiting screen. `ui/diagnostics.py` owns System/HondaLink reports,
+packet-capture controls and hardware tests. Raw calibration patches retain exact
+RGB values while their header uses the normal shared rendering.
+
+The completed setup wizard can be reopened without clearing setup completion.
+It has Exit on every step when opened from Settings. Choices remain saved and
+Exit returns to System. First-time setup still requires completion. Network
+setup is a separate child flow and Back returns to the wizard's Network step.
+
+The network landing page shows the Pi's current LAN setup address and login;
+the optional setup hotspot has a separate page. NetworkManager sampling happens
+in the recovery worker, not in the UI/audio loop. The authenticated recovery
+website shares the theme and separates Wi-Fi, local update, pairing and support.
+Storage restart is offered only after the protection job has completed.
+
+
+## Settings categories and early welcome
+
+Settings uses two columns of rectangular category bars: Plugins, Appearance,
+Audio & EQ, OBD Gauges, Startup and System. Child lists use the shared horizontal
+color wash with inset values or Off/On controls. Appearance contains background
+color; individual plugin pages contain their enable switch and plugin options
+(such as CarPlay picture and the OBD adapter); Startup contains the default app selector.
+
+The early HDMI welcome and wizard Welcome share their content and theme. The
+screen remains available while a saved radio reconnects; Bluetooth profiles
+still register before the display is loaded. Fresh preferences default to Red;
+saved theme choices are retained.
+
+
+## Custom theme
+
+The six preset colors remain fixed. Settings → Appearance → Background color
+and the wizard’s Appearance step also offer Custom color. The native touch
+picker previews the shared chrome and tile while editing: hue/saturation wheel,
+brightness, RGB sliders and a six-digit hex keypad. Save color writes the chosen
+hex code and retained custom swatch through the normal atomic preferences store;
+Cancel leaves settings untouched. Picking a preset later retains the last custom
+color. The saved hex color is used by launcher pages, boot welcome, projection
+shell, OBD dashboard and recovery website. Icon and text colors are unchanged.
+First-run setup never shows Exit, including after returning from the picker;
+Exit is available only when completed setup is reopened from Settings.

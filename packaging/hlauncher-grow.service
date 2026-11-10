@@ -1,0 +1,16 @@
+[Unit]
+Description=Expand HLauncher persistent storage to the SD card
+After=local-fs.target
+RequiresMountsFor=/persist
+ConditionPathExists=/persist/.hlauncher-state-v1
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/hlauncher
+ExecStart=/usr/bin/python3 -m hlauncher.grow_storage
+TimeoutStartSec=300
+RemainAfterExit=yes
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

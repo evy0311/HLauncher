@@ -2,6 +2,7 @@
 
 import base64, json, os, pathlib, struct, subprocess, sys, threading, time, select
 from hlauncher_sdk.picture import PictureSettings
+from hlauncher_sdk.projection import inherited_fds
 from collections import deque
 from input import TouchRouter
 from media import normalize
@@ -61,6 +62,10 @@ class CarplayHDMI:
         self.mic_format=None
         self.voice_streams={}
         self.last_bridge_message=0
+        self.adapter_branding="waiting"
+        self.adapter_branding_request_id=None
+        self.adapter_branding_error=""
+        self.pending_branding=None
 
     def notify(self, state, **extra):
         self.event(state=state, **extra)
@@ -76,10 +81,14 @@ class CarplayHDMI:
             return not self.stop_event.is_set()
         self.stop_event = threading.Event()
         self.queue.clear()
+        if self.pending_branding:self.queue.append(dict(self.pending_branding))
+        self.adapter_branding_request_id=None
+        self.adapter_branding_error=''
         self.touch_router = TouchRouter()
         self.frame = None
         self.frames = 0
         self.host_ui_requested = False
+        self.adapter_branding="waiting"
         self.set_status("Starting CarPlay")
         self.thread = threading.Thread(target=self.run, args=(w, h), daemon=True)
         self.thread.start()
@@ -163,6 +172,18 @@ class CarplayHDMI:
             self.cond.notify()
         return 'Queued to CarPlay USB'
 
+    def apply_branding(self, request_id=None):
+        with self.cond:
+            if len(self.queue)>=64:
+                self.adapter_branding='failed'
+                return False
+            self.adapter_branding='sending'
+            self.adapter_branding_request_id=request_id
+            self.pending_branding=dict(type='adapter.branding',request_id=request_id)
+            self.queue.append(dict(self.pending_branding))
+            self.cond.notify()
+        return True
+
     def send_inputs(self, proc):
         while not self.stop_event.is_set() and proc.poll() is None:
             with self.cond:
@@ -224,6 +245,9 @@ class CarplayHDMI:
     def metrics(self):
         with self.lock:
             return {
+                "adapter_branding": self.adapter_branding,
+                "adapter_branding_request_id":self.adapter_branding_request_id,
+                "adapter_branding_error":self.adapter_branding_error,
                 "decoded_frames": self.frames,
                 "audio_packets_forwarded": self.audio_forwarded,
                 "audio_packets_dropped": self.audio_dropped,
@@ -293,6 +317,7 @@ class CarplayHDMI:
                     stderr=err,
                     bufsize=0,
                     env=env,
+                    pass_fds=inherited_fds(),
                 )
                 self.proc = proc
                 self.notify("carplay_hdmi_bridge_started", pid=proc.pid)
@@ -377,6 +402,12 @@ class CarplayHDMI:
                     else:
                         state = json.loads(data)
                         self.notify("carplay_hdmi_status", bridge=state)
+                        if state.get('state')=='adapter_branding':
+                            with self.lock:
+                                self.adapter_branding=state.get('result','failed')
+                                self.adapter_branding_request_id=state.get('request_id')
+                                self.adapter_branding_error=state.get('error','')
+                                if self.pending_branding and self.pending_branding.get('request_id')==self.adapter_branding_request_id and self.adapter_branding in ('sent','transferred','failed'):self.pending_branding=None
                         if state.get('state')=='projection_voice':
                             fields=state.get('fields',{})
                             if set(fields)==set(self.voice) and all(type(v) is bool for v in fields.values()):

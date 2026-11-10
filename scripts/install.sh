@@ -14,7 +14,7 @@ apt-get update
 apt-get install -y python3 python3-pil python3-numpy python3-dbus python3-gi python3-bleak \
   bluez bluez-alsa-utils libasound2-plugin-bluez alsa-utils openssl pipewire pipewire-bin libspa-0.2-modules libsamplerate0 libsoxr0 \
   nodejs npm patch libudev-dev libusb-1.0-0 libdrm2 libavcodec59 libavutil57 libswscale6 \
-  fonts-dejavu-core fbset usbutils build-essential pkg-config libpipewire-0.3-dev network-manager iw rfkill raspi-config initramfs-tools
+  fonts-dejavu-core fbset usbutils build-essential pkg-config libpipewire-0.3-dev network-manager iw rfkill raspi-config initramfs-tools overlayroot openssh-server
 bash scripts/install_button_audio.sh
 root=/opt/hlauncher
 if [[ $(pwd -P) == "$root" ]]; then
@@ -35,15 +35,20 @@ npm ci --prefix "$root/plugins/carplay/runtime/usb" --omit=dev --ignore-scripts 
 if [[ ! -f /etc/hlauncher.env ]]; then
   install -m 600 hlauncher.env.example /etc/hlauncher.env
 fi
-for unit in hlauncher.service hlauncher-audio.service hlauncher-connect.service hlauncher-pipewire.service hlauncher-pairing.service hlauncher-recovery.service hlauncher-firstboot.service; do
+for unit in hlauncher.service hlauncher-audio.service hlauncher-connect.service hlauncher-pipewire.service hlauncher-pairing.service hlauncher-recovery.service hlauncher-firstboot.service hlauncher-updater.service hlauncher-grow.service; do
   install -m 644 "packaging/$unit" "/etc/systemd/system/$unit"
 done
 dropin=/etc/systemd/system/bluetooth.service.d/90-hlauncher.conf
 if [[ -f $dropin ]]; then cp -a "$dropin" "$dropin.backup-$stamp"; fi
 install -m 644 packaging/90-hlauncher.conf "$dropin"
 python3 "$root/scripts/configure_phone_identity.py" --apply
+systemctl disable bluealsa.service
+systemctl mask bluealsa.service
 systemctl daemon-reload
-systemctl disable --now hlauncher-pipewire.service
+systemctl disable hlauncher-pipewire.service
+# Offline image builds have no running systemd instance to stop.
+if [[ -d /run/systemd/system ]]; then systemctl stop hlauncher-pipewire.service; fi
+/usr/bin/python3 -m hlauncher.storage --prepare
 /usr/bin/python3 "$root/scripts/check.py"
 echo
 echo 'Installed. No HLauncher services were started.'

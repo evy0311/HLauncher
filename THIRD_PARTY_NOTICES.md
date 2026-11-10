@@ -89,7 +89,7 @@ The shared radio-style clock uses unmodified Barlow Condensed SemiBold by
 The Barlow Project Authors, distributed under the SIL Open Font License 1.1.
 The font, license and source/checksums are in `hlauncher/ui/assets/fonts/`.
 Source: https://github.com/google/fonts/tree/main/ofl/barlowcondensed .
-The home-screen icons, gradients and reflections are original HLauncher artwork;
+The non-brand home-screen icons, gradients and reflections are original HLauncher artwork;
 no Honda firmware images or fonts are included.
 
 ## Noto Sans JP
@@ -99,3 +99,16 @@ distribution at weight 700. Copyright 2014–2021 Adobe, distributed under SIL
 Open Font License 1.1. The font, `NotoSansJP-OFL.txt` and source/checksum are
 included in `hlauncher/ui/assets/fonts/`.
 Source: https://github.com/google/fonts/tree/main/ofl/notosansjp .
+
+
+## Projection app icons
+
+CarPlay and Android Auto use the user-selected Wikimedia Commons artwork by
+Apple Inc. and Google Inc., respectively. Original SVGs and 500px PNG renditions
+are kept in `hlauncher/ui/assets/icons/`, with source links and checksums in
+`sources.json`. Runtime rendering preserves aspect ratio and adds only the
+launcher’s existing reflection. Commons identifies both as public-domain simple
+logos; Apple/CarPlay and Google/Android Auto remain their owners’ trademarks.
+
+- https://commons.wikimedia.org/wiki/File:Apple_CarPlay_Logo.svg
+- https://commons.wikimedia.org/wiki/File:Android_Auto_icon.svg

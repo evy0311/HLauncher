@@ -1,0 +1,20 @@
+{
+  "carplay": {
+    "source": "https://commons.wikimedia.org/wiki/File:Apple_CarPlay_Logo.svg",
+    "author": "Apple Inc.",
+    "license": "Public domain simple logo, as identified on the linked Commons file page",
+    "sha256": {
+      "svg": "98de7ea263b1de625c73a5b1c84e5b7408a657e9009e3c77630d461da496149e",
+      "png": "b4edb77acf729a0f822bc60600f18bf66f77457ff2ec41d81acb9148ee29e536"
+    }
+  },
+  "android-auto": {
+    "source": "https://commons.wikimedia.org/wiki/File:Android_Auto_icon.svg",
+    "author": "Google Inc.",
+    "license": "Public domain simple logo, as identified on the linked Commons file page",
+    "sha256": {
+      "svg": "14d0400a0be5e9acc5b919b2cbcd1ede900706608cf502f3374de9d60d3bc729",
+      "png": "77a5d6d5b76af0d6e42ac17647b171c32e7f6cf3070c2ae09f85e5c12daf9069"
+    }
+  }
+}

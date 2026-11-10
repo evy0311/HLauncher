@@ -1,7 +1,7 @@
 [Unit]
 Description=Initialize HLauncher device identity and storage transition
-After=local-fs.target
-Before=hlauncher-pairing.service
+Wants=hlauncher.service
+After=local-fs.target hlauncher.service
 
 [Service]
 Type=oneshot

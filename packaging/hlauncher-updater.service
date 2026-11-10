@@ -1,0 +1,18 @@
+[Unit]
+Description=HLauncher signed application updates and rollback
+After=local-fs.target
+Before=hlauncher-firstboot.service hlauncher.service hlauncher-connect.service hlauncher-pairing.service hlauncher-recovery.service hlauncher-audio.service
+RequiresMountsFor=/persist /var/lib/hlauncher
+StartLimitIntervalSec=0
+ConditionPathExists=/etc/hlauncher-updater/config.json
+
+[Service]
+Type=simple
+ExecStartPre=/usr/bin/python3 /usr/lib/hlauncher-updater/update_service.py --recover
+ExecStart=/usr/bin/python3 /usr/lib/hlauncher-updater/update_service.py
+Restart=on-failure
+RestartSec=3
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

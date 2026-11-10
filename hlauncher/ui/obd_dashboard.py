@@ -20,8 +20,10 @@ def point(cx,cy,radius,angle):
 class Dashboard:
     def __init__(self,width,height):
         self.w,self.h=width,height
+        from ..config import Preferences
+        self.show_clock=Preferences().data['show_clock']
         self.accent=load_accent()
-        self.theme=next((name for name,value in PALETTE.items() if value==self.accent),'Blue')
+        self.theme=next((name for name,value in PALETTE.items() if value==self.accent),self.accent)
         self.home_box=scale_bounds(BACK_BOUNDS,(width,height))
         self.centers=[(190,178,60),(530,178,60),(190,358,60),(530,358,60)]
         self.base=art.background(self.theme,True).copy()
@@ -43,7 +45,7 @@ class Dashboard:
     def render(self,values,pressed=False,connected=True):
         key=(time.strftime('%Y-%m-%d %H:%M'),pressed)
         if key!=self.header_key:
-            self.header=chrome(self.theme,child=True,pressed=pressed).crop((0,0,720,52))
+            self.header=chrome(self.theme,child=True,pressed=pressed,show_clock=self.show_clock).crop((0,0,720,52))
             self.header_key=key
         image=self.base.copy();image.paste(self.header,(0,0));d=ImageDraw.Draw(image)
         d.text((696,88),'Live' if connected else 'OBD disconnected',font=font(16),

@@ -3,19 +3,16 @@
 import math
 import time
 import subprocess
-from PIL import Image, ImageDraw, ImageEnhance, ImageFilter
 from sdk.hlauncher_sdk.fonts import font as ui_font
 from . import __version__
 from .debug_tools import InputMonitor, ToneTest
-from .buttons import LABELS
-from .config import RADIO_ADDRESS
-from .diagnostics import Diagnostics, power_status
+from . import config
+from .diagnostics import Diagnostics
 from .obd import ObdManager
 from .audio_settings import AudioSettings, EQ_BANDS
 from .audio import AudioBroker
 from .catalog import discover
-from .config import Preferences, TILE_COLORS
-from .appearance import background as draw_background, glass_tile, draw_icon, button_surface, dither_rgb565, border_color
+from .config import Preferences
 from .colors import PictureSettings, DEFAULTS, LIMITS
 from .display import Framebuffer
 from .plugin_host import PluginHost
@@ -47,11 +44,17 @@ class Launcher:
         self.picture_sliders = []
         self.hdmi_range_original = None
         self.hdmi_range_label = "Automatic"
+        from .hdmi_calibration import HDMISettings
+        self.hdmi_settings=HDMISettings(self.prefs.path.with_name('hdmi-output.json'))
+        self.hdmi_range_selected=None
+        self.hdmi_output={}
+        self.hdmi_test_exact=True
+        self.hdmi_test_inset=False
         self.manifests = discover(event) if manifests is None else manifests
         self.audio = AudioBroker(event, independent=independent_audio)
         self.host = PluginHost(
             self.manifests, self.fb.w, self.fb.h, event, self.home, self.audio,
-            background_allowed=self.prefs.background_enabled,
+            background_allowed=self.prefs.background_enabled, state_dir=self.prefs.path.parent,
         )
         self.diagnostics = Diagnostics()
         from .protocol_diagnostics import ProtocolDiagnostics
@@ -61,7 +64,7 @@ class Launcher:
         self.protocol_redraw = 0
         from .voice_audio import VoiceAudio
         self.voice_audio=VoiceAudio(self.prefs.path.with_name('voice-audio.json'))
-        self.inputs = InputMonitor(event, RADIO_ADDRESS)
+        self.inputs = InputMonitor(event, config.RADIO_ADDRESS)
         self.inputs.start()
         self.tone_test = ToneTest(self.audio.playback)
         self.debug_touch = {}
@@ -95,12 +98,19 @@ class Launcher:
         from .onboarding import Onboarding
         self.tone_test.stop()
         self.host.deactivate()
+        self.setup_can_exit = bool(self.prefs.data['setup_complete'] and self.mode in ('settings','system_settings'))
         self.wizard = Onboarding(self.prefs, self.manifests)
-        if restart: self.wizard.restart()
+        if restart:
+            if self.prefs.data['setup_complete']:self.wizard.save(setup_step=0)
+            else:self.wizard.restart()
         self.mode = 'onboarding'
         self.setup_list_page = 0
         self.press = None
         self.draw()
+
+    def exit_setup(self):
+        if getattr(self,'setup_can_exit',False):
+            self.system_settings()
 
     def setup_action(self, function, *args):
         try:
@@ -126,7 +136,7 @@ class Launcher:
             self.storage_confirm(True)
         else:
             self.home('Setup complete. Storage protection is available in System settings.')
-            self.pending_default = True
+            self.pending_default = not getattr(self,'setup_can_exit',False)
 
     def system_settings(self):
         self.tone_test.stop()
@@ -135,6 +145,62 @@ class Launcher:
         self.mode = 'system_settings'
         self.press = None
         self.banner = ''
+        self.draw()
+
+    def appearance_settings(self):
+        self.host.deactivate()
+        self.mode='appearance_settings'
+        self.press=None
+        self.banner=''
+        self.draw()
+
+    def startup_settings(self):
+        self.host.deactivate()
+        self.mode='startup_settings'
+        self.press=None
+        self.banner=''
+        self.draw()
+
+    def updates_page(self):
+        self.host.deactivate()
+        self.mode = 'updates'
+        self.press = None
+        self.banner = ''
+        self.draw()
+
+    def release_notes_page(self):
+        from .update_client import status
+        self.release_notes_info = status(self.prefs.path.parent)
+        self.update_notes_index = 0
+        self.mode = 'update_notes'
+        self.press = None
+        self.draw()
+
+    def release_notes_move(self, delta):
+        self.update_notes_index = max(0,self.update_notes_index+delta)
+        self.press = None
+        self.draw()
+
+    def install_update(self):
+        self.updates_page()
+        self.update_request('install')
+
+    def update_request(self, operation):
+        from .update_client import request
+        try:
+            request(operation,self.prefs.path.parent)
+            self.banner = 'Requested'
+        except FileExistsError:self.banner = 'An update operation is already queued'
+        except (OSError,ValueError):self.banner = 'Could not request the update operation'
+        self.draw()
+
+    def toggle_clock(self):
+        before=self.prefs.data['show_clock']
+        self.prefs.data['show_clock']=not before
+        try:self.prefs.save()
+        except OSError:
+            self.prefs.data['show_clock']=before
+            raise
         self.draw()
 
     def toggle_debug(self):
@@ -149,16 +215,49 @@ class Launcher:
         self.draw()
 
     def recovery_page(self):
+        self.recovery_return = self.setup_resume if self.mode=='onboarding' else self.updates_page if self.mode=='updates' else self.system_settings
         self.host.deactivate()
         self.mode = 'recovery_settings'
         self.press = None
+        self.draw()
+
+    def setup_resume(self):
+        self.mode='onboarding'
+        self.press=None
+        self.banner=''
+        self.draw()
+
+    def network_resume(self):
+        self.mode='recovery_settings'
+        self.press=None
+        self.banner=''
+        self.draw()
+
+    def ssh_settings(self):
+        self.ssh_return=self.hotspot_page if self.mode=='hotspot_settings' else self.recovery_page
+        self.host.deactivate()
+        self.mode='ssh_settings';self.press=None;self.banner='';self.draw()
+
+    def set_ssh(self,enabled):
+        from .recovery import request_job
+        try:
+            request_job('ssh',enabled=enabled)
+            self.banner=''
+        except FileExistsError:self.banner='A setup operation is already queued'
+        except (OSError,ValueError):self.banner='Could not request the SSH setting'
+        self.draw()
+
+    def hotspot_page(self):
+        self.mode='hotspot_settings'
+        self.press=None
+        self.banner=''
         self.draw()
 
     def maintenance(self, operation):
         from .recovery import request_job
         try:
             request_job(operation)
-            self.banner = 'Requested. Status updates below.'
+            self.banner = ''
         except FileExistsError: self.banner = 'A setup operation is already queued.'
         except (OSError, ValueError): self.banner = 'Could not request the setup operation.'
         self.draw()
@@ -173,74 +272,6 @@ class Launcher:
     def setup_more(self, total):
         self.setup_list_page = (self.setup_list_page+1)%total
         self.draw()
-
-    def draw_system_settings(self, d, w, h):
-        self.button(d,(16,14,134,56),'Back',self.settings)
-        d.text((150,22),'System',font=self.font(25),fill='white')
-        info=self.storage_info
-        rows=[('Radio and Wi-Fi','Pair another radio or connect home Wi-Fi',self.recovery_page),
-              ('Setup wizard','Change your initial setup choices',lambda:self.setup_page(True)),
-              ('Debug mode','On · detailed logs and tests' if self.prefs.data['debug_mode'] else 'Off · normal operation',self.toggle_debug),
-              ('Storage protection','Enabled' if info['protected'] else info['message'],lambda:self.storage_confirm(not info['protected'])),
-              ('Shut down','Power off the Raspberry Pi cleanly',self.shutdown_page)]
-        if self.prefs.data['debug_mode']:
-            rows.append(('Diagnostics','Hardware, HondaLink and reports',self.system_diagnostics))
-        for i,(title,detail,action) in enumerate(rows):
-            self.menu_row(d,(24,74+i*56,w-24,126+i*56),title,detail,action)
-
-    def draw_recovery(self, d, w, h):
-        from .setup_state import SetupState
-        from .recovery import job_status
-        credentials=SetupState(self.prefs.path.parent).credentials()
-        self.button(d,(16,14,134,56),'Back',self.system_settings)
-        d.text((150,22),'Radio and Wi-Fi',font=self.font(25),fill='white')
-        lines=[credentials['ssid'],'Password: '+credentials['password'],
-               'http://192.168.4.1:8080 · username: hlauncher',
-               'Use the page to connect home Wi-Fi or pair another radio.']
-        for i,text in enumerate(lines):d.text((24,100+i*44),text,font=self.font(17),fill='#c8d4df')
-        self.button(d,(24,294,w-24,350),'Enable setup Wi-Fi',lambda:self.maintenance('hotspot'),size=18)
-        result=job_status(self.prefs.path.parent)
-        d.text((24,375),str(result.get('message',result['status']))[:75],font=self.font(14),fill='#ffbc75')
-        d.text((24,409),'Changing the radio ends this connection. Continue from your phone.',font=self.font(14),fill='#a3b2c0')
-
-    def draw_storage(self, d, w, h):
-        from .recovery import job_status
-        self.button(d,(16,14,134,56),'Back',self.system_settings)
-        d.text((150,22),'Storage protection',font=self.font(24),fill='white')
-        target=self.storage_target
-        lines=['Enable protection?' if target else 'Switch to maintenance mode?',
-               'The change takes effect after restarting.',
-               'Pairing and settings stay on the persistent data partition.',
-               'Finish updates in maintenance mode, then re-enable protection.']
-        for i,text in enumerate(lines):d.text((24,95+i*42),text,font=self.font(17),fill='#c8d4df')
-        if self.storage_info['available']:
-            self.button(d,(24,280,330,334),'Enable' if target else 'Disable',lambda:self.maintenance('protect' if target else 'unprotect'),size=18)
-            self.button(d,(350,280,w-24,334),'Restart',lambda:self.maintenance('reboot'),size=18)
-        else:d.text((24,280),self.storage_info['message'],font=self.font(15),fill='#ffbc75')
-        result=job_status(self.prefs.path.parent)
-        d.text((24,370),str(result.get('message',result['status']))[:80],font=self.font(14),fill='#c8d4df')
-
-    def draw_brand(self, draw, xy, size):
-        x, y = xy
-        title_font = self.font(size)
-        baseline = y + title_font.getbbox("HLauncher")[3]
-        draw.text((x, baseline), "HLauncher", font=title_font, fill="white", anchor="ls")
-        credit_x = x + draw.textlength("HLauncher", font=title_font) + 12
-        draw.text((credit_x, baseline), "by Evan Horsley", font=ui_font(16 if size >= 28 else 14, 600),
-                  fill="#b4b4b4", anchor="ls")
-
-    def button(self, draw, box, label, action, color=None, size=19):
-        if label in ('Home', 'Back'):
-            from hlauncher_sdk.ui import draw_back_button
-            box = (box[0], box[1], box[0]+118, box[3])
-            draw_back_button(draw, box, color=TILE_COLORS[self.prefs.data["tile_color"]])
-        else:
-            button_surface(draw, box, color or TILE_COLORS[self.prefs.data["tile_color"]])
-            if label in ('+', '−'):
-                draw.text(((box[0]+box[2])/2,(box[1]+box[3])/2),label,font=self.font(size),fill='white',anchor='mm')
-            else:
-                draw.text((box[0] + 12, box[1] + 10), label, font=self.font(size), fill="white")
-        self.actions.append((box, action))
 
     def enabled(self):
         return [m for m in self.manifests.values() if self.prefs.enabled(m)]
@@ -284,6 +315,7 @@ class Launcher:
         self.draw()
 
     def audio_page(self):
+        self.audio_return=self.settings if self.mode=='settings' else self.home
         self.tone_test.stop()
         self.host.deactivate()
         self.audio_settings.refresh()
@@ -315,7 +347,37 @@ class Launcher:
         self.press = None
         self.draw()
 
+    def plugin_detail(self, plugin_id=None):
+        if plugin_id is not None:self.settings_plugin_id=plugin_id
+        if getattr(self,'settings_plugin_id',None) not in self.manifests:
+            self.plugin_settings()
+            return
+        self.host.deactivate()
+        self.mode='plugin_detail'
+        self.press=None
+        self.banner=''
+        self.draw()
+
+    def adapter_branding_page(self):
+        self.host.deactivate()
+        self.mode='adapter_branding'
+        self.press=None
+        self.banner=''
+        self.draw()
+
+    def apply_adapter_branding(self):
+        manifest=self.manifests.get('carplay')
+        if not manifest or not self.prefs.enabled(manifest):
+            self.banner='Enable the CarPlay plugin first'
+        else:
+            try:
+                self.host.request_branding()
+                self.banner=''
+            except (OSError,ValueError) as exc:self.banner=str(exc)[:100]
+        self.draw()
+
     def obd_settings(self):
+        self.obd_return=self.plugin_detail if self.mode=='plugin_detail' else self.settings if self.mode=='settings' else self.home
         self.host.deactivate()
         self.obd.start()
         self.mode = 'obd_settings'
@@ -398,6 +460,7 @@ class Launcher:
     def shutdown_page(self):
         self.tone_test.stop()
         self.diagnostics.stop()
+        self.shutdown_return = self.system_diagnostics if self.mode in ('diagnostics','protocol_tests') or self.mode.startswith('debug_') else self.system_settings
         self.mode = 'shutdown_confirm'
         self.press = self.pressed_box = None
         self.banner = ''
@@ -441,23 +504,45 @@ class Launcher:
                                            received_frames=worker.frames_received)
                                    for key,worker in self.host.workers.items()})
 
+    def diagnostic_tab(self, index):
+        self.diagnostic_page=index
+        self.press=None
+        self.draw()
+
     def change_diagnostic_page(self):
         self.diagnostic_page = 1 - self.diagnostic_page
         self.draw()
-
-    def menu_row(self, draw, box, title, detail, action):
-        button_surface(draw,box,TILE_COLORS[self.prefs.data['tile_color']])
-        x,y,right,bottom=box
-        draw.text((x+16,y+9),title,font=self.font(20),fill='white')
-        draw.text((x+16,y+37),detail,font=self.font(14),fill='#adbcc8')
-        draw.text((right-25,(y+bottom)/2),'›',font=self.font(27),fill='#adbcc8',anchor='mm')
-        self.actions.append((box,action))
 
     def tile_colors(self):
         self.host.deactivate()
         self.mode = 'tile_colors'
         self.press = None
         self.banner = ''
+        self.draw()
+
+    def custom_color(self):
+        from .ui.color_picker import Picker
+        self.custom_color_return=self.setup_resume if self.mode=='onboarding' else self.tile_colors
+        self.color_picker=Picker(self.prefs.data['custom_color'])
+        self.host.deactivate()
+        self.mode='custom_color'
+        self.press=self.pressed_box=None
+        self.banner=''
+        self.draw()
+
+    def cancel_custom_color(self):
+        self.custom_color_return()
+
+    def save_custom_color(self):
+        try:self.prefs.set_tile_color(self.color_picker.hex)
+        except (OSError,ValueError):
+            self.banner='Could not save custom color'
+            self.draw()
+            return
+        self.custom_color_return()
+
+    def picker_key(self, key):
+        self.color_picker.key(key)
         self.draw()
 
     def set_tile_color(self, name):
@@ -470,6 +555,8 @@ class Launcher:
         self.draw()
 
     def color_settings(self):
+        if self.mode!='hdmi_test':
+            self.picture_return=self.plugin_detail if self.mode=='plugin_detail' else self.plugin_settings
         self.restore_hdmi_range()
         self.host.deactivate()
         self.picture.refresh()
@@ -483,40 +570,74 @@ class Launcher:
         if self.hdmi_range_original is not None:
             from .hdmi_calibration import broadcast_rgb
             try:
-                broadcast_rgb(self.fb.kms, self.hdmi_range_original)
+                broadcast_rgb(getattr(self.fb,'kms',None), self.hdmi_range_original)
                 self.event(state='hdmi_range_restored', value=self.hdmi_range_original)
                 self.hdmi_range_original = None
             except (OSError, RuntimeError) as exc:
                 self.event(state='hdmi_range_failed', error=str(exc))
 
+    def capture_hdmi_status(self,error=''):
+        from .hdmi_calibration import output_status
+        from .setup_state import atomic_json
+        try:
+            self.hdmi_output=output_status(getattr(self.fb,'kms',None))
+            self.hdmi_output['test_bits']=32 if self.hdmi_test_exact and getattr(self.fb,'kms',None) is not None else 16
+            self.hdmi_output.update(error=error,saved_range=self.hdmi_settings.value,
+                                    preview_range=self.hdmi_range_selected,
+                                    requested_buffer='XRGB8888' if self.hdmi_test_exact else 'RGB565',
+                                    test_levels='inset' if self.hdmi_test_inset else 'standard')
+            atomic_json(self.prefs.path.with_name('hdmi-diagnostics.json'),self.hdmi_output)
+            self.event(state='hdmi_output_status',**self.hdmi_output)
+        except (OSError,RuntimeError) as exc:self.event(state='hdmi_diagnostics_failed',error=str(exc))
+
     def hdmi_calibration(self):
-        from .hdmi_calibration import broadcast_rgb
+        from .hdmi_calibration import broadcast_rgb,RANGES
         self.host.deactivate()
-        self.mode = 'hdmi_test'
-        self.banner = ''
+        self.mode='hdmi_test';self.banner=''
+        self.hdmi_test_exact=True;self.hdmi_test_inset=False
         try:
             if self.hdmi_range_original is None:
-                self.hdmi_range_original = broadcast_rgb(self.fb.kms)
-            self.hdmi_range_label = ['Automatic', 'Full', 'Limited'][self.hdmi_range_original]
-        except (OSError, RuntimeError) as exc:
-            self.banner = str(exc)
+                self.hdmi_range_original=broadcast_rgb(getattr(self.fb,'kms',None))
+            self.hdmi_range_selected=broadcast_rgb(getattr(self.fb,'kms',None))
+            self.hdmi_range_label=RANGES[self.hdmi_range_selected]
+        except (OSError,RuntimeError) as exc:
+            self.hdmi_range_selected=None;self.banner=str(exc)
+        self.capture_hdmi_status(self.banner)
+        self.draw()
+
+    def toggle_hdmi_test(self,control):
+        # Diagnostic source changes only: never saved or applied to video/UI.
+        if control=='buffer':self.hdmi_test_exact=not self.hdmi_test_exact
+        elif control=='levels':self.hdmi_test_inset=not self.hdmi_test_inset
+        else:raise ValueError('Unknown HDMI test control')
+        self.capture_hdmi_status()
         self.draw()
 
     def set_hdmi_range(self, value):
+        from .hdmi_calibration import broadcast_rgb,RANGES
+        error=''
+        try:
+            if self.hdmi_range_original is None:raise RuntimeError('HDMI range control is unavailable')
+            actual=broadcast_rgb(getattr(self.fb,'kms',None),value)
+            self.hdmi_range_selected=actual;self.hdmi_range_label=RANGES[actual]
+            self.banner='Preview only · Save to keep this range'
+            self.event(state='hdmi_range_test',value=actual)
+        except (OSError,RuntimeError) as exc:self.banner=error=str(exc)
+        self.capture_hdmi_status(error)
+        self.draw()
+
+    def save_hdmi_range(self):
         from .hdmi_calibration import broadcast_rgb
         try:
-            if self.hdmi_range_original is None:
-                raise RuntimeError('Original HDMI range was not saved')
-            broadcast_rgb(self.fb.kms, value)
-            actual = broadcast_rgb(self.fb.kms)
-            if actual != value:
-                raise RuntimeError('HDMI range readback did not match')
-            self.hdmi_range_label = ['Automatic', 'Full', 'Limited'][actual]
-            self.banner = ''
-            self.event(state='hdmi_range_test', value=actual)
-        except (OSError, RuntimeError) as exc:
-            self.banner = str(exc)
-        self.draw()
+            if self.hdmi_range_selected is None:raise RuntimeError('Choose an available HDMI range first')
+            actual=broadcast_rgb(getattr(self.fb,'kms',None))
+            if actual!=self.hdmi_range_selected:raise RuntimeError('HDMI range changed; select it again')
+            self.hdmi_settings.save(actual)
+            self.hdmi_range_original=actual
+            self.capture_hdmi_status()
+            self.color_settings()
+            self.banner='HDMI range saved';self.draw()
+        except (OSError,RuntimeError,ValueError) as exc:self.banner=str(exc);self.draw()
 
     def save_picture(self):
         if not self.picture_dirty:
@@ -618,33 +739,22 @@ class Launcher:
             self.event(state="settings_save_failed", error=str(exc))
         self.draw()
 
-    def present_ui(self, image):
-        # Brighten the existing control without changing its size or position.
-        box = self.pressed_box if self.press is not None else None
-        if box is not None and any(bounds == box for bounds, _ in self.actions):
-            left, top, right, bottom = box
-            tile = ImageEnhance.Brightness(image.crop(box)).enhance(1.28)
-            image.paste(tile, (left, top))
-            # A small local overlay keeps the glow inexpensive to render.
-            pad = 6
-            overlay = Image.new('RGBA', (right-left+pad*2+1, bottom-top+pad*2+1))
-            bounds = (pad+1, pad+1, pad+right-left-1, pad+bottom-top-1)
-            glow = ImageDraw.Draw(overlay)
-            edge = border_color(TILE_COLORS[self.prefs.data['tile_color']], pressed=True)
-            glow.rounded_rectangle(bounds, radius=13, outline=(*edge,160), width=3)
-            overlay = overlay.filter(ImageFilter.GaussianBlur(2))
-            ImageDraw.Draw(overlay).rounded_rectangle(
-                bounds, radius=13, outline=(*edge,190), width=2)
-            image.paste(overlay, (left-pad, top-pad), overlay)
-        self.fb.image(dither_rgb565(image) if self.mode not in ("hdmi_test", "debug_colors") else image)
-
     def draw(self):
+        self.scroll_view=None
         if self.mode == "home":
             from .ui.home import draw_launcher
             draw_launcher(self)
             return
         if self.mode == "settings":
             from .ui.settings import draw_launcher
+            draw_launcher(self)
+            return
+        if self.mode == "update_notes":
+            from .ui.release_notes import draw_launcher
+            draw_launcher(self)
+            return
+        if self.mode == "updates":
+            from .ui.updates import draw_launcher
             draw_launcher(self)
             return
         if self.mode == "onboarding":
@@ -660,322 +770,23 @@ class Launcher:
                 from .ui.projection import draw_launcher
                 draw_launcher(self)
             return
-        w, h = self.fb.w, self.fb.h
-        tile_color = TILE_COLORS[self.prefs.data["tile_color"]]
-        image = draw_background(w, h, tile_color) if self.mode not in ("hdmi_test", "debug_colors") else Image.new("RGB", (w, h), "#080c14")
-        d = ImageDraw.Draw(image)
-        self.actions = []
-        if self.mode == 'system_settings':
-            self.draw_system_settings(d,w,h)
-        elif self.mode == 'recovery_settings':
-            self.draw_recovery(d,w,h)
-        elif self.mode == 'storage_confirm':
-            self.draw_storage(d,w,h)
-        elif self.mode == 'plugins_settings':
-            self.button(d,(16,14,110,56),'Back',self.settings)
-            d.text((150,20),'Plugins',font=self.font(27),fill='white')
-            entries = sorted(self.manifests.values(), key=lambda m: m.id != 'carplay')
-            pages = max(1, math.ceil(len(entries) / 3))
-            self.settings_page = min(self.settings_page, pages - 1)
-            if not entries:
-                d.text(
-                    (24, 100), "No plugins installed", font=self.font(20), fill="white"
-                )
-            for i, m in enumerate(
-                entries[self.settings_page * 3 : self.settings_page * 3 + 3]
-            ):
-                y = 85 + i * 58
-                d.text((24, y + 12), m.name, font=self.font(21), fill="white")
-                on = self.prefs.enabled(m)
-                if m.id == 'obd':
-                    self.button(d, (w-365,y,w-175,y+48), 'Connect dongle',self.obd_settings,size=17)
-                if m.id == 'carplay':
-                    self.button(d, (w-365, y, w-175, y+48), 'CarPlay color',
-                                self.color_settings, size=17)
-                if m.keep_alive and m.id not in ("carplay", "android-auto"):
-                    background = self.prefs.background_enabled(m)
-                    self.button(d, (w-335, y, w-175, y+48),
-                                'Background On' if background else 'Background Off',
-                                lambda pid=m.id: self.toggle_background(pid),
-                                color='#246b48' if background else '#424955', size=16)
-                self.button(
-                    d,
-                    (w - 165, y, w - 24, y + 48),
-                    "Enabled" if on else "Disabled",
-                    lambda pid=m.id: self.toggle_plugin(pid),
-                    color="#246b48" if on else "#424955",
-                    size=18,
-                )
-            if pages > 1:
-                self.button(
-                    d,
-                    (w - 185, h - 76, w - 110, h - 34),
-                    "Prev",
-                    lambda: self.change_settings_page(-1),
-                    size=15,
-                )
-                self.button(
-                    d,
-                    (w - 100, h - 76, w - 24, h - 34),
-                    "Next",
-                    lambda: self.change_settings_page(1),
-                    size=15,
-                )
-            if self.banner:d.text((24,h-28),self.banner[:60],font=self.font(14),fill='#ffbc75')
-        elif self.mode == 'diagnostics':
-            self.button(d,(16,14,110,56),'Back',self.settings)
-            d.text((150,20),'System diagnostics',font=self.font(25),fill='white')
-            self.button(d,(w-160,14,w-24,56),'Shutdown',self.shutdown_page,color='#743c36',size=16)
-            system,revision,report_status=self.diagnostics.snapshot()
-            self.diagnostic_revision=revision
-            runtime=self.diagnostic_runtime()
-            def capacity(value):return f'{value/1024**3:.1f} GB' if value is not None else 'Unavailable'
-            if self.diagnostic_page == 0:
-                session=runtime['session'];display=runtime['display'];audio=runtime['audio']
-                rows=[('HondaLink control','Connected' if session.get('connected') else 'Disconnected'),
-                      ('Handshake','Verified' if session.get('authenticated') else 'Not verified'),
-                      ('Display',f"{display['width']} × {display['height']} · {display['backend']}"),
-                      ('USB dongle',str(len(system['dongles']))+' detected' if 'dongles' in system else 'Checking…'),
-                      ('Audio',f"{audio['route'].title()} · {audio['streams']} stream(s)"),
-                      ('Running apps',', '.join(runtime['plugins']) or 'None')]
-            else:
-                temp=system.get('temperature_c');uptime=system.get('uptime_seconds')
-                total=system.get('memory_total');available=system.get('memory_available')
-                memory=f'{(total-available)/1024**2:.0f} / {total/1024**2:.0f} MB used' if total is not None and available is not None else 'Unavailable'
-                rows=[('Hardware',system.get('model','Checking…')),
-                      ('CPU temperature',f'{temp:.1f} °C' if temp is not None else 'Unavailable'),
-                      ('Power / throttling',power_status(system.get('power_flags'))),
-                      ('Memory',memory),
-                      ('Storage',capacity(system.get('storage_free'))+' free'),
-                      ('Uptime',f'{int(uptime)//3600}h {int(uptime)%3600//60}m' if uptime is not None else 'Unavailable')]
-            for i,(label,value) in enumerate(rows):
-                y=91+i*45
-                d.text((24,y),label,font=self.font(16),fill='#a3b2c0')
-                value_size=17
-                while value_size>12 and d.textlength(value,font=self.font(value_size))>w-250:value_size-=1
-                d.text((225,y),value,font=self.font(value_size),fill='white')
-                d.line((24,y+33,w-24,y+33),fill='#26313d')
-            self.button(d,(24,h-77,200,h-32),'Save report',lambda:self.diagnostics.save_report(self.diagnostic_runtime()),size=17)
-            self.button(d,(214,h-77,414,h-32),'HondaLink',self.protocol_tests,size=17)
-            self.button(d,(w-285,h-77,w-24,h-32),'System  ›' if self.diagnostic_page==0 else '‹  Connections',self.change_diagnostic_page,size=17)
-            if report_status:d.text((24,h-23),report_status,font=self.font(13),fill='#a3b2c0')
-        elif self.mode == 'protocol_tests':
-            self.draw_protocols(d,w,h)
-        elif self.mode in ('shutdown_confirm','shutdown_pending'):
-            if self.mode == 'shutdown_confirm':
-                self.button(d,(16,14,134,56),'Back',self.system_diagnostics)
-            d.text((24,100),'Shut down Raspberry Pi?' if self.mode == 'shutdown_confirm' else 'Shutting down…',font=self.font(30),fill='white')
-            d.text((24,160),'Stops apps and shuts down the operating system cleanly.',font=self.font(18),fill='#b4bdc8')
-            if self.mode == 'shutdown_confirm':
-                self.button(d,(24,235,310,294),'Shut down',self.shutdown_pi,color='#743c36',size=22)
-                self.button(d,(330,235,w-24,294),'Cancel',self.system_diagnostics,size=22)
-            if self.banner:d.text((24,335),self.banner[:70],font=self.font(17),fill='#ffbc75')
-        elif self.mode.startswith('debug_'):
-            self.draw_debug(d, w, h)
-        elif self.mode == 'tile_colors':
-            self.button(d, (16,14,110,56), 'Back', self.settings)
-            d.text((150,20), 'Tile color', font=self.font(27), fill='white')
-            cell_w = (w - 72) // 3
-            cell_h = (h - 112) // 2
-            for i, (name, color) in enumerate(TILE_COLORS.items()):
-                x = 24 + (i % 3) * (cell_w + 12)
-                y = 82 + (i // 3) * (cell_h + 12)
-                box = (x, y, x + cell_w, y + cell_h)
-                glass_tile(image, box, color)
-                draw_icon(image, 'obd', (x + cell_w/2, y + cell_h*.36), 62)
-                text = name + ('  ✓' if self.prefs.data['tile_color'] == name else '')
-                d.text((x+cell_w/2,y+cell_h-40),text,font=self.font(19),fill='white',anchor='mt')
-                self.actions.append((box, lambda value=name: self.set_tile_color(value)))
-            if self.banner:
-                d.text((24,h-26),self.banner,font=self.font(14),fill='#ffbc75')
-        elif self.mode == 'hdmi_test':
-            from .hdmi_calibration import pattern
-            self.button(d, (16,14,110,56), 'Back', self.color_settings)
-            d.text((150,18), 'HDMI range: ' + self.hdmi_range_label, font=self.font(25), fill='white')
-            pattern(d, w, self.font)
-            for i, label in enumerate(('Auto', 'Full', 'Limited')):
-                x = 24 + i * ((w-48)//3)
-                self.button(d, (x,380,x+(w-48)//3-8,425), label,
-                            lambda value=i: self.set_hdmi_range(value))
-            if self.banner:
-                d.text((24,440),self.banner[:75],font=self.font(13),fill='#ffbc75')
-            self.present_ui(image)
-            return
-        elif self.mode == 'colors':
-            self.button(d, (16,14,110,56), 'Back', self.plugin_settings)
-            d.text((150,18), 'CarPlay color', font=self.font(27), fill='white')
-            d.text((24,75), 'Adjust CarPlay only. 100% / 100% / 0 is the original picture.', font=self.font(16), fill='#b4b4b4')
-            self.picture_sliders = []
-            for i, key in enumerate(DEFAULTS):
-                y = 114 + i*76
-                value = self.picture_values[key]
-                suffix = f'{value:+d}' if key == 'brightness' else f'{value}%'
-                d.text((24,y-6), key.capitalize(), font=self.font(20), fill='white')
-                d.text((w-90,y-6), suffix, font=self.font(18), fill='#98bed4')
-                box=(215,y+5,w-115,y+37)
-                low,high=LIMITS[key]
-                x=box[0]+round((value-low)/(high-low)*(box[2]-box[0]))
-                cy=y+21
-                d.line((box[0],cy,box[2],cy), fill='#424955', width=8)
-                d.line((box[0],cy,x,cy), fill='#397bb8', width=8)
-                default_x=box[0]+round((DEFAULTS[key]-low)/(high-low)*(box[2]-box[0]))
-                d.line((default_x,cy-9,default_x,cy+9), fill='#aaaaaa', width=2)
-                d.ellipse((x-12,cy-12,x+12,cy+12), fill='white')
-                self.picture_sliders.append((key,(box[0],y-3,box[2],y+45)))
-            self.button(d,(24,h-135,190,h-88),'Reset',self.reset_picture)
-            if 'carplay' in self.manifests and self.prefs.enabled(self.manifests['carplay']):
-                self.button(d,(210,h-135,w-24,h-88),'Preview CarPlay',lambda:self.open_plugin('carplay'))
-            self.button(d,(24,h-80,w-24,h-45),'HDMI test pattern',self.hdmi_calibration,size=15)
-            if self.banner:
-                d.text((24,h-78),self.banner,font=self.font(15),fill='#ffbc75')
-        else:
-            manifest = self.manifests.get(self.host.active)
-            self.button(d, (16, 14, 110, 56), "Home", self.home)
-            color = TILE_COLORS[self.prefs.data['tile_color']]
-            glass_tile(image, (24,88,w-24,h-30), color)
-            draw_icon(image, manifest.id if manifest else '', (w/2,168), 82)
-            if manifest:
-                d.text((w/2,226), manifest.name, font=self.font(25), fill='white', anchor='mt')
-            text = self.host.status() or "Starting plugin..."
-            words = text.split()
-            lines = [""]
-            for word in words:
-                if len(lines[-1]) + len(word) > 45:
-                    lines.append("")
-                lines[-1] += word + " "
-            for i, line in enumerate(lines[:4]):
-                d.text((w/2,286+i*29), line.strip(), font=self.font(18), fill='#d2dce5', anchor='mt')
-        self.present_ui(image)
+        from .ui import pages,diagnostics
+        if self.mode=='custom_color':
+            from .ui.color_picker import draw_launcher
+            draw_launcher(self)
+        elif self.mode in pages.PAGES:pages.PAGES[self.mode](self)
+        elif self.mode=='diagnostics':diagnostics.system(self)
+        elif self.mode=='protocol_tests':diagnostics.protocols(self)
+        elif self.mode.startswith('debug_'):diagnostics.hardware(self)
+        elif self.mode=='plugin' and not self.has_frame:pages.waiting(self)
 
-    def draw_debug(self, d, w, h):
-        page = self.mode[6:]
-        self.button(d,(16,14,134,56),'Back',self.system_diagnostics if page=='menu' else self.debug_tools)
-        d.text((150,20),{'menu':'Hardware tests','audio':'Audio test','colors':'Video colors','inputs':'Radio buttons'}.get(page,page),font=self.font(24),fill='white')
-        if page == 'menu':
-            for i,(name,detail,target) in enumerate((
-                ('Audio','Short tones through the selected audio route','audio'),
-                ('Video colors','Color bars and dark / light steps','colors'),
-                ('Radio buttons','Live inputs and projection control tests','inputs'))):
-                self.menu_row(d,(24,90+i*100,w-24,172+i*100),name,detail,lambda target=target:self.debug_tools(target))
-        elif page == 'audio':
-            d.text((24,100),'Plays a one-second tone through the selected output.',font=self.font(20),fill='white')
-            d.text((24,140),'Use the radio volume control to check the output.',font=self.font(17),fill='#b4bdc8')
-            for i,label in enumerate(('Left','Right','Stereo')):
-                x=24+i*((w-48)//3)
-                self.button(d,(x,205,x+(w-48)//3-12,266),label,lambda c=label:self.tone_test.start(c))
-            self.button(d,(24,300,220,355),'Stop',self.tone_test.stop)
-            status = self.tone_test.error or ('Playing '+self.tone_test.channel if self.tone_test.until else 'Ready')
-            d.text((24,390),status,font=self.font(22),fill='white')
-        elif page == 'colors':
-            colors=('#ffffff','#ffff00','#00ffff','#00ff00','#ff00ff','#ff0000','#0000ff','#000000')
-            for i,color in enumerate(colors):
-                x=24+i*(w-48)//8; right=24+(i+1)*(w-48)//8
-                d.rectangle((x,92,right,270),fill=color)
-            for y,values in ((300,(0,4,8,12,16,20,24,32)),(375,(223,231,239,243,247,251,253,255))):
-                for i,value in enumerate(values):
-                    x=24+i*(w-48)//8; right=24+(i+1)*(w-48)//8
-                    d.rectangle((x,y,right,y+42),fill=(value,)*3)
-                    d.text(((x+right)//2,y+45),str(value),font=self.font(14),fill='white',anchor='mt')
-        elif page == 'inputs':
-            now=time.monotonic()
-            transports=self.inputs.control_status
-            d.text((24,78),'Track controls: '+transports.get('avrcp','Starting'),font=self.font(14),fill='#b4bdc8')
-            d.text((24,100),'Phone / voice: '+transports.get('hfp','Starting'),font=self.font(14),fill='#b4bdc8')
-            for i,(name,label) in enumerate(LABELS.items()):
-                keys=(('play_pause','play','pause','stop') if name=='play_pause' else
-                      ('answer','dial','redial') if name=='answer' else (name,))
-                if name=='answer':label='Dial / answer'
-                states=[self.inputs.buttons[key] for key in keys]
-                state=dict(max(states,key=lambda value:value['at']))
-                state['count']=sum(value['count'] for value in states)
-                recent=state['count'] and now-state['at']<.7
-                col,row=i%3,i//3;cw=(w-48)//3;x=24+col*cw;y=132+row*132;right=x+cw-10
-                button_surface(d,(x,y,right,y+119),'#536c60' if recent or state['held'] else '#26313d')
-                d.text((x+10,y+8),label,font=self.font(18),fill='white')
-                text=('Held' if state['held'] else 'Received' if recent else 'Waiting')+f"  ·  RX {state['count']}"
-                d.text((x+10,y+36),text,font=self.font(13),fill='#c8d4df')
-                results=getattr(self.host,'button_results',{})
-                result=max((results.get(key,{}) for key in (('play_pause','play','pause','stop') if name=='play_pause' else (name,))),key=lambda value:value.get('sequence',0))
-                d.text((x+10,y+57),result.get('result','No command yet')[:28],font=self.font(12),fill='#c8d4df')
-                self.button(d,(x+10,y+79,right-10,y+111),'Test '+LABELS[name],lambda name=name:self.test_radio_button(name),size=13)
-            for i,(source,label) in enumerate((('avrcp','Track RX'),('hfp','Phone RX'),('hondalink','HondaLink RX'))):
-                traffic=self.inputs.traffic[source]
-                detail=traffic['summary']
-                if source=='hondalink' and self.inputs.steering_mode is not None:
-                    detail=f"Steering mode {self.inputs.steering_mode} / "+detail
-                d.text((24,398+i*19),f"{label}: {traffic['count']} / {detail}"[:94],font=self.font(12),fill='#c8d4df')
-            if self.inputs.history:
-                last=self.inputs.history[0]
-                d.text((24,457),f"Last action: {last['button']} / {last['source']} · Screen tests do not increase RX counts.",font=self.font(11),fill='white')
-            else:
-                d.text((24,457),'RX counts vehicle events. Test buttons send Pi → phone; they do not increase RX.',font=self.font(11),fill='#b4bdc8')
+    def input_tab(self, index):
+        self.debug_input_page=index
+        self.press=None
+        self.draw()
 
     def test_radio_button(self, name):
         self.inputs.offer(name,'trigger','screen')
-
-    def draw_protocols(self,d,w,h):
-        self.button(d,(16,14,134,56),'Back',self.system_diagnostics)
-        d.text((150,20),'HondaLink diagnostics',font=self.font(24),fill='white')
-        snapshot=self.protocols.snapshot()
-        cw=(w-48)//4
-        for i,label in enumerate(('Connection','Vehicle data','Calls / mic','Traffic')):
-            x=24+i*cw
-            self.button(d,(x,76,x+cw-8,116),label,lambda i=i:self.protocol_tab(i),
-                        color='#426b81' if i==self.protocol_page else '#26313d',size=14)
-        def row(y,label,value):
-            d.text((24,y),label,font=self.font(15),fill='#a3b2c0')
-            text=str(value)
-            while text and d.textlength(text,font=self.font(15))>w-258:text=text[:-1]
-            d.text((235,y),text,font=self.font(15),fill='white')
-            d.line((24,y+28,w-24,y+28),fill='#26313d')
-        if self.protocol_page==0:
-            row(137,'HondaLink','Connected' if snapshot['connected'] else 'Waiting for radio')
-            row(178,'Authentication','Verified' if self.host.session.get('authenticated') else 'Waiting')
-            row(219,'Track channel',self.inputs.control_status.get('avrcp','Waiting'))
-            row(260,'Phone / voice',self.inputs.control_status.get('hfp','Waiting'))
-            row(301,'App sessions',f"{len(snapshot['sessions'])} acknowledged")
-        elif self.protocol_page==1:
-            status=snapshot.get('vehicle_status',{})
-            flags=status.get('flags')
-            brake=status.get('parking_brake_engaged')
-            row(137,'Parking brake','Engaged' if brake is True else 'Released' if brake is False else 'Waiting for radio')
-            y=178
-            for key,label,unit in (('engine_rpm','Engine RPM','rpm'),
-                                   ('coolant_temperature_c','Coolant temperature','°C'),
-                                   ('intake_temperature_c','Intake air temperature','°C')):
-                reading=snapshot.get('vehicle_readings',{}).get(key)
-                if reading:
-                    row(y,label,'Stale' if reading['stale'] else f"{reading['value']} {unit}")
-                    y+=41
-            subscription=snapshot.get('vehicle_subscription',{})
-            if subscription:
-                row(y,'CAN subscription',subscription.get('status','pending').capitalize())
-            d.text((24,333),'Parking brake: in-car mapping · CAN sensors: verify against car',font=self.font(12),fill='#a3b2c0')
-        elif self.protocol_page==2:
-            voice=getattr(self.host,'voice',None)
-            fields=voice.current if voice else {}
-            mic=dict(snapshot['mic'])
-            if self.audio.capture:mic.update(self.audio.capture.snapshot())
-            row(137,'Call audio','Active' if fields.get('call_audio') else 'Idle')
-            row(178,'Siri / voice','Active' if fields.get('siri') else 'Idle')
-            level=mic.get('dbfs')
-            status=mic.get('status','Start Siri or a call to test')
-            if isinstance(level,(int,float)):status+=f' ({level:.0f} dBFS)'
-            row(219,'Radio microphone',status)
-            row(260,'Microphone data',f"HFP {mic.get('bytes',0)} B / USB {mic.get('mic_usb_bytes',0)} B")
-            d.text((24,301),'Voice output',font=self.font(15),fill='#a3b2c0')
-            self.button(d,(235,296,w-24,334),'Hands-free' if self.voice_audio.output=='sco' else 'HDMI',self.toggle_voice_output,size=14)
-        else:
-            for i,text in enumerate(snapshot['recent'][:7]):
-                d.text((24,135+i*27),text[:85],font=self.font(14),fill='#c8d4df')
-        d.text((24,350),f"{snapshot['status']} · {snapshot['saved']} saved · {snapshot['dropped']} dropped",font=self.font(14),fill='#a3b2c0')
-        d.text((24,373),('Marked: '+snapshot['last_marker'])[:80],font=self.font(13),fill='#c8d4df')
-        self.button(d,(24,h-77,224,h-32),'Stop recording' if snapshot['recording'] else 'Start recording',self.toggle_protocol_capture,size=15)
-        self.button(d,(238,h-77,426,h-32),'Mark test step',self.mark_protocol_step,size=15)
-        self.button(d,(440,h-77,w-24,h-32),'Test Siri' if self.protocol_page==2 else 'Hardware tests',
-                    (lambda:self.test_radio_button('voice_assistant')) if self.protocol_page==2 else self.debug_tools,size=15)
-        d.text((24,h-22),'Capture continues in the background. Microphone audio is not recorded.',font=self.font(12),fill='#a3b2c0')
-
 
     def change_page(self, delta):
         count = math.ceil(len(self.enabled()) / 4)
@@ -995,6 +806,11 @@ class Launcher:
         if point:
             self.last_xy = point
         action = primary["action"]
+        from .ui.scroll_list import touch as scroll_touch
+        if scroll_touch(self,action,point or self.last_xy):return
+        if self.mode=='custom_color':
+            from .ui.color_picker import touch
+            if touch(self,action,point or self.last_xy):return
         if self.mode == 'colors' and self.color_touch(action, point or self.last_xy):
             return
         # Plugins own their full viewport after their first frame. Home is provided
@@ -1037,7 +853,7 @@ class Launcher:
     def tick(self):
         waiting_projection = (self.mode == "plugin" and self.host.active in ('carplay','android-auto')
                               and not self.has_frame)
-        if (self.mode in ("home","settings","audio_settings","obd_settings") or waiting_projection) and time.strftime('%Y-%m-%d %H:%M') != getattr(self, 'home_clock', None):
+        if (self.mode not in ("plugin","shutdown_pending") or waiting_projection) and time.strftime('%Y-%m-%d %H:%M') != getattr(self, 'home_clock', None):
             self.draw()
         # Storage inspection runs off the renderer thread and never delays Bluetooth.
         if time.monotonic()-self.storage_checked > 5:
@@ -1047,9 +863,11 @@ class Launcher:
                 from .storage import status
                 self.storage_info = status()
             threading.Thread(target=inspect_storage,daemon=True).start()
-        if self.mode in ('onboarding','system_settings','recovery_settings','storage_confirm'):
+        if self.mode in ('onboarding','system_settings','recovery_settings','hotspot_settings','storage_confirm','updates','update_notes','adapter_branding','ssh_settings'):
             if time.monotonic()-getattr(self,'setup_redraw',0)>1:
-                self.setup_redraw=time.monotonic(); self.draw()
+                self.setup_redraw=time.monotonic()
+                if self.mode=='updates' and self.banner=='Requested':self.banner=''
+                self.draw()
         # A debug toggle from the recovery site takes effect without restarting.
         if time.monotonic()-getattr(self,'debug_checked',0)>1:
             self.debug_checked=time.monotonic()
@@ -1063,6 +881,15 @@ class Launcher:
             if self.audio_settings.refresh():self.draw()
         self.tone_test.tick()
         self.host.tick()
+        if time.monotonic()-getattr(self,'projection_checked',0)>1:
+            self.projection_checked=time.monotonic()
+            manifest=self.manifests.get('carplay')
+            if (self.prefs.data['setup_complete'] and not self.pending_default and self.mode not in ('onboarding','shutdown_pending')
+                    and manifest and self.prefs.enabled(manifest)):
+                from .projection import carplay_adapter_present
+                if self.host.branding.pending or carplay_adapter_present():
+                    try:self.host.ensure_background_carplay()
+                    except (OSError,ValueError) as exc:self.event(state='projection_background_failed',error=str(exc))
         self.obd.tick(self.host.session)
         now = time.monotonic()
         if self.mode in ('debug_inputs','debug_audio') and now-self.debug_redraw >= .05:

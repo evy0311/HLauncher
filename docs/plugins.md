@@ -215,3 +215,10 @@ by the projection engine as call/Siri output. This uses a separate bounded PCM
 path and voice route; ordinary playback continues to use HDMI. Send
 `audio.voice.stop` when the voice stream ends. CarPlay maps its explicit audio
 control stream IDs and microphone start/stop commands to this contract.
+
+## HondaLink extensions
+
+The [HondaLink capability reference](hondalink-capabilities.md) records recovered
+radio operations and proposed host-owned plugin contracts. Navigation, call,
+clock and voice-notice operations in that document are not yet SDK APIs. Plugins
+must not send the old app's WebView bridge JSON directly over Bluetooth.

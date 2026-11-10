@@ -137,7 +137,7 @@ def plugin_detail(ui):
     p=page_for(ui,manifest.name,ui.plugin_settings)
     rows=[Row('Enabled',lambda:ui.toggle_plugin(manifest.id),toggle=ui.prefs.enabled(manifest))]
     if manifest.id=='carplay':
-        rows.extend([Row('CarPlay picture',ui.color_settings),Row('Adapter icon',ui.adapter_branding_page)])
+        rows.append(Row('Adapter icon',ui.adapter_branding_page))
     elif manifest.id=='obd':rows.append(Row('OBD adapter',ui.obd_settings))
     elif manifest.keep_alive and manifest.id!='android-auto':
         rows.append(Row('Run in background',lambda:ui.toggle_background(manifest.id),toggle=ui.prefs.background_enabled(manifest)))
@@ -169,7 +169,8 @@ def adapter_branding(ui):
 def appearance(ui):
     p=page_for(ui,'Appearance',ui.settings)
     draw_rows(ui,p,[Row('Background color',ui.tile_colors,value='Custom' if ui.prefs.data['tile_color'].startswith('#') else ui.prefs.data['tile_color']),
-                    Row('Show clock',ui.toggle_clock,toggle=ui.prefs.data['show_clock'])])
+                    Row('Show clock',ui.toggle_clock,toggle=ui.prefs.data['show_clock']),
+                    Row('Picture',ui.color_settings)])
     present(ui,p)
 
 
@@ -195,7 +196,7 @@ def themes(ui):
 
 
 def picture(ui):
-    p=page_for(ui,'CarPlay picture',getattr(ui,'picture_return',ui.plugin_settings))
+    p=page_for(ui,'Picture',ui.appearance_settings)
     ui.picture_sliders=[]
     accent=art.blend(art.accent(p.theme),(240,237,250),.5)
     for i,key in enumerate(DEFAULTS):
@@ -210,6 +211,13 @@ def picture(ui):
         p.draw.line((default,cy-10,default,cy+10),fill='#a099aa',width=2)
         p.draw.ellipse((x-12,cy-12,x+12,cy+12),fill='#f1edf7')
         ui.picture_sliders.append((key,scale_bounds((box[0],y+4,box[2],y+52),p.size)))
+    # Stable references for tuning saturation and shadow/highlight detail live.
+    for i,color in enumerate(('#ff0000','#ffff00','#00ff00','#00ffff','#0000ff','#ff00ff')):
+        x=24+i*112
+        p.draw.rectangle((x,348,x+111,364),fill=color)
+    for i,level in enumerate((0,16,32,64,128,192,235,255)):
+        x=24+i*84
+        p.draw.rectangle((x,370,x+83,382),fill=(level,level,level))
     p.button((24,396,200,440),'Reset',ui.reset_picture,secondary=True)
     if 'carplay' in ui.manifests and ui.prefs.enabled(ui.manifests['carplay']):
         p.button((212,396,446,440),'Preview',lambda:ui.open_plugin('carplay'))

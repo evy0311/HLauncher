@@ -122,8 +122,8 @@ Storage restart is offered only after the protection job has completed.
 Settings uses two columns of rectangular category bars: Plugins, Appearance,
 Audio & EQ, OBD Gauges, Startup and System. Child lists use the shared horizontal
 color wash with inset values or Off/On controls. Appearance contains background
-color; individual plugin pages contain their enable switch and plugin options
-(such as CarPlay picture and the OBD adapter); Startup contains the default app selector.
+color, clock visibility and global Picture controls; individual plugin pages contain their enable switch and plugin options
+(such as the CarPlay adapter icon and the OBD adapter); Startup contains the default app selector.
 
 The early HDMI welcome and wizard Welcome share their content and theme. The
 screen remains available while a saved radio reconnects; Bluetooth profiles

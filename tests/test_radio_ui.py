@@ -73,7 +73,7 @@ class RadioUI(unittest.TestCase):
     def test_picture_slider_drag_still_saves_and_storage_requires_completed_change(self):
         ui=self.ui;ui.color_settings();key,box=ui.picture_sliders[0]
         ui.color_touch('down',(box[2],(box[1]+box[3])//2));ui.color_touch('up',(box[2],(box[1]+box[3])//2))
-        self.assertTrue((self.folder/'carplay-color.json').is_file())
+        self.assertTrue((self.folder/'picture.json').is_file())
         ui.storage_info=dict(available=True,protected=False,message='Ready')
         ui.storage_confirm(True)
         with patch.object(ui,'maintenance') as request:
@@ -85,6 +85,38 @@ class RadioUI(unittest.TestCase):
         with patch.object(ui,'maintenance') as request:
             next(callback for box,callback in ui.actions if box[0]==372)()
             request.assert_called_once_with('reboot')
+
+    def test_vehicle_tabs_show_all_entries_select_live_signal_and_keep_hits_bounded(self):
+        from hlauncher.protocol.vehicle_can import decode_records
+        from test_vehicle_can import can_data
+        ui=self.ui
+        ui.protocol_tests();ui.protocol_tab(1)
+        self.assertEqual(len(ui.protocols.snapshot()['vehicle_signals']),168)
+        self.assertEqual(ui.scroll_view['key'],'vehicle-signals')
+        ui.list_offsets['vehicle-signals']=43*40;ui.draw()
+        self.assertGreater(ui.scroll_view['offset'],0)
+        ui.vehicle_select(44)
+        self.assertEqual(ui.vehicle_data_tab,1)
+        ui.protocols.observe(dict(state='honda_can_data',session=257,data_type=0,
+            records=decode_records(can_data([(0x17c,bytes.fromhex('000003e800000000'))]))))
+        ui.draw()
+        self.assertEqual(ui.protocols.snapshot()['vehicle_signals'][43]['value'],1000)
+        for tab in (0,1,2):
+            ui.vehicle_tab(tab)
+            for (x,y,r,b),_ in ui.actions:self.assertTrue(0<=x<r<=720 and 0<=y<b<=480)
+            for index,(a,_) in enumerate(ui.actions):
+                for b,_ in ui.actions[index+1:]:
+                    self.assertFalse(a[0]<b[2] and b[0]<a[2] and a[1]<b[3] and b[1]<a[3])
+        ui.protocols.observe(dict(state='iap_data_session_closed',session=257))
+        self.assertFalse(ui.protocols.snapshot()['vehicle_signals'][43]['received'])
+
+    def test_opening_gauges_stops_ble_and_does_not_start_it(self):
+        ui=self.ui
+        ui.obd.enabled=True
+        with patch.object(ui.obd,'close') as close,patch.object(ui.obd,'start') as start,patch.object(ui.host,'activate'):
+            ui.open_plugin('obd')
+        close.assert_called_once();start.assert_not_called()
+        self.assertFalse(ui.obd.enabled)
 
     def test_network_sampling_prefers_lan_and_handles_missing_wifi(self):
         def run(args,**kwargs):
@@ -131,15 +163,14 @@ class RadioUI(unittest.TestCase):
             self.assertIsNone(ImageChops.difference(expected.crop((24,136,696,380)),self.ui.fb.last.crop((24,136,696,380))).getbbox())
         finally:bootstrap.close()
 
-    def test_carplay_picture_returns_to_plugin_and_appearance_has_theme_and_clock(self):
+    def test_picture_returns_to_appearance_and_carplay_has_adapter_options(self):
         ui=self.ui;ui.plugin_detail('carplay')
+        self.assertFalse(any(action==ui.color_settings for _,action in ui.actions))
+        ui.appearance_settings()
         next(action for _,action in ui.actions if action==ui.color_settings)()
         self.assertEqual(ui.mode,'colors')
         ui.actions[0][1]()
-        self.assertEqual(ui.mode,'plugin_detail')
-        self.assertEqual(ui.settings_plugin_id,'carplay')
-        ui.actions[0][1]()
-        self.assertEqual(ui.mode,'plugins_settings')
+        self.assertEqual(ui.mode,'appearance_settings')
         ui.plugin_detail('obd');ui.actions[-1][1]()
         self.assertEqual(ui.mode,'obd_settings')
         ui.actions[0][1]()

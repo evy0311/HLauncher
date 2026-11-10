@@ -1,4 +1,4 @@
-"""CarPlay picture preferences shared by the launcher and video plugin."""
+"""Display picture preferences shared by HLauncher and live controls."""
 
 import json
 import os
@@ -20,18 +20,22 @@ def validate(values):
 
 class PictureSettings:
     def __init__(self, path=None):
-        self.path = Path(path) if path else Path(os.environ.get('HLAUNCHER_STATE_DIR', '/var/lib/hlauncher')) / 'carplay-color.json'
+        self.path = Path(path) if path else Path(os.environ.get('HLAUNCHER_STATE_DIR', '/var/lib/hlauncher')) / 'picture.json'
         self.values = dict(DEFAULTS)
         self.signature = None
         self.refresh()
 
     def refresh(self):
         try:
-            stat = self.path.stat()
-            signature = (stat.st_ino, stat.st_mtime_ns, stat.st_size)
+            # Read older installs until the first save writes the global settings.
+            source = self.path
+            if source.name == 'picture.json' and not source.exists():
+                source = source.with_name('carplay-color.json')
+            stat = source.stat()
+            signature = (str(source), stat.st_ino, stat.st_mtime_ns, stat.st_size)
             if signature == self.signature:
                 return False
-            values = json.loads(self.path.read_text())
+            values = json.loads(source.read_text())
             if not isinstance(values, dict):
                 return False
             values = validate(values)
@@ -45,7 +49,7 @@ class PictureSettings:
     def save(self, values):
         values = validate(values)
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        fd, temporary = tempfile.mkstemp(prefix='.carplay-color-', dir=self.path.parent)
+        fd, temporary = tempfile.mkstemp(prefix='.picture-', dir=self.path.parent)
         try:
             with os.fdopen(fd, 'w') as f:
                 json.dump(values, f, indent=2)

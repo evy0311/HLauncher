@@ -54,14 +54,10 @@ def protocols(ui):
               ('App sessions',str(len(s['sessions']))+' acknowledged')]
         for i,row in enumerate(rows):p.info(176+i*34,*row)
     elif ui.protocol_page==1:
-        brake=s.get('vehicle_status',{}).get('parking_brake_engaged')
-        rows=[('Parking brake','Engaged' if brake is True else 'Released' if brake is False else 'Waiting for radio')]
-        for key,label,unit in (('engine_rpm','Engine RPM','rpm'),('coolant_temperature_c','Coolant temperature','°C'),('intake_temperature_c','Intake air','°C')):
-            reading=s.get('vehicle_readings',{}).get(key)
-            if reading:rows.append((label,'Stale' if reading['stale'] else f"{reading['value']} {unit}"))
-        subscription=s.get('vehicle_subscription',{})
-        if subscription:rows.append(('CAN subscription',subscription.get('status','pending').capitalize()))
-        for i,row in enumerate(rows):p.info(176+i*34,*row)
+        from .vehicle_data import draw
+        draw(ui,p,s)
+        present(ui,p)
+        return
     elif ui.protocol_page==2:
         voice=getattr(ui.host,'voice',None);fields=voice.current if voice else {}
         mic=dict(s['mic'])
@@ -91,7 +87,8 @@ def hardware(ui):
                ui.system_diagnostics if kind=='menu' else ui.debug_tools)
     if kind=='menu':
         draw_rows(ui,p,[Row(title,lambda target=target:ui.debug_tools(target)) for title,target in
-                        (('Audio','audio'),('Video colors','colors'),('Radio buttons','inputs'))])
+                        (('Audio','audio'),('Video colors','colors'),('Radio buttons','inputs'))]+[
+                            Row('HondaLink vehicle data',lambda:(ui.protocol_tab(1),ui.protocol_tests()))])
     elif kind=='audio':
         p.text((24,128),'Play a one-second tone through HDMI',19)
         for i,label in enumerate(('Left','Right','Stereo')):

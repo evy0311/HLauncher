@@ -9,7 +9,8 @@ from pathlib import Path
 def summarize(paths):
     counts=Counter();iap=Counter();frames=Counter();timeline=[];files=[];dropped=0
     mic=dict(samples_received=False,peak=0,radio_bytes=0,usb_bytes=0,usb_errors=0)
-    vehicle_readings={};vehicle_ranges={};subscriptions=[];can_records=Counter();can_connections=[]
+    vehicle_readings={};vehicle_ranges={};subscriptions=[];can_records=Counter();can_connections=[];can_activity={}
+    signal_readings={};signal_ranges={}
     for path in paths:
         files.append(str(path))
         with path.open(errors='replace') as source:
@@ -25,18 +26,31 @@ def summarize(paths):
                 if state.startswith('honda_can_subscription_') or state in ('honda_can_authorization','honda_can_session_selected'):
                     target=subscriptions if state.startswith('honda_can_subscription_') else can_connections
                     target.append({k:event[k] for k in ('wall','monotonic','state','session','status',
-                        'can_ids','cycle','result_code','response_flag','reason','payload','protocol',
+                        'can_ids','can_classes','cycle','result_code','response_flag','reason','payload','protocol',
                         'authorization_session','authorized','result','flags','transaction','transport_status',
                         'transport_code','settings_accepted','phase') if k in event})
                     del target[:-128]
                 if state=='honda_can_data':
                     for record in event.get('records',[]):
                         can_records[f"0x{record['can_id']:03x}"]+=1
+                        key=f"{record.get('can_class',event.get('can_class',1))}:0x{record['can_id']:03x}"
+                        if record.get('data_type',event.get('data_type',0)):
+                            key=f"diagnostic{record.get('data_type',event.get('data_type'))}:"+key
+                        row=can_activity.setdefault(key,dict(samples=0,changes=0))
+                        changed=row['samples']>0 and row['data']!=record['data']
+                        row.update(samples=row['samples']+1,changes=row['changes']+int(changed),
+                            data=record['data'],dlc=record['dlc'],session=event.get('session'),
+                            wall=event.get('wall'),monotonic=event.get('monotonic'))
                         for key,value in record.get('fields',{}).items():
                             bounds=vehicle_ranges.setdefault(key,dict(min=value,max=value,samples=0))
                             bounds.update(min=min(bounds['min'],value),max=max(bounds['max'],value),samples=bounds['samples']+1)
                             vehicle_readings[key]=dict(value=value,wall=event.get('wall'),monotonic=event.get('monotonic'),
                                 session=event.get('session'),can_id=record['can_id'],raw=record['data'])
+                        for api_id,value in record.get('signals',{}).items():
+                            bounds=signal_ranges.setdefault(api_id,dict(min=value,max=value,samples=0))
+                            bounds.update(min=min(bounds['min'],value),max=max(bounds['max'],value),samples=bounds['samples']+1)
+                            signal_readings[api_id]=dict(value=value,wall=event.get('wall'),session=event.get('session'),
+                                can_id=record['can_id'],raw=record['data'])
                 if state in ('protocol_marker','projection_voice_state','projection_hfp_tx','projection_voice_output',
                              'audio_capture_open','audio_meter_error','audio_voice_open','audio_voice_error',
                              'audio_capture_stop_requested','audio_capture_closing','audio_capture_bus_closed',
@@ -54,7 +68,8 @@ def summarize(paths):
                     mic['usb_errors']=max(mic['usb_errors'],event.get('mic_usb_errors',0))
     return dict(files=files,capture_dropped_events=dropped,events=dict(counts),iap_commands=dict(iap),honda_messages=dict(frames),
                 microphone=mic,timeline=timeline,vehicle_readings=vehicle_readings,
-                vehicle_ranges=vehicle_ranges,can_subscriptions=subscriptions,can_connections=can_connections,can_records=dict(can_records))
+                vehicle_ranges=vehicle_ranges,vehicle_signals=signal_readings,signal_ranges=signal_ranges,
+                can_subscriptions=subscriptions,can_connections=can_connections,can_records=dict(can_records),can_activity=can_activity)
 
 
 def main():

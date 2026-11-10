@@ -17,7 +17,6 @@ class HDMISettings:
         data=self.read()
         value=data.get('range','limited')
         self.value=NAMES.index(value) if value in NAMES else 2
-        self.picture_inset=data.get('picture_inset') is True
     def read(self):
         try:
             data=json.loads(self.path.read_text())
@@ -27,10 +26,6 @@ class HDMISettings:
         if type(value) is not int or value not in (0,1,2):raise ValueError('Choose Auto, Full or Limited')
         data=self.read();data['range']=NAMES[value]
         atomic_json(self.path,data);self.value=value
-    def save_picture_inset(self,enabled):
-        if type(enabled) is not bool:raise ValueError('Picture inset must be on or off')
-        data=self.read();data['picture_inset']=enabled
-        atomic_json(self.path,data);self.picture_inset=enabled
 
 
 def startup_range(path=None,environ=None):
@@ -101,6 +96,39 @@ def broadcast_rgb(kms,value=None):
         return actual
 
 
+class ObjectProperties(C.Structure):
+    _fields_=[('count_props',C.c_uint32),('props',C.POINTER(C.c_uint32)),
+              ('prop_values',C.POINTER(C.c_uint64))]
+
+
+def native_color_status(kms):
+    """Probe actual CRTC capabilities; HDMI connector settings are separate."""
+    if kms is None or kms.fd is None:return dict(available=False)
+    lib=kms.lib
+    lib.drmModeObjectGetProperties.argtypes=[C.c_int,C.c_uint32,C.c_uint32]
+    lib.drmModeObjectGetProperties.restype=C.POINTER(ObjectProperties)
+    lib.drmModeFreeObjectProperties.argtypes=[C.POINTER(ObjectProperties)]
+    lib.drmModeGetProperty.argtypes=[C.c_int,C.c_uint32]
+    lib.drmModeGetProperty.restype=C.POINTER(Property)
+    lib.drmModeFreeProperty.argtypes=[C.POINTER(Property)]
+    with getattr(kms,'io_lock',nullcontext()):
+        obj=lib.drmModeObjectGetProperties(kms.fd,kms.original.crtc_id,0xcccccccc)
+        if not obj:raise RuntimeError('Could not inspect native display color controls')
+        found={}
+        try:
+            for i in range(obj.contents.count_props):
+                prop=lib.drmModeGetProperty(kms.fd,obj.contents.props[i])
+                if not prop:continue
+                try:
+                    name=bytes(prop.contents.name).decode(errors='replace')
+                    found[name]=int(obj.contents.prop_values[i])
+                finally:lib.drmModeFreeProperty(prop)
+        finally:lib.drmModeFreeObjectProperties(obj)
+    return dict(available=True,ctm='CTM' in found,
+                gamma_lut_size=found.get('GAMMA_LUT_SIZE',0),
+                degamma_lut_size=found.get('DEGAMMA_LUT_SIZE',0))
+
+
 def output_status(kms):
     if kms is None:return dict(backend='fbdev',test_bits=16,range='Unavailable')
     with getattr(kms,'io_lock',nullcontext()):fields=properties(kms)
@@ -109,6 +137,8 @@ def output_status(kms):
                 range=RANGES[value] if value in (0,1,2) else 'Unavailable')
     for name in ('Colorspace','max bpc','link-status'):
         if name in fields:result[name]=fields[name][1]
+    try:result['native_color']=native_color_status(kms)
+    except (OSError,RuntimeError,AttributeError) as exc:result['native_color']=dict(available=False,error=str(exc))
     # Kernel state is diagnostic evidence, not a promise of what the radio displays.
     card=Path(os.readlink('/proc/self/fd/'+str(kms.fd))).name if Path('/proc/self/fd/'+str(kms.fd)).exists() else ''
     try:

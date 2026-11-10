@@ -6,6 +6,19 @@ import subprocess
 from .setup_state import SetupState, atomic_json
 
 
+def default_hostname(system=Path('/'), run=subprocess.run):
+    """Replace the base-image hostname, including after a RAM-overlay reboot."""
+    system = Path(system)
+    name = (system/'etc/hostname').read_text().strip()
+    if name != 'raspberrypi':
+        return
+    run(['hostnamectl','set-hostname','hlauncher'],check=True,timeout=10)
+    hosts = system/'etc/hosts'
+    text = hosts.read_text()
+    text = re.sub(r'(?m)^(127\.0\.1\.1\s+).*$', r'\1hlauncher', text)
+    hosts.write_text(text)
+
+
 def write_recovery_card(credentials, boot):
     """An SD-reader fallback when a radio gates HDMI until pairing succeeds."""
     boot = Path(boot)
@@ -25,6 +38,7 @@ def write_recovery_card(credentials, boot):
 
 def main():
     # Runs after HondaLink profile readiness, outside the connection critical path.
+    default_hostname()
     from .audio_settings import PipeWireService
     PipeWireService().set_enabled(False)
     state = SetupState()

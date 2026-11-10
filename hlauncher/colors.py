@@ -1,4 +1,4 @@
-"""Live CarPlay picture controls for SSH and the launcher settings page."""
+"""Live display picture controls for SSH and the launcher settings page."""
 
 import argparse
 import json
@@ -17,15 +17,15 @@ def interactive(settings):
         while True:
             settings.refresh()
             window.erase()
-            lines = ['CarPlay picture — live HDMI preview', '',
+            lines = ['Display picture — live HDMI preview', '',
                      'Up/Down: select   Left/Right: adjust   R: reset   Q: exit', '']
             for i, key in enumerate(names):
                 low, high = LIMITS[key]
                 value = settings.values[key]
                 filled = round((value-low)/(high-low)*24)
                 lines.append(f'{">" if i==selected else " "} {key:10} [{"="*filled}{" "*(24-filled)}] {value:+d}' if key=='brightness' else f'{">" if i==selected else " "} {key:10} [{"="*filled}{" "*(24-filled)}] {value}%')
-            lines += ['', 'Leave CarPlay visible on the radio while adjusting.',
-                      'Settings are saved automatically. Only CarPlay video changes.', error]
+            lines += ['', 'Leave the screen you want to tune visible on the radio.',
+                      'Settings are saved automatically and apply to all screens.', error]
             h,w = window.getmaxyx()
             for y,line in enumerate(lines[:max(0,h-1)]):
                 window.addnstr(y,0,line,max(0,w-1))
@@ -49,7 +49,7 @@ def interactive(settings):
 
 
 def main(argv):
-    parser=argparse.ArgumentParser(description='Live CarPlay picture adjustments')
+    parser=argparse.ArgumentParser(description='Live display picture adjustments')
     for key,(low,high) in LIMITS.items():
         parser.add_argument('--'+key,type=int,choices=range(low,high+1),metavar=f'{low}..{high}')
     parser.add_argument('--reset',action='store_true')

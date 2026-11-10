@@ -35,6 +35,27 @@ class HDMI(unittest.TestCase):
         kms=SimpleNamespace(fd=1,io_lock=threading.RLock())
         with patch('hlauncher.hdmi_calibration.properties',return_value={'Broadcast RGB':(9,2)}),patch('hlauncher.hdmi_calibration.commit_range'):
             with self.assertRaisesRegex(RuntimeError,'readback'):broadcast_rgb(kms,1)
+    def test_native_color_probe_reports_actual_crtc_capabilities_and_frees_objects(self):
+        from hlauncher.hdmi_calibration import native_color_status,ObjectProperties,Property
+        for names,values in ((('GAMMA_LUT_SIZE','CTM'),(256,0)), ((),())):
+            with self.subTest(names=names):
+                ids=(C.c_uint32*len(names))(*range(1,len(names)+1))
+                numbers=(C.c_uint64*len(values))(*values)
+                obj=ObjectProperties(len(names),ids,numbers)
+                props=[Property(name=name.encode()) for name in names]
+                lib=SimpleNamespace(
+                    drmModeObjectGetProperties=Mock(return_value=C.pointer(obj)),
+                    drmModeFreeObjectProperties=Mock(),
+                    drmModeGetProperty=Mock(side_effect=[C.pointer(p) for p in props]),
+                    drmModeFreeProperty=Mock())
+                kms=SimpleNamespace(fd=7,lib=lib,original=SimpleNamespace(crtc_id=42))
+                status=native_color_status(kms)
+                self.assertEqual(status,dict(available=True,ctm=bool(names),
+                    gamma_lut_size=256 if names else 0,degamma_lut_size=0))
+                lib.drmModeObjectGetProperties.assert_called_once_with(7,42,0xcccccccc)
+                self.assertEqual(lib.drmModeFreeProperty.call_count,len(names))
+                lib.drmModeFreeObjectProperties.assert_called_once()
+
     def test_saved_range_survives_a_new_settings_instance(self):
         with tempfile.TemporaryDirectory() as d:
             path=Path(d)/'hdmi.json';a=HDMISettings(path);self.assertEqual(a.value,2)

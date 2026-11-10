@@ -54,6 +54,12 @@ class BootstrapLauncher:
 
     def launch(self, app_id): return self.open().launch(app_id)
 
+    def vehicle_scope(self):
+        if self.ui is None:return 'off'
+        if self.ui.mode=='protocol_tests' and self.ui.protocol_page==1:return 'diagnostics'
+        if self.ui.mode=='plugin' and self.ui.host.active=='obd':return 'gauges'
+        return 'off'
+
     def session_changed(self, **values):
         self.session.update(values)
         if self.ui: self.ui.session_changed(**values)

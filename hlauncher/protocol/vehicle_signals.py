@@ -1,0 +1,123 @@
+"""Read-only vehicle API definitions recovered from the legacy HondaLink SDK.
+
+Names containing REQUEST/RESET denote observed CAN flags, never operations.
+Only the subscription builder in vehicle_can.py emits protocol requests.
+"""
+import json
+from pathlib import Path
+
+DATA = json.loads(Path(__file__).with_name('vehicle_signals.json').read_text())
+SIGNALS = tuple(DATA['signals'])
+BY_ID = {s['api_id']: s for s in SIGNALS}
+MESSAGES = {m['id']: m for m in DATA['messages']}
+SUBSCRIPTIONS = tuple(DATA['subscriptions'])
+SESSION_PREFIX = bytes.fromhex(DATA['session_prefix'])
+# Internal IDs are separate from the original 168-entry vehicle API.
+EXTRA_SIGNALS = []
+for ident,name,mid,signal,bits,shift,factor,offset,kind in (
+    (1001,'ENGINE_OIL_TEMPERATURE_RAW',0x320,'ENG_OIL_TEMP',8,32,1,0,'INT32'),
+    (1002,'INTAKE_AIR_TEMPERATURE',0x324,'ENG_INTAKE_AIR_TEMP',8,48,1,-40,'INT32'),
+    (1003,'VTEC_STATUS',0x320,'ENG_VTEC_STATUS',1,54,1,0,'BOOLEAN')):
+    m=MESSAGES[mid]
+    info=dict(api_id=ident,name=name,value_type=kind,source_type='SIGNAL',sources=[dict(
+        message_id=mid,message_id_hex=f'0x{mid:08X}',bus=m['canType'],message_name=m['name'],
+        length=m['size'],variable_length=m['sizeVariable'],signal=signal,bits=bits,
+        trailing_offset=shift,signed=False,factor=factor,offset=offset)])
+    EXTRA_SIGNALS.append(info);BY_ID[ident]=info
+BY_MESSAGE = {}
+for info in (*SIGNALS,*EXTRA_SIGNALS):
+    for source in info['sources']:
+        BY_MESSAGE.setdefault(source['message_id'], []).append((info, source))
+
+# Only annotate units established by the corresponding native field/layout.
+# Unannotated values retain their SDK conversion and display as native units.
+UNITS = {40:'°C', 42:'%', 44:'rpm', 77:'°C', 113:'°', 132:'cycles', 152:'km/h', 167:'%'}
+LABELS = {40:'Coolant temperature', 44:'Engine RPM', 152:'Vehicle speed',
+          167:'Accelerator pedal position'}
+ALIASES = {40:'coolant_temperature_c', 44:'engine_rpm'}
+
+
+def label(info):
+    return LABELS.get(info['api_id'], info['name'].replace('_', ' ').capitalize())
+
+
+def decode_value(info, source, raw):
+    if 'signal' in source:
+        # The SDK preserves leading bytes on variable-length signal packs.
+        raw = raw[:source['length']].ljust(source['length'], b'\0')
+        value = (int.from_bytes(raw, 'big') >> source['trailing_offset']) & ((1 << source['bits'])-1)
+        if source['signed'] and value & (1 << (source['bits']-1)):
+            value -= 1 << source['bits']
+        value = value * source['factor'] + source['offset']
+    else:
+        value = int.from_bytes(raw, 'big')
+    if info['value_type'] == 'BOOLEAN':
+        return bool(value)
+    if info['value_type'] == 'INT32':
+        value = int(value) & 0xffffffff
+        return value - (1 << 32) if value & 0x80000000 else value
+    return value
+
+
+def record_signals(mid, raw, api_ids=None):
+    return {str(info['api_id']): decode_value(info, source, raw)
+            for info, source in BY_MESSAGE.get(mid, ()) if (api_ids is None and info['api_id']<=168) or (api_ids is not None and info['api_id'] in api_ids)}
+
+
+GAUGE_API_IDS = (44,40,167,1002,12,1003)
+
+
+def gauge_subscriptions():
+    masks={}
+    for ident in GAUGE_API_IDS:
+        for source in BY_ID[ident]['sources']:
+            mid=source['message_id']
+            masks[mid]=masks.get(mid,0)|(((1<<source['bits'])-1)<<source['trailing_offset'])
+    return tuple(dict(message_id=mid,can_type={'B-CAN':0,'F-CAN':1,'OTHER':2}[MESSAGES[mid]['canType']],
+                      length=MESSAGES[mid]['size'],mask=mask.to_bytes(MESSAGES[mid]['size'],'big').hex())
+                 for mid,mask in sorted(masks.items()))
+
+
+class SignalCache:
+    """Cache normal-data records; keep source priority and the SDK's 30s rule."""
+    def __init__(self):
+        self.records = {}
+
+    def update(self, records, at, session):
+        for record in records:
+            mid = record['can_id']
+            if mid not in BY_MESSAGE:
+                continue
+            old = self.records.get(mid)
+            self.records[mid] = dict(at=at, session=session, data=record['data'],
+                api_ids=record.get('api_ids'),
+                samples=(old['samples'] if old else 0)+1,
+                changes=(old['changes'] if old else 0)+int(old is not None and old['data'] != record['data']),
+                interval_seconds=max(0, at-old['at']) if old else None)
+
+    def clear(self, session=None):
+        if session is None:self.records.clear()
+        else:self.records = {k:v for k,v in self.records.items() if v['session'] != session}
+
+    def snapshot(self, now, api_ids=None):
+        result = []
+        for info in (SIGNALS if api_ids is None else (*SIGNALS,*EXTRA_SIGNALS)):
+            if api_ids is not None and info['api_id'] not in api_ids:continue
+            selected = None
+            for source in info['sources']:
+                record = self.records.get(source['message_id'])
+                if record and info['api_id']>168 and record.get('api_ids') is None:continue
+                if record and record.get('api_ids') is not None and info['api_id'] not in record['api_ids']:continue
+                if record and (selected is None or record['at']-selected[0]['at'] > 30):
+                    selected = (record, source)
+            row = dict(api_id=info['api_id'], name=info['name'], label=label(info),
+                       value_type=info['value_type'], unit=UNITS.get(info['api_id'], ''),
+                       sources=info['sources'], received=False, value=None)
+            if selected:
+                record, source = selected
+                age = max(0, now-record['at'])
+                row.update(record, received=True, source=source,
+                           value=decode_value(info, source, bytes.fromhex(record['data'])),
+                           age_seconds=age, stale=age>5)
+            result.append(row)
+        return result

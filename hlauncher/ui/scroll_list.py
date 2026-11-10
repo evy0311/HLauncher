@@ -20,10 +20,10 @@ def move(ui,delta):
     ui.draw()
 
 
-def draw(ui,page,rows, *, top=128,bottom=448,key=None):
+def draw(ui,page,rows, *, top=128,bottom=448,key=None,height=56,step=64,size=32):
     rows=list(rows);key=key or ui.mode
     if not hasattr(ui,'list_offsets'):ui.list_offsets={}
-    height=56;step=64;content=max(0,len(rows)*step-8);maximum=max(0,content-(bottom-top))
+    content=max(0,len(rows)*step-(step-height));maximum=max(0,content-(bottom-top))
     offset=max(0,min(maximum,ui.list_offsets.get(key,0)));ui.list_offsets[key]=offset
     right=636 if maximum else 696
     base=page.image;layer=base.copy();page.image=layer;page.draw=ImageDraw.Draw(layer)
@@ -31,7 +31,7 @@ def draw(ui,page,rows, *, top=128,bottom=448,key=None):
     for i,row in enumerate(rows):
         y=round(top+i*step-offset)
         if y+height<=top or y>=bottom:continue
-        page.bar((24,y,right,y+height),row.title,row.action,value=row.value,toggle=row.toggle,size=32)
+        page.bar((24,y,right,y+height),row.title,row.action,value=row.value,toggle=row.toggle,size=size)
     visible=[]
     for (x,y,r,b),action in page.actions[first:]:
         box=(max(x,viewport[0]),max(y,viewport[1]),min(r,viewport[2]),min(b,viewport[3]))

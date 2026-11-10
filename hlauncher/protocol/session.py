@@ -2,6 +2,8 @@
 
 from .frames import frame as honda_frame, Frames as HondaFrames
 import subprocess
+import time
+from pathlib import Path
 from hlauncher.config import serial_number
 from .auth import AccessoryProof
 from .vehicle_can import VehicleSubscription, HONDALINK, GENERAL
@@ -13,13 +15,21 @@ def packet(payload):
     return b"\x55" + head + payload + bytes([(-sum(head + payload)) & 255])
 
 
-def pi_honda_identity():
-    # Receiver offsets:163DE4/163F98/1641B4/164314/164540/1646C0.
-    # IndividualInfo's semantics are unknown: use actual Pi serial as test data,
-    # not a claim of a valid certificate/license/signature.
+def pi_honda_device_info():
+    # SDK uses six Wi-Fi MAC bytes, and derives its CAN key from these exact
+    # bytes. Prefer the Pi's real interface address; serial is a stable fallback.
+    for interface in ('wlan0', 'eth0'):
+        try:
+            raw = bytes.fromhex(Path('/sys/class/net', interface, 'address').read_text().strip().replace(':',''))
+            if len(raw) == 6 and any(raw) and not raw[0] & 1:return raw
+        except (OSError, ValueError):pass
+    return serial_number()
+
+
+def pi_honda_identity(device_info=None):
     manufacturer = b"Raspberry Pi"
     model = b"Pi 4 Model B"
-    serial = serial_number()
+    serial = pi_honda_device_info() if device_info is None else device_info
     return (
         b"\0"
         + bytes([len(manufacturer)])
@@ -29,14 +39,15 @@ def pi_honda_identity():
         + (0x060C).to_bytes(2, "big")
         + bytes([len(serial)])
         + serial
-        + (0xFF).to_bytes(2, "big")
-        + (0x00010000).to_bytes(4, "big")
+        + (0).to_bytes(2, "big")  # native applicationVersion
+        + (0xFF).to_bytes(4, "big")  # native applicationId
     )
 
 
 class StartProbe:
-    def __init__(self, launch_app=None):
+    def __init__(self, launch_app=None, vehicle_scope=None):
         self.launch_app = launch_app
+        self.vehicle_scope = vehicle_scope or (lambda:'diagnostics')
         self.active_app = None
         self.buffer = bytearray()
         self.tokens = []
@@ -64,6 +75,7 @@ class StartProbe:
         self.vehicle_subscription = VehicleSubscription()
         self.vehicle_auth_sessions = {}
         self.vehicle_session = None
+        self.vehicle_identities = {}
 
     def feed(self, data):
         self.buffer.extend(data)
@@ -135,6 +147,7 @@ class StartProbe:
             elif len(p) == 4 and p[:2] == b"\0\x38":
                 self.vehicle_subscription.clear()
                 self.vehicle_auth_sessions.clear()
+                self.vehicle_identities.clear()
                 self.vehicle_session = None
                 self.simple_remote_state = 0
                 events.append(dict(state='iap_remote_reset'))
@@ -510,7 +523,7 @@ class StartProbe:
                             mid = inner["message"]
                             body = bytes.fromhex(inner["payload"])
                             if self.sessions[sid][1] in (GENERAL, HONDALINK):
-                                self.vehicle_subscription.observe(sid, mid, body, events)
+                                self.vehicle_subscription.observe(sid, mid, body, events, self.send_honda, replies)
                             # Stock Communication.exe: b9970 ->12bf44 ->1651c4.
                             # This reports the radio's mode; it is not a button or enable request.
                             if mid == 0xC1 and len(body) == 4 and body[:3] == b"\x00\x01\x64":
@@ -665,10 +678,11 @@ class StartProbe:
                                 and body == b"\0"
                                 and self.active_app is not None
                             ):
+                                identity = self.vehicle_identities.setdefault(sid, pi_honda_device_info())
                                 self.send_honda(
                                     sid,
                                     0xB2,
-                                    pi_honda_identity(),
+                                    pi_honda_identity(identity),
                                     events,
                                     replies,
                                     "honda_device_information_reply_sent",
@@ -681,8 +695,8 @@ class StartProbe:
                                         "model": "Pi 4 Model B",
                                         "os_version": 0x060C,
                                         "app_id": 0xFF,
-                                        "app_version": 0x00010000,
-                                        "individual_info": "actual Pi serial; semantics unverified",
+                                        "app_version": 0,
+                                        "individual_info": "actual Pi interface MAC or stable serial fallback",
                                     }
                                 )
                             if mid == 0xB1 and len(body) == 13 and body[0] == 1:
@@ -700,9 +714,18 @@ class StartProbe:
                                     }
                                 )
                                 if self.sessions[sid][1] in (GENERAL, HONDALINK):
-                                    authorized = body[1] == 1
+                                    authorized = bool(body[1])
                                     if authorized:
-                                        self.vehicle_auth_sessions[sid] = dict(result=body[1], flags=body[10])
+                                        capable = bool(body[10] & 8)
+                                        # Duplicate finish responses can clear the advertised
+                                        # capability; native SDK retains an already configured feed.
+                                        if sid not in self.vehicle_auth_sessions or capable:
+                                            self.vehicle_auth_sessions[sid] = dict(result=body[1], flags=body[10], can_capable=capable)
+                                        if capable:
+                                            try:
+                                                self.vehicle_subscription.authorize(sid, body[2:10], self.vehicle_identities.get(sid))
+                                            except ValueError as exc:
+                                                events.append(dict(state='honda_can_auth_invalid', session=sid, error=str(exc)))
                                     else:
                                         self.vehicle_auth_sessions.pop(sid, None)
                                         self.vehicle_subscription.clear(sid)
@@ -719,6 +742,7 @@ class StartProbe:
                                 self.app_restart_needed = True
                                 self.vehicle_subscription.clear()
                                 self.vehicle_auth_sessions.clear()
+                                self.vehicle_identities.clear()
                                 self.vehicle_session = None
                                 events.append(
                                     {
@@ -850,6 +874,7 @@ class StartProbe:
     def close_session(self, sid):
         self.vehicle_subscription.clear(sid)
         self.vehicle_auth_sessions.pop(sid, None)
+        self.vehicle_identities.pop(sid, None)
         if self.vehicle_session == sid:
             self.vehicle_session = None
         self.sessions.pop(sid,None)
@@ -862,21 +887,32 @@ class StartProbe:
     def request_vehicle_data(self, events, replies):
         if not self.authenticated or self.active_app is None:
             return
+        scope=self.vehicle_scope()
+        if scope not in ('off','gauges','diagnostics'):scope='off'
         # Firmware C80C4 checks the specific app connection, not a global flag.
         # One owner per app connection; a bootstrap channel cannot borrow auth.
         for sid, auth in self.vehicle_auth_sessions.items():
             name = self.sessions.get(sid, (None, None))[1]
             if name not in (GENERAL, HONDALINK) or self.honda_stage.get(sid) != 'session_start_notified':
                 continue
+            if not auth.get('can_capable') or sid not in self.vehicle_subscription.keys:
+                continue
             if self.vehicle_session is not None and self.vehicle_session != sid:
                 continue
-            if sid in self.vehicle_subscription.requests:
+            existing=self.vehicle_subscription.requests.get(sid)
+            if (existing and existing['scope']==scope) or (scope=='off' and existing is None):
                 continue
+            if existing and time.monotonic()-existing['at']<.35:continue
             self.vehicle_session = sid
             events.append(dict(state='honda_can_session_selected', session=sid,
                                protocol=name, authorization_session=sid, **auth))
-            self.vehicle_subscription.request(sid, self.send_honda, events, replies, protocol=name)
+            self.vehicle_subscription.request(sid, self.send_honda, events, replies, protocol=name,scope=scope)
             return
+
+    def sync_vehicle_scope(self):
+        events=[];replies=[]
+        self.request_vehicle_data(events,replies)
+        return events,replies
 
     def tick(self):
         return self.vehicle_subscription.tick()
@@ -948,6 +984,7 @@ class StartProbe:
         if self.app_restart_needed:
             self.vehicle_subscription.clear()
             self.vehicle_auth_sessions.clear()
+            self.vehicle_identities.clear()
             self.vehicle_session = None
             # A successful real launch is required before this method is entered.
             self.honda_stage.clear()

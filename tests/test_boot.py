@@ -17,6 +17,27 @@ reconnect=importlib.util.module_from_spec(spec);spec.loader.exec_module(reconnec
 
 
 class Boot(unittest.TestCase):
+    def test_default_hostname_survives_overlay_reinitialization_and_preserves_custom_name(self):
+        from hlauncher.firstboot import default_hostname
+        with tempfile.TemporaryDirectory() as folder:
+            root=Path(folder);(root/'etc').mkdir()
+            hostname=root/'etc/hostname';hosts=root/'etc/hosts'
+            hostname.write_text('raspberrypi\n')
+            hosts.write_text('127.0.0.1 localhost\n127.0.1.1 raspberrypi\n::1 localhost\n')
+            calls=[]
+            def run(args,**kwargs):
+                calls.append(args);hostname.write_text(args[-1]+'\n')
+            default_hostname(root,run)
+            self.assertEqual(hostname.read_text(),'hlauncher\n')
+            self.assertIn('127.0.1.1 hlauncher',hosts.read_text())
+            self.assertIn('127.0.0.1 localhost',hosts.read_text())
+            default_hostname(root,run)
+            self.assertEqual(len(calls),1)
+            hostname.write_text('my-car\n')
+            default_hostname(root,run)
+            self.assertEqual(hostname.read_text(),'my-car\n')
+            self.assertEqual(len(calls),1)
+
     def test_reconnect_attempts_immediately_when_profiles_arrive_and_bounds_retries(self):
         now=[0];p=reconnect.ReconnectPolicy(lambda:now[0]);device={'Paired':True}
         controller={'Powered':True,'UUIDs':[]}

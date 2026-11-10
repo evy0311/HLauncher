@@ -2,7 +2,8 @@
 
 import os, fcntl, struct
 from array import array
-from functools import lru_cache
+from PIL import ImageEnhance
+from sdk.hlauncher_sdk.picture import DEFAULTS, validate
 try:
     import numpy as np
 except ImportError:
@@ -16,7 +17,7 @@ class Framebuffer:
         self.fd = None
         self.tty_fd = None
         self.tty_mode = None
-        self.picture_inset = False
+        self.picture = dict(DEFAULTS)
 
     def open(self):
         if self.fd is not None:
@@ -44,9 +45,6 @@ class Framebuffer:
                 os.close(tty)
                 raise
             self.fd = fd
-            from .hdmi_calibration import HDMISettings
-            self.picture_inset=HDMISettings().picture_inset
-            self.event(state='display_picture',inset=self.picture_inset)
             if os.environ.get("HLAUNCHER_DISPLAY", "drm") != "fbdev":
                 try:
                     from .drm import KMSDisplay
@@ -74,7 +72,6 @@ class Framebuffer:
         self.open()
         if len(raw) != self.w * self.h * 2:
             raise ValueError("frame size mismatch")
-        if apply_picture and self.picture_inset:raw=inset_rgb565(raw)
         if self.kms is not None:
             try:
                 self.kms.present(raw)
@@ -94,26 +91,31 @@ class Framebuffer:
                 ) != len(row):
                     raise OSError("short framebuffer row write")
 
+    def set_picture(self, values):
+        self.picture = validate(values)
+
     def image(self, im):
-        self.blit(encode(im))
+        # Pillow's native operations run on UI redraw only. Plugin/video bytes
+        # bypass this path; projection adjusts inside its existing swscale pass.
+        self.blit(encode(adjust_image(im if im.mode=='RGB' else im.convert('RGB'), self.picture)))
 
     def image_exact(self,im, *, apply_picture=True):
         """Keep all 8 bits per channel on the HDMI calibration screen only."""
         self.open()
+        rgb=im.convert('RGB')
+        if apply_picture:rgb=adjust_image(rgb, self.picture)
         if self.kms is None:
-            self.blit(encode(im),apply_picture=apply_picture);return False
+            self.blit(encode(rgb));return False
         try:
-            rgb=im.convert('RGB')
-            if apply_picture and self.picture_inset:rgb=rgb.point(INSET_CHANNEL*3)
             self.kms.present(rgb.tobytes('raw','BGRX'))
             return True
         except RuntimeError as exc:
             self.event(state='display_fallback',reason=str(exc))
             self.kms.close();self.kms=None
-            self.blit(encode(im),apply_picture=apply_picture);return False
+            self.blit(encode(rgb));return False
 
     def image_test(self,im, *, exact=True):
-        """Calibration owns its stimulus; do not apply the global inset twice."""
+        """Calibration owns its stimulus; bypass display picture adjustments."""
         if exact:return self.image_exact(im,apply_picture=False)
         self.blit(encode(im),apply_picture=False);return False
 
@@ -135,28 +137,14 @@ class Framebuffer:
             self.fd = None
 
 
-INSET_CHANNEL=tuple(16+(v*219+127)//255 for v in range(256))
-
-
-@lru_cache(maxsize=1)
-def inset_table():
-    """One final-output lookup for every RGB565 value; no video decoder changes."""
-    five=[(16+(v*219+15)//31)>>3 for v in range(32)]
-    six=[(16+(v*219+31)//63)>>2 for v in range(64)]
-    return array('H',((five[v>>11]<<11)|(six[(v>>5)&63]<<5)|five[v&31] for v in range(65536)))
-
-
-def inset_rgb565(raw):
-    table=inset_table()
-    if np is not None:
-        source=np.frombuffer(raw,dtype='<u2')
-        return np.frombuffer(table,dtype=np.uint16)[source].astype('<u2',copy=False).tobytes()
-    import sys
-    source=array('H');source.frombytes(raw)
-    if sys.byteorder!='little':source.byteswap()
-    result=array('H',(table[v] for v in source))
-    if sys.byteorder!='little':result.byteswap()
-    return result.tobytes()
+def adjust_image(image, values):
+    if values == DEFAULTS:
+        return image
+    image = ImageEnhance.Color(image).enhance(values['saturation'] / 100)
+    contrast = values['contrast'] / 100
+    brightness = values['brightness'] * 255 / 100
+    channel = [max(0, min(255, round((v - 128) * contrast + 128 + brightness))) for v in range(256)]
+    return image.point(channel * 3)
 
 
 def encode(im):

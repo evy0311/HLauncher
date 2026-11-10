@@ -7,12 +7,14 @@ from logging.handlers import RotatingFileHandler
 import os
 from pathlib import Path
 import queue
+import select
 import struct
 import subprocess
 import threading
 import time
 from hlauncher_sdk import Client
 from hlauncher_sdk.video.h264 import H264StreamDecoder
+from hlauncher_sdk.picture import PictureSettings
 from input import TouchRouter
 
 ENGINE = Path(os.environ.get('HLAUNCHER_OPENAUTO_ENGINE','/opt/hlauncher-deps/bin/hlauncher-android-auto'))
@@ -56,7 +58,21 @@ class Engine:
             threading.Thread(target=self.capture_logs,daemon=True).start()
             threading.Thread(target=self.send_inputs,daemon=True).start()
             decoder=H264StreamDecoder(self.client.width,self.client.height)
+            picture=PictureSettings();decoder.decoder.picture=dict(picture.values)
+            picture_check=0;last_visible=False
             while not self.done.is_set():
+                visible=self.visible.is_set()
+                changed=False
+                if time.monotonic()-picture_check>.1:
+                    picture_check=time.monotonic()
+                    changed=picture.refresh()
+                    if changed:decoder.decoder.picture=dict(picture.values)
+                if visible and (changed or not last_visible):
+                    preview=decoder.decoder.redraw()
+                    if preview is not None:
+                        with self.lock:self.frame=preview;self.sequence+=1
+                last_visible=visible
+                if not select.select([self.proc.stdout],[],[],.05)[0]:continue
                 kind,data=read_packet(self.proc.stdout)
                 if kind==1:
                     self.video_packets+=1

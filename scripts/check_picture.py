@@ -9,7 +9,7 @@ import sys
 ROOT=Path(__file__).resolve().parents[1]
 sys.path.insert(0,str(ROOT/'plugins/carplay/runtime/video'))
 import h264
-from avdecode import AvDecoder,_FrameHead
+from hlauncher_sdk.video.avdecode import AvDecoder,_FrameHead
 
 
 def run():

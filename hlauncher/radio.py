@@ -111,7 +111,7 @@ def main():
             self.sockets[str(device)] = s
             if self.uuid.endswith("cafe"):
                 launcher.session_changed(connected=True, authenticated=False)
-            self.parsers[str(device)] = StartProbe(launch_app=launch_app)
+            self.parsers[str(device)] = StartProbe(launch_app=launch_app,vehicle_scope=launcher.vehicle_scope)
             self.watches[str(device)] = GLib.io_add_watch(
                 s.fileno(),
                 GLib.IO_IN | GLib.IO_HUP | GLib.IO_ERR,
@@ -164,16 +164,7 @@ def main():
                                         error=str(exc),
                                         payload=e["payload"],
                                     )
-                        for reply in replies:
-                            event(state='protocol_tx',uuid=self.uuid,hex=reply.hex())
-                            self.tx.setdefault(device, bytearray()).extend(reply)
-                        if self.tx.get(device) and device not in self.txw:
-                            self.txw[device] = GLib.io_add_watch(
-                                fd,
-                                GLib.IO_OUT | GLib.IO_HUP | GLib.IO_ERR,
-                                self.write,
-                                device,
-                            )
+                        self.queue_replies(device,replies)
                     return True
             except BlockingIOError:
                 return True
@@ -189,6 +180,14 @@ def main():
             self.watches.pop(device, None)
             event(state="closed", uuid=self.uuid)
             return False
+
+        def queue_replies(self,device,replies):
+            for reply in replies:
+                event(state='protocol_tx',uuid=self.uuid,hex=reply.hex())
+                self.tx.setdefault(device,bytearray()).extend(reply)
+            if self.tx.get(device) and device not in self.txw and device in self.sockets:
+                self.txw[device]=GLib.io_add_watch(self.sockets[device].fileno(),
+                    GLib.IO_OUT|GLib.IO_HUP|GLib.IO_ERR,self.write,device)
 
         def write(self, fd, cond, device):
             try:
@@ -230,6 +229,16 @@ def main():
         try:
             event.refresh()
             launcher.tick()
+            import time
+            now=time.monotonic()
+            if now-getattr(launcher,'scope_checked',0)>=.1:
+                launcher.scope_checked=now
+                for _,profile in profiles:
+                    if not profile.uuid.endswith('cafe'):continue
+                    for device,parser in list(profile.parsers.items()):
+                        changes,replies=parser.sync_vehicle_scope()
+                        for item in changes:event(uuid=profile.uuid,**item)
+                        profile.queue_replies(device,replies)
         except Exception as exc:
             event(state="touch_overlay_error", error=str(exc))
         return True

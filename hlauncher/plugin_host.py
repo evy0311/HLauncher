@@ -396,6 +396,13 @@ class PluginHost:
                 if not worker.send(type="touch", **touch):
                     self.failed(worker.manifest.id, "Input queue full")
 
+    def vehicle_gauges(self, snapshot):
+        # Only the bundled gauge worker receives this narrow read-only view.
+        worker=self.workers.get('obd')
+        if self.active=='obd' and worker is not None and worker.manifest.bundled:
+            return worker.send(type='vehicle.gauges',snapshot=snapshot)
+        return False
+
     def button(self, message):
         # Routing is independent of projection command encodings. Plugins opt in.
         name, action = message.get('button'), message.get('action')

@@ -1,155 +1,178 @@
-"""HondaLink receive subscriptions, never CAN transmit commands.
-
-Wire layout: stock Communication.exe 169388/16929c (settings), 164d9c
-(records). Signal layouts: opendbc _honda_common.dbc; validate against the
-actual car before using these observations outside diagnostics.
-"""
+"""Read-only HondaLink subscriptions: no CAN writes, resets or actuator commands."""
+import base64
+import hashlib
 import time
+from .vehicle_signals import SUBSCRIPTIONS, SESSION_PREFIX, MESSAGES, record_signals, ALIASES, GAUGE_API_IDS, gauge_subscriptions
+from .aes import decrypt as decrypt_body
 
 HONDALINK = 'jp.co.honda.rd.dispaudio.app.hondalink'
 GENERAL = 'jp.co.honda.rd.dispaudio.app.generals'
-# Explicit masks expose only the requested fields. Temperature layout follows
-# rusEFI can_dash_honda.cpp (Honda K dashboard) and the 2015 Civic Si report.
-# Newer opendbc calls 0x324 CRUISE: these are generation-specific mappings.
-SUBSCRIPTIONS = ((0x17c, bytes.fromhex('0000ffff00000000')),
-                 (0x324, bytes.fromhex('ffff000000000000')))
+
+
+def subscription_payloads(scope='diagnostics'):
+    if scope=='off':return (bytes.fromhex('0200000a0100'),)
+    rows=gauge_subscriptions() if scope=='gauges' else SUBSCRIPTIONS
+    # Original ALL group, features=9. Tenths of seconds; 0 means cyclic.
+    normal = bytearray((0, len(rows)))
+    for row in rows:
+        normal.extend(row['message_id'].to_bytes(4, 'big'))
+        normal.extend((row['can_type'], row['length']))
+        normal.extend(bytes.fromhex(row['mask']))
+    if scope=='gauges':return (bytes.fromhex('020000010101')+normal,)
+    header = bytes.fromhex('0200000a0104')
+    # Three diagnostic receive presets, never clear-DTC or maintenance resets.
+    return (header+normal, header+bytes.fromhex('010000000002000000000300000000'))
 
 
 def subscription_payload():
-    # Settings, cyclic, cycle=500, category=1, one settings fragment.
-    # Each group starts with CAN type=2 (stock preset class=1) and record
-    # count. Count zero selects a preset group; nonzero selects explicit IDs.
-    data = bytearray.fromhex('020101f40101')
-    data.extend((2, len(SUBSCRIPTIONS)))
-    for can_id, mask in SUBSCRIPTIONS:
-        data.extend(can_id.to_bytes(4, 'big'))
-        data.extend((8, len(mask)))
-        data.extend(mask)
-    return bytes(data)
+    """First payload; live callers must send both subscription_payloads()."""
+    return subscription_payloads()[0]
 
 
-def decode_records(payload):
-    """Return validated plaintext stock-class-1 records; no partial readings."""
-    if len(payload) < 17 or payload[:2] != b'\x00\x02':
+def session_key(seed_ascii, device_info):
+    try:
+        seed = base64.b64decode(seed_ascii, validate=True)
+    except (ValueError, TypeError) as exc:
+        raise ValueError('Invalid HondaLink authentication seed') from exc
+    if len(seed_ascii) != 8 or not seed or not device_info:
+        raise ValueError('Missing HondaLink session identity/seed')
+    # Fixed application protocol prefix, not an Apple account credential.
+    return hashlib.md5(SESSION_PREFIX+seed+device_info).digest()
+
+
+def decode_records(payload, key=None, api_ids=None):
+    """Validate complete collection before exposing data. key=None is offline only."""
+    if len(payload) < 15 or payload[:2] != b'\x00\x02':
         raise ValueError('Invalid CAN data header')
-    if payload[11] != 1:
-        raise ValueError('Unsupported CAN bus type')
-    # Size includes the count word and the records, not the preceding header.
+    data_type = payload[11]
+    if data_type not in (0, 1, 2, 3):
+        raise ValueError('Unsupported CAN data category')
     size = int.from_bytes(payload[12:15], 'big')
-    count = int.from_bytes(payload[15:17], 'big')
-    if size != len(payload)-15 or count > 128:
-        raise ValueError('Invalid CAN data size/count')
+    if size != len(payload)-15:
+        raise ValueError('Invalid CAN body size')
+    body = decrypt_body(payload[15:], key) if key is not None else payload[15:]
+    if len(body) < 2:raise ValueError('Missing CAN record count')
+    count = int.from_bytes(body[:2], 'big')
+    if count > (len(body)-2)//5:raise ValueError('Invalid CAN record count')
     records = []
-    offset = 17
+    offset = 2
     for _ in range(count):
-        if offset+5 > len(payload):
-            raise ValueError('Truncated CAN record')
-        can_id = int.from_bytes(payload[offset:offset+4], 'big')
-        dlc = payload[offset+4]
+        if offset+5 > len(body):raise ValueError('Truncated CAN record header')
+        mid = int.from_bytes(body[offset:offset+4], 'big')
+        length = body[offset+4]
         offset += 5
-        if can_id > 0x7ff or dlc > 8 or offset+dlc > len(payload):
-            raise ValueError('Invalid CAN ID/DLC')
-        raw = payload[offset:offset+dlc]
-        offset += dlc
-        fields = {}
-        if dlc == 8:
-            if can_id == 0x17c:
-                fields['engine_rpm'] = int.from_bytes(raw[2:4], 'big')
-            elif can_id == 0x324:
-                fields['coolant_temperature_c'] = raw[0] - 40
-                fields['intake_temperature_c'] = raw[1] - 40
-        records.append(dict(can_id=can_id, dlc=dlc, data=raw.hex(), fields=fields))
-    if offset != len(payload):
-        raise ValueError('Trailing CAN record data')
+        if offset+length > len(body):raise ValueError('Truncated CAN record data')
+        raw = body[offset:offset+length]
+        offset += length
+        layout = MESSAGES.get(mid)
+        values = record_signals(mid, raw, api_ids) if data_type == 0 else {}
+        fields = {alias: values[str(api_id)] for api_id, alias in ALIASES.items() if str(api_id) in values}
+        records.append(dict(can_id=mid, can_class=({'B-CAN':0, 'F-CAN':1, 'OTHER':2}[layout['canType']] if layout else None),
+            data_type=data_type, name=layout['name'] if layout else 'Unknown message',
+            dlc=length, data=raw.hex(), fields=fields, signals=values,
+            api_ids=list(api_ids) if api_ids is not None else None))
+    if offset != len(body):raise ValueError('Trailing CAN record data')
     return records
 
 
 class VehicleSubscription:
-    """One bounded request per Honda application connection, no retry flood."""
+    """One bounded subscription per authenticated application connection."""
     def __init__(self):
         self.requests = {}
+        self.keys = {}
 
     def clear(self, session=None):
-        if session is None:
-            self.requests.clear()
-        else:
-            self.requests.pop(session, None)
+        if session is None:self.requests.clear();self.keys.clear()
+        else:self.requests.pop(session, None);self.keys.pop(session, None)
 
-    def request(self, sid, send, events, replies, now=None, protocol=None):
-        if sid in self.requests:
-            return
-        self.requests[sid] = dict(at=time.monotonic() if now is None else now,
-                                  status='pending', protocol=protocol, transport_status='pending')
-        send(sid, 0xc2, subscription_payload(), events, replies,
-             'honda_can_subscription_queued')
-        events[-1].update(can_ids=[x[0] for x in SUBSCRIPTIONS], cycle=500,
-                          receive_only=True, status='pending', protocol=protocol,
-                          authorization_session=sid, transport_status='pending')
-        self.requests[sid]['transaction'] = events[-1]['transaction']
+    def authorize(self, sid, seed, device_info):
+        # Native SDK ignores duplicate finish seeds once configured.
+        if sid not in self.keys:self.keys[sid] = session_key(seed, device_info)
+
+    def request(self, sid, send, events, replies, now=None, protocol=None, scope='diagnostics'):
+        at=time.monotonic() if now is None else now
+        previous=self.requests.get(sid)
+        if sid not in self.keys or (previous and (previous['scope']==scope or at-previous['at']<.35)):return
+        if scope=='off' and previous is None:return
+        rows=gauge_subscriptions() if scope=='gauges' else SUBSCRIPTIONS if scope=='diagnostics' else ()
+        api_ids=GAUGE_API_IDS if scope=='gauges' else None if scope=='diagnostics' else ()
+        payloads=subscription_payloads(scope)
+        request = self.requests[sid] = dict(at=at,scope=scope,api_ids=api_ids,
+            previous_api_ids=previous['api_ids'] if previous else None,can_ids={r['message_id'] for r in rows},
+            status='pending', protocol=protocol, transport_status='pending', transactions=[], acks={})
+        for index, payload in enumerate(payloads):
+            send(sid, 0xc2, payload, events, replies, 'honda_can_subscription_queued')
+            events[-1].update(can_ids=[r['message_id'] for r in rows], cycle=1 if scope=='gauges' else 10,
+                interval_seconds=.1 if scope=='gauges' else 1,scope=scope,api_ids=api_ids,
+                can_classes=sorted({r['can_type'] for r in rows}),api_count=len(GAUGE_API_IDS) if scope=='gauges' else 168 if scope=='diagnostics' else 0,
+                settings_count=4 if scope=='diagnostics' else 1 if scope=='gauges' else 0,
+                part=index+1, parts=len(payloads), receive_only=True, status='pending', protocol=protocol,
+                authorization_session=sid, transport_status='pending')
+            request['transactions'].append(events[-1]['transaction'])
+        request['transaction'] = request['transactions'][0]
 
     def transport_ack(self, transaction, status, command):
-        if command != 0x43:
-            return []
+        if command != 0x43:return []
         for sid, request in self.requests.items():
-            if request.get('transaction') != transaction or request.get('transport_ack'):
-                continue
-            request['transport_ack'] = True
-            request['transport_status'] = 'acknowledged' if status == 0 else 'rejected'
+            if transaction not in request['transactions'] or transaction in request['acks']:continue
+            request['acks'][transaction] = status
+            request['transport_status'] = ('rejected' if any(request['acks'].values()) else
+                'acknowledged' if len(request['acks']) == len(request['transactions']) else 'partial')
             return [dict(state='honda_can_subscription_transport_ack', session=sid,
-                         protocol=request['protocol'], transaction=transaction,
-                         transport_status=request['transport_status'], transport_code=status,
-                         status=request['status'], settings_accepted=request['status']=='accepted')]
+                protocol=request['protocol'], transaction=transaction,
+                transport_status=request['transport_status'], transport_code=status,
+                status=request['status'], settings_accepted=request['status']=='accepted')]
         return []
 
-    def observe(self, sid, message, payload, events):
+    def observe(self, sid, message, payload, events, send=None, replies=None):
+        if message != 0xc1:return
         request = self.requests.get(sid)
-        if message != 0xc1:
-            return
-        candidate = payload[:1] in (b'\x01', b'\x02') or payload[:2] == b'\x00\x02'
+        candidate = payload[:1] == b'\x02' or payload[:2] == b'\x00\x02'
         if request is None:
-            if candidate:
-                events.append(dict(state='honda_can_unrequested', session=sid,
-                                   bytes=len(payload), preview=payload[:64].hex()))
+            if candidate:events.append(dict(state='honda_can_unrequested', session=sid,
+                bytes=len(payload), preview=payload[:64].hex()))
             return
         if len(payload) == 3 and payload[0] == 2:
-            # 16589c: subtype, send type (0/1), result + 0x40 (+0x80 flag).
-            code = (payload[2]-0x40) & 0x7f
-            valid = payload[1] in (0, 1) and bool(payload[2] & 0x40)
-            request['status'] = 'accepted' if valid and code == 0 else 'rejected' if valid else 'unrecognized'
+            request['status'] = 'accepted' if payload[1] == 0 else 'rejected'
             events.append(dict(state='honda_can_subscription_response', session=sid,
-                               status=request['status'], result_code=code,
-                               response_flag=bool(payload[2]&0x80), payload=payload.hex()))
+                status=request['status'],scope=request['scope'], result_code=payload[1], settings_info=payload[2], payload=payload.hex()))
         elif payload[:2] == b'\x00\x02':
+            if request['scope']=='off':return
             try:
-                records = decode_records(payload)
+                # Never fall back to guessed plaintext on a live session.
+                allowed=request['api_ids']
+                if request['scope']=='diagnostics' and request['status']=='pending':allowed=request['previous_api_ids']
+                records = decode_records(payload, self.keys[sid], allowed)
+                if request['scope']=='gauges':
+                    records=[r for r in records if r['data_type']==0 and r['can_id'] in request['can_ids']]
             except ValueError as exc:
                 events.append(dict(state='honda_can_data_invalid', session=sid,
-                                   error=str(exc), payload=payload.hex()))
+                    error=str(exc), bytes=len(payload), preview=payload[:64].hex()))
                 return
             request['received'] = True
+            if payload[11] == 0:request['normal_received'] = True
             events.append(dict(state='honda_can_data', session=sid, sequence=payload[2],
-                               header=payload[3:11].hex(), records=records,
-                               protocol=request['protocol'],
-                               settings_status=request['status'],
-                               transport_status=request['transport_status']))
-        elif payload[:1] == b'\x01':
-            events.append(dict(state='honda_can_data_encrypted', session=sid,
-                               bytes=len(payload)))
+                data_type=payload[11], vehicle_date=int.from_bytes(payload[3:7],'big'),
+                vehicle_time=int.from_bytes(payload[7:11],'big'), header=payload[3:11].hex(),
+                records=records, protocol=request['protocol'], settings_status=request['status'],
+                transport_status=request['transport_status']))
+            # Normal cyclic frames need no application ACK; completed diagnostics do.
+            if payload[11] != 0 and send is not None and request['scope']=='diagnostics':
+                send(sid, 0xc2, bytes((1,payload[2],1)), events, replies, 'honda_can_receipt_sent')
 
     def tick(self, now=None):
         now = time.monotonic() if now is None else now
         events = []
         for sid, request in self.requests.items():
-            if now-request['at'] >= 10 and not request.get('timeout_reported') and not request.get('received'):
+            if request['scope']=='off':continue
+            if now-request['at'] >= 10 and not request.get('timeout_reported') and not request.get('normal_received'):
                 request['timeout_reported'] = True
                 phase = ('accepted_no_data' if request['status']=='accepted' else
-                         'settings_rejected' if request['status']=='rejected' else
-                         'transport_rejected' if request['transport_status']=='rejected' else
-                         'no_settings_response' if request['transport_status']=='acknowledged' else
-                         'no_transport_ack')
+                    'settings_rejected' if request['status']=='rejected' else
+                    'transport_rejected' if request['transport_status']=='rejected' else
+                    'no_settings_response' if request['transport_status']=='acknowledged' else 'no_transport_ack')
                 events.append(dict(state='honda_can_subscription_timeout', session=sid,
-                                   status=request['status'], seconds=10,
-                                   reason='No CAN data received', retry=False, phase=phase,
-                                   protocol=request['protocol'], transaction=request['transaction'],
-                                   transport_status=request['transport_status']))
+                    status=request['status'], seconds=10, reason='No normal CAN data received',
+                    retry=False, phase=phase, protocol=request['protocol'],
+                    transaction=request['transaction'], transport_status=request['transport_status']))
         return events

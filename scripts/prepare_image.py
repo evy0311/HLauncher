@@ -28,6 +28,11 @@ def prepare(root, persist, state_uuid, country):
             else:item.unlink()
     for key in (root/'etc/ssh').glob('ssh_host_*'):key.unlink()
     (root/'etc/machine-id').write_text('')
+    (root/'etc/hostname').write_text('hlauncher\n')
+    hosts=root/'etc/hosts'
+    text=hosts.read_text()
+    text=re.sub(r'(?m)^(127\.0\.1\.1\s+).*$', r'\1hlauncher', text)
+    hosts.write_text(text)
     dbus_id=root/'var/lib/dbus/machine-id'
     if dbus_id.exists() or dbus_id.is_symlink():dbus_id.unlink()
     dbus_id.parent.mkdir(parents=True,exist_ok=True)

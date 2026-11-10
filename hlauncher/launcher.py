@@ -36,8 +36,9 @@ class Launcher:
         self.audio_settings = AudioSettings(self.prefs.path.with_name('audio.json'))
         self.audio_notice = ''
         self.audio_checked = 0
-        self.picture = PictureSettings(self.prefs.path.with_name('carplay-color.json'))
+        self.picture = PictureSettings(self.prefs.path.with_name('picture.json'))
         self.picture_values = dict(self.picture.values)
+        self.apply_picture()
         self.picture_drag = None
         self.picture_dirty = False
         self.picture_saved = self.picture_checked = 0
@@ -60,6 +61,8 @@ class Launcher:
         from .protocol_diagnostics import ProtocolDiagnostics
         self.protocols = protocol_diagnostics or ProtocolDiagnostics(self.prefs.path.parent/'protocol-captures')
         self.protocol_page = 0
+        self.vehicle_data_tab = 0
+        self.vehicle_signal_id = 44
         self.protocol_marker_index = 0
         self.protocol_redraw = 0
         from .voice_audio import VoiceAudio
@@ -379,7 +382,6 @@ class Launcher:
     def obd_settings(self):
         self.obd_return=self.plugin_detail if self.mode=='plugin_detail' else self.settings if self.mode=='settings' else self.home
         self.host.deactivate()
-        self.obd.start()
         self.mode = 'obd_settings'
         self.press = None
         self.obd_page = 0
@@ -434,6 +436,15 @@ class Launcher:
 
     def protocol_tab(self, page):
         self.protocol_page = page
+        self.draw()
+
+    def vehicle_tab(self, tab):
+        self.vehicle_data_tab = tab
+        self.draw()
+
+    def vehicle_select(self, api_id):
+        self.vehicle_signal_id = max(1,min(168,api_id))
+        self.vehicle_data_tab = 1
         self.draw()
 
     def toggle_protocol_capture(self):
@@ -555,12 +566,11 @@ class Launcher:
         self.draw()
 
     def color_settings(self):
-        if self.mode!='hdmi_test':
-            self.picture_return=self.plugin_detail if self.mode=='plugin_detail' else self.plugin_settings
         self.restore_hdmi_range()
         self.host.deactivate()
         self.picture.refresh()
         self.picture_values = dict(self.picture.values)
+        self.apply_picture()
         self.mode = 'colors'
         self.press = self.picture_drag = None
         self.banner = ''
@@ -639,6 +649,10 @@ class Launcher:
             self.banner='HDMI range saved';self.draw()
         except (OSError,RuntimeError,ValueError) as exc:self.banner=str(exc);self.draw()
 
+    def apply_picture(self):
+        if hasattr(self.fb, 'set_picture'):
+            self.fb.set_picture(self.picture_values)
+
     def save_picture(self):
         if not self.picture_dirty:
             return
@@ -646,7 +660,7 @@ class Launcher:
             self.picture.save(self.picture_values)
             self.picture_dirty = False
             self.picture_saved = time.monotonic()
-            self.event(state='carplay_picture_saved', **self.picture_values)
+            self.event(state='display_picture_saved', **self.picture_values)
         except OSError as exc:
             self.banner = 'Could not save picture settings'
             self.event(state='settings_save_failed', error=str(exc))
@@ -654,6 +668,7 @@ class Launcher:
 
     def reset_picture(self):
         self.picture_values = dict(DEFAULTS)
+        self.apply_picture()
         self.picture_dirty = True
         self.save_picture()
         self.draw()
@@ -672,6 +687,7 @@ class Launcher:
                 value = round(low + max(0,min(1,(point[0]-box[0])/(box[2]-box[0]))) * (high-low))
                 if value != self.picture_values[key]:
                     self.picture_values[key] = value
+                    self.apply_picture()
                     self.picture_dirty = True
                     self.draw()
             if action in ('up', 'unused'):
@@ -681,7 +697,9 @@ class Launcher:
         return False
 
     def open_plugin(self, plugin_id):
-        if plugin_id == 'obd':self.obd.start()
+        if plugin_id == 'obd':
+            self.obd.close()
+            self.obd.enabled=False
         if plugin_id not in self.manifests or not self.prefs.enabled(
             self.manifests[plugin_id]
         ):
@@ -881,6 +899,9 @@ class Launcher:
             if self.audio_settings.refresh():self.draw()
         self.tone_test.tick()
         self.host.tick()
+        if self.host.active=='obd' and time.monotonic()-getattr(self,'vehicle_gauge_sent',0)>=1/30:
+            self.vehicle_gauge_sent=time.monotonic()
+            self.host.vehicle_gauges(self.protocols.gauge_snapshot())
         if time.monotonic()-getattr(self,'projection_checked',0)>1:
             self.projection_checked=time.monotonic()
             manifest=self.manifests.get('carplay')
@@ -902,14 +923,14 @@ class Launcher:
         if self.mode == 'protocol_tests' and now-self.protocol_redraw>.25:
             self.protocol_redraw=now
             self.draw()
-        if self.mode == 'colors':
-            if self.picture_dirty and now-self.picture_saved > .1:
-                self.save_picture()
-            elif not self.picture_dirty and self.picture_drag is None and now-self.picture_checked > .2:
-                self.picture_checked = now
-                if self.picture.refresh():
-                    self.picture_values = dict(self.picture.values)
-                    self.draw()
+        if self.picture_dirty and now-self.picture_saved > .1:
+            self.save_picture()
+        elif not self.picture_dirty and self.picture_drag is None and now-self.picture_checked > .2:
+            self.picture_checked = now
+            if self.picture.refresh():
+                self.picture_values = dict(self.picture.values)
+                self.apply_picture()
+                if self.mode != 'plugin':self.draw()
         if self.pending_default and self.prefs.data['setup_complete']:
             self.pending_default = False
             plugin_id = self.prefs.data["default_plugin"]

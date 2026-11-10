@@ -174,13 +174,26 @@ Playback failures retry after five seconds and do not stop video or HondaLink.
 HLauncher sets HDMI Broadcast RGB to **Limited (16–235)** whenever its DRM display
 opens. On the tested Civic receiver, Automatic/Full lost distinctions between
 pale map colors; Limited restored them with neutral CarPlay picture controls.
-This is an HDMI output setting, separate from the decoder and CarPlay sliders.
+This is an HDMI output setting, separate from the display picture sliders.
 Failures are logged and do not prevent the launcher from opening.
 
-Settings → Plugins → CarPlay → CarPlay picture → HDMI test compares Auto, Full and Limited.
+Settings → Appearance → Picture → HDMI test compares Auto, Full and Limited.
 Leaving the test restores the range that was active when it opened, normally
 Limited. For other displays, `HLAUNCHER_HDMI_RGB=auto` or `full` overrides the
 default through the service environment. No radio firmware change is involved.
+
+The HDMI diagnostics also report native CRTC gamma/degamma table sizes and CTM
+availability. These depend on the running driver; Raspberry Pi's 6.12 VC4 driver
+only enables these properties on VC4 generation 4, not the Pi 4's generation 5.
+Connector `Colorspace` and `max bpc`, when present, control HDMI signaling and
+precision rather than picture saturation or brightness. They are reported for
+diagnostics; HLauncher does not change them automatically.
+
+Picture sliders live at **Settings → Appearance → Picture**. Projection video
+uses controls in its existing native FFmpeg conversion; there is no additional
+per-frame picture filter. Built-in UI previews use native Pillow operations on
+redraw. Third-party raw plugin frames remain unchanged. The former software
+16–235 inset is ignored, including on installs that previously saved it.
 
 PipeWire defaults to off on each HLauncher service start. The audio process starts
 the private graph only when the setting is enabled, and stops the graph and its
@@ -215,15 +228,24 @@ are decoded. No simulated sensor values are added to this page.
 The Vehicle data tab shows parking brake Engaged/Released using the in-car test
 mapping, plus received radio flags and payload-change counts. Disconnecting
 clears the displayed brake state. Sensors without received data are omitted.
-After the Honda application authentication exchange, HLauncher requests passive
-RPM (`0x17C`) and temperature (`0x324`) records once per HondaLink session, with
-a cycle field of 500. No vehicle-speed subscription or CAN transmit is enabled.
+After the Honda application authentication exchange, HLauncher requests cyclic
+RPM (`0x17C`) and temperature (`0x324`) records in class 1, plus the six-byte
+B-CAN VSPNE candidate (`0x12F85050`) in class 0, once per connection. The cycle
+field is 500; its time units and actual delivery rate remain unverified. The
+VSPNE request selects all six bytes, including possible speed/RPM fields, for
+raw diagnostics. No vehicle-bus transmit command is enabled.
 Coolant and intake-air mappings follow the older Honda K/Civic layout; confirm
 them against the car during a cold-start/warm-up test. Newer Hondas reuse `0x324`
-with different meanings. Received sensors appear on Vehicle data; readings older
-than five seconds show Stale, and a disconnect clears them. Requests, setting
-responses, timeouts, invalid/encrypted data and decoded records are captured.
-The capture summary includes subscription history and latest received values.
+with different meanings. VSPNE is not decoded into speed or RPM yet.
+The Vehicle data tab displays VSPNE hex bytes, receipt and payload-change counts,
+and sample age. Identical records still increment RX and refresh age; a frozen
+payload with advancing RX is distinct from a stopped stream. Readings older than
+five seconds show Stale, and a disconnect clears them. Requests, settings
+responses, timeouts, invalid/encrypted data and every decoded raw record are
+captured while recording is enabled. The capture summary includes subscription
+history, sensor values and class-qualified `can_activity` with latest raw bytes
+and receipt/change counts. Enable Debug before connecting, or start recording
+before reconnecting, to retain the subscription exchange as well as samples.
 Capture records include app-protocol identity and bounded byte/bit differences
 for non-touch packets; other unmapped flags are not labeled as sensors.
 

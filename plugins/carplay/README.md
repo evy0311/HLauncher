@@ -58,10 +58,11 @@ in [recording a drive test](../../docs/setup.md#record-a-hondalink-drive-test).
 ## Picture controls
 
 
-Open **Settings → Plugins → CarPlay → CarPlay picture** for saturation, contrast and brightness sliders.
-The changes affect only decoded CarPlay video; launcher colors and HDMI mode/range
-remain unchanged. **Reset** restores saturation 100%, contrast 100%, brightness 0.
-**Preview CarPlay** returns to the plugin with the new values.
+Open **Settings → Appearance → Picture** for saturation, contrast and brightness sliders.
+Changes apply live to built-in HLauncher screens, CarPlay and Android Auto,
+and save automatically. **Reset** restores saturation 100%, contrast 100%, brightness 0.
+**Preview** returns to CarPlay with the new values. HDMI range remains a separate setting.
+The former software 16–235 picture inset is no longer applied.
 
 For adjustment while CarPlay remains visible, SSH to the Pi and run:
 
@@ -78,14 +79,16 @@ sudo python3 -m hlauncher colors --contrast 95 --brightness 0
 sudo python3 -m hlauncher colors --reset
 ```
 
-These controls share `/var/lib/hlauncher/carplay-color.json`. Writes are atomic,
-values are validated, and the video worker checks for changes every 100 ms.
-A retained decoder frame allows adjustments to redraw even when the phone is not
-sending new pictures. No plugin restart or radio firmware change is needed.
-Changes are applied by libswscale during its existing YUV-to-RGB conversion;
-there is no extra full-frame Python pixel filter. The decoder honors declared H.264 color matrix and input range metadata.
-When metadata is unspecified, the original conversion defaults are retained.
-HDMI output range and launcher colors are unchanged. Logs include `carplay_picture_applied`.
+These controls share `/var/lib/hlauncher/picture.json`. Existing `carplay-color.json`
+values are read until the first save. Writes are atomic and values are validated.
+The projection workers check for changes every 100 ms and redraw retained video,
+even when the phone is not sending new frames. No plugin restart is needed.
+Video tuning stays inside FFmpeg's existing native YUV-to-RGB conversion, with no
+additional frame filter, pixel loop or framebuffer copy. Built-in UI previews use
+Pillow's native operations only when drawing a screen. Raw frames from other
+plugins pass through unchanged. The decoder honors declared H.264 color matrix
+and input range metadata. Logs include `display_picture_saved` and
+`display_picture_applied`. Neutral controls preserve the original output.
 
 `carplay_color_conversion` records the declared codec color space/range and the
 selected conversion. Matrix code 1 is BT.709; source-range 1 is full and 0 limited.
@@ -104,7 +107,7 @@ YUV layout, retains full-range semantics, and reasserts controls after every
 context acquisition. This also avoids repeated full-range context allocations.
 
 
-HDMI range is separate from these video controls. Use **HDMI test** on the
+HDMI range is separate from these display controls. Use **HDMI test** on the
 picture page to preview and save a range; see
 [HDMI range calibration](../../docs/setup.md#hdmi-range-calibration).
 

@@ -1,6 +1,7 @@
 """Read-only observations of Honda CommonLink traffic; no vehicle commands."""
 import hashlib
 import time
+from .protocol.vehicle_signals import SignalCache, ALIASES
 
 
 def radio_status(payload):
@@ -24,18 +25,23 @@ class VehicleTraffic:
         self.changes = 0
         self.readings = {}
         self.subscription = {}
+        self.can_records = {}
+        self.signals = SignalCache()
 
     def clear(self, session=None):
+        self.signals.clear(session)
         if session is None:
             self.previous.clear()
             self.status = {}
             self.readings.clear()
             self.subscription.clear()
+            self.can_records.clear()
         else:
             self.previous = {k:v for k,v in self.previous.items() if k[0] != session}
             if self.status.get('session') == session:
                 self.status = {}
             self.readings = {k:v for k,v in self.readings.items() if v['session'] != session}
+            self.can_records = {k:v for k,v in self.can_records.items() if v['session'] != session}
             if self.subscription.get('session') == session:
                 self.subscription.clear()
 
@@ -47,8 +53,11 @@ class VehicleTraffic:
                      'honda_can_subscription_transport_ack', 'honda_can_subscription_timeout'):
             self.subscription.update({k:v for k,v in event.items()
                                       if k in ('session','status','result_code','reason','can_ids','cycle','protocol',
-                                               'transaction','transport_status','phase')})
+                                               'transaction','transport_status','phase','can_classes','interval_seconds','api_count','settings_count')})
             if state == 'honda_can_subscription_queued':
+                if event.get('part',1)==1:
+                    self.signals.clear();self.readings.clear();self.can_records.clear()
+                self.subscription['scope']=event.get('scope','diagnostics')
                 self.subscription['status'] = 'Awaiting transport ACK'
             elif state == 'honda_can_subscription_transport_ack' and event.get('status')=='pending':
                 self.subscription['status'] = ('Awaiting settings reply' if event.get('transport_status')=='acknowledged'
@@ -59,18 +68,46 @@ class VehicleTraffic:
                     'no_settings_response':'No settings reply', 'no_transport_ack':'No transport ACK'}.get(
                         event.get('phase'), 'No data received')
         elif state == 'honda_can_data':
-            self.subscription.update(session=event['session'],status='Receiving')
+            normal = event.get('data_type', 0) == 0
+            self.subscription.update(session=event['session'])
+            if normal:
+                self.subscription.update(status='Receiving',last_error='')
+                self.signals.update(event['records'],event.get('monotonic',time.monotonic()),event['session'])
             for record in event['records']:
-                for name, value in record['fields'].items():
-                    self.readings[name] = dict(value=value, session=event['session'],
-                        can_id=record['can_id'], data=record['data'],
-                        at=event.get('monotonic', time.monotonic()),
-                        mapping='honda_generation_candidate')
+                can_class = record.get('can_class', event.get('can_class', 1))
+                data_type = record.get('data_type', event.get('data_type',0))
+                key = (event['session'], data_type, record['can_id'])
+                old = self.can_records.get(key)
+                if old is not None or len(self.can_records) < 512:
+                    at = event.get('monotonic', time.monotonic())
+                    self.can_records[key] = dict(session=event['session'], can_class=can_class,
+                        can_id=record['can_id'], dlc=record['dlc'], data=record['data'], at=at,
+                        data_type=data_type,name=record.get('name',''),
+                        samples=(old['samples'] if old else 0)+1,
+                        changes=(old['changes'] if old else 0)+int(old is not None and old['data'] != record['data']),
+                        interval_seconds=max(0, at-old['at']) if old else None)
+            if normal:
+                for reading in self.signals.snapshot(event.get('monotonic',time.monotonic())):
+                    alias = ALIASES.get(reading['api_id'])
+                    if alias and reading['received']:
+                        self.readings[alias] = dict(value=reading['value'],session=reading['session'],
+                            can_id=reading['source']['message_id'],data=reading['data'],at=reading['at'],
+                            mapping='legacy_hondalink_native_sdk')
+        elif state in ('honda_can_data_invalid','honda_can_auth_invalid'):
+            self.subscription['last_error'] = event.get('error','Unknown CAN error')
+
+    def snapshot_signals(self, now=None):
+        return self.signals.snapshot(time.monotonic() if now is None else now)
 
     def snapshot_readings(self, now=None):
         now = time.monotonic() if now is None else now
         return {k:dict(v, age_seconds=max(0, now-v['at']), stale=now-v['at']>5)
                 for k,v in self.readings.items()}
+
+    def snapshot_can_records(self, now=None):
+        now = time.monotonic() if now is None else now
+        return [dict(v, age_seconds=max(0, now-v['at']), stale=now-v['at']>5)
+                for v in self.can_records.values()]
 
     def observe(self, event):
         message = event.get('message')

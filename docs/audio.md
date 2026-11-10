@@ -40,6 +40,13 @@ SoXR VHQ converter → direct ALSA, or buffered PipeWire input → EQ → native
 HDMI sink.
 
 The UI, frame rendering and Bluetooth control loop do not carry playback PCM.
+The CarPlay bridge reader also forwards PCM independently of H264 decoding and
+pixel conversion, so screen transitions cannot hold audio behind a slow video
+frame. Voice controls are applied by that reader in wire order before the next
+PCM packet. Encoded video/status buffering is bounded to 256 packets / 8 MiB;
+overflow reports an error and restarts the bridge rather than dropping H264
+reference frames or building an unbounded delay.
+
 Source PCM is signed 16-bit at its declared rate. Mixing and EQ use float32 with
 unity gain. Sources at 48 kHz are not resampled. Other rates use OS-provided
 **libsoxr VHQ, 28-bit precision, linear phase, double-precision calculations**,
@@ -147,3 +154,23 @@ Phone-call routing and microphone support remain separate checks.
 System diagnostics → Shutdown opens the existing confirmation page and requests
 `systemctl poweroff --no-block`. It allows normal systemd shutdown; tests mock
 this action and never actually power off the development Pi.
+
+## Verifying the connected HDMI receiver
+
+With the Honda radio powered on and music playing, inspect
+`/proc/asound/card*/eld*` for receiver capabilities and
+`/proc/asound/card*/pcm*p/sub*/hw_params` for the active hardware format.
+Expect the HDMI playback endpoint to be stereo, 48000 Hz and S32_LE; a closed
+endpoint does not establish an active format. ELD describes advertised receiver
+capabilities, not the source recording or radio DAC's effective resolution.
+Compare journal `audio_stream_format` events (adapter PCM rate/channels) with
+`audio_hdmi_open`, playback errors/drops and stage peak meters during repeated
+CarPlay app-grid / Now Playing transitions.
+
+The adapter protocol currently exposes signed 16-bit PCM. HLauncher preserves
+those samples at unity before mixing/conversion, with no additional lossy codec
+on its HDMI path. The source app, phone and dongle's internal transport are not
+verified by checking the Pi's endpoint. A 32-bit output container or a higher
+advertised HDMI rate does not prove lossless/high-resolution phone transport.
+Positive EQ gains can still clip at the final endpoint; Flat or bypass is the
+reference when checking signal quality.

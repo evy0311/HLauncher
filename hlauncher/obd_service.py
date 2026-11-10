@@ -17,7 +17,7 @@ UARTS = [
     ('6e400001-b5a3-f393-e0a9-e50e24dcca9e','6e400002-b5a3-f393-e0a9-e50e24dcca9e','6e400003-b5a3-f393-e0a9-e50e24dcca9e'),
     ('0000fff0-0000-1000-8000-00805f9b34fb','0000fff2-0000-1000-8000-00805f9b34fb','0000fff1-0000-1000-8000-00805f9b34fb'),
 ]
-PIDS = {'coolant':0x05, 'oil':0x5c, 'ltft':0x07, 'maf':0x10}
+PIDS = {'coolant':0x05, 'oil':0x5c, 'ltft':0x07, 'maf':0x10, 'rpm':0x0c}
 
 
 def response_bytes(reply, pid):
@@ -37,6 +37,7 @@ def decode_pid(pid, data):
     if pid in (0x05,0x5c):return (data[0]-40)*9/5+32
     if pid == 0x07:return (data[0]-128)*100/128
     if pid == 0x10 and len(data)>=2:return (data[0]*256+data[1])/100
+    if pid == 0x0c and len(data)>=2:return int.from_bytes(data[:2],'big')/4
     return None
 
 

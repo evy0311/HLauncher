@@ -117,7 +117,20 @@ class ProtocolDiagnostics:
                 voice=dict(self.voice),mic=dict(self.mic),last_marker=self.last_marker,
                 vehicle_status=dict(self.vehicle.status),vehicle_changes=self.vehicle.changes,
                 vehicle_readings=self.vehicle.snapshot_readings(),
+                vehicle_signals=self.vehicle.snapshot_signals(),
+                vehicle_can_records=self.vehicle.snapshot_can_records(),
                 vehicle_subscription=dict(self.vehicle.subscription))
+
+    def gauge_snapshot(self, now=None):
+        """Small in-memory handoff; no recorder or persistent-file dependency."""
+        now=time.monotonic() if now is None else now
+        with self.lock:
+            rows=self.vehicle.signals.snapshot(now,{44,40,167,1002,12,1003})
+            names={44:'rpm',40:'coolant_c',167:'pedal_percent',1002:'intake_c',12:'baro_native',1003:'vtec'}
+            readings={names[row['api_id']]:dict(value=row['value'],monotonic=row['at'],
+                interval_seconds=row['interval_seconds'],samples=row['samples'])
+                for row in rows if row['received']}
+            return dict(connected=self.connected,monotonic=now,readings=readings)
 
     def _write(self):
         output=None;written=0;part=0;last_flush=time.monotonic()

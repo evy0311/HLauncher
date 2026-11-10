@@ -1,206 +1,210 @@
-"""Exercise firmware-derived subscription wire shapes and bounded RX parsing."""
-import importlib.util
+"""Native serializer golden bytes, encrypted stream replay and read-only signals."""
+import hashlib
 import json
 from pathlib import Path
 import random
 import tempfile
+import subprocess
 import unittest
-
+from unittest.mock import patch
 from hlauncher.protocol.frames import frame
-from hlauncher.protocol.session import StartProbe, packet
-from hlauncher.protocol.vehicle_can import (GENERAL, HONDALINK, VehicleSubscription,
-                                           decode_records, subscription_payload)
+from hlauncher.protocol.session import StartProbe, packet, pi_honda_identity
+from hlauncher.protocol.vehicle_can import GENERAL, HONDALINK, decode_records, subscription_payloads, session_key
+from hlauncher.protocol.vehicle_signals import SIGNALS, SUBSCRIPTIONS, SignalCache
 from hlauncher.protocol_diagnostics import ProtocolDiagnostics
+
+FIXTURE=json.loads((Path(__file__).parent/'fixtures/hondalink-native-can.json').read_text())
+DEVICE=bytes.fromhex('020304050607')
+SEED=b'AQIDBAUG'
 
 
 def incoming(sid, message, payload):
     return packet(b'\x00\x42\x00\x01'+sid.to_bytes(2,'big')+frame(message,payload))
 
 
-def can_data(records, bus=1):
-    data=b''.join(can_id.to_bytes(4,'big')+bytes([len(raw)])+raw for can_id,raw in records)
-    return (b'\x00\x02\x03'+bytes.fromhex('0000000100000002')+bytes([bus])+
-            (len(data)+2).to_bytes(3,'big')+len(records).to_bytes(2,'big')+data)
+def can_data(records, kind=0, key=None):
+    body=len(records).to_bytes(2,'big')+b''.join(mid.to_bytes(4,'big')+bytes([len(raw)])+raw for mid,raw in records)
+    if key is not None:
+        # Independent OpenSSL command, synthetic test-session keys only.
+        body=subprocess.run(['openssl','enc','-aes-128-cbc','-nosalt','-K',key.hex(),'-iv','00'*16],
+                            input=body,stdout=subprocess.PIPE,stderr=subprocess.PIPE,check=True).stdout
+    return b'\x00\x02\x03'+(20130102).to_bytes(4,'big')+(12345678).to_bytes(4,'big')+bytes([kind])+len(body).to_bytes(3,'big')+body
 
 
 class VehicleCAN(unittest.TestCase):
-    def probe(self):
-        probe=StartProbe(lambda _:True)
-        probe.authenticated=True
-        probe.active_app='com.honda.hondalink.launcher'
-        probe.sessions={257:(1,GENERAL),258:(2,HONDALINK)}
-        probe.honda_stage[257]='session_start_notified'
-        return probe
+    def test_consumer_scopes_request_only_gauge_bits_and_stop_when_unused(self):
+        scope=['off'];p=self.probe();p.vehicle_scope=lambda:scope[0]
+        events,_=self.authenticate(p,flags=26)
+        self.authenticate(p,flags=18)
+        self.assertFalse(p.vehicle_subscription.requests)
+        scope[0]='gauges';events,replies=p.sync_vehicle_scope()
+        queued=[e for e in events if e['state']=='honda_can_subscription_queued']
+        self.assertEqual(len(queued),1)
+        self.assertEqual(queued[0]['api_ids'],(44,40,167,1002,12,1003))
+        self.assertEqual(queued[0]['can_ids'],[0x17c,0x320,0x324,0x454,0x12f85050,0x12f85150])
+        self.assertEqual(queued[0]['interval_seconds'],.1)
+        self.assertEqual(queued[0]['payload'],
+            '02000001010100060000017c0108ff00ffff00000000'
+            '0000032001080040000000000000000003240108ffff000000000000'
+            '00000454010800ff00000000000012f85050000600ffff000000'
+            '12f851500005000000ff00')
+        self.assertEqual(p.sync_vehicle_scope(),([],[]))
+        key=p.vehicle_subscription.keys[257]
+        raw=can_data([(0x17c,bytes(8)),(0x324,bytes(8)),(0x454,bytes(8)),(0x99f00007,bytes(19))],key=key)
+        events,_=p.feed(incoming(257,0xc1,raw))
+        data=next(e for e in events if e['state']=='honda_can_data')
+        self.assertEqual(len(data['records']),3)
+        self.assertEqual({k for r in data['records'] for k in r['signals']},{'40','12','44','167','1002'})
+        cache=SignalCache();cache.update(data['records'],100,257)
+        self.assertEqual([r['api_id'] for r in cache.snapshot(100)if r['received']],[12,40,44,167])
+        p.vehicle_subscription.requests[257]['at']-=1
+        scope[0]='diagnostics';events,_=p.sync_vehicle_scope()
+        self.assertEqual(len([e for e in events if e['state']=='honda_can_subscription_queued']),2)
+        p.vehicle_subscription.requests[257]['at']-=1
+        scope[0]='off';events,_=p.sync_vehicle_scope()
+        self.assertEqual(events[-1]['payload'],'0200000a0100')
+        self.assertEqual(events[-1]['can_ids'],[])
+        self.assertEqual(p.sync_vehicle_scope(),([],[]))
+        self.assertFalse(any(e['state']=='honda_can_data' for e in p.feed(incoming(257,0xc1,raw))[0]))
 
-    def authenticate(self, probe):
-        return probe.feed(incoming(257,0xb1,b'\x01\x01'+bytes(9)+b'KA'))
+    def probe(self, sid=257, name=GENERAL):
+        p=StartProbe(lambda _:True);p.authenticated=True;p.active_app='com.honda.hondalink.launcher'
+        p.sessions={sid:(1,name)};p.honda_stage[sid]='session_start_notified'
+        return p
 
-    def test_explicit_receive_only_subscription_has_two_ids_and_one_fragment(self):
-        # 16929c reads fragment count at5. 169388 reads bus/count at6,7,
-        # then each big-endian ID, DLC, mask length, mask. No preset groups.
-        self.assertEqual(subscription_payload().hex(),
-            '020101f4010102020000017c08080000ffff00000000000003240808ffff000000000000')
-        probe=self.probe()
-        events,replies=self.authenticate(probe)
-        request=[e for e in events if e['state']=='honda_can_subscription_queued']
-        self.assertEqual(len(request),1)
-        self.assertEqual(request[0]['session'],257)
-        self.assertEqual(request[0]['can_ids'],[0x17c,0x324])
-        self.assertTrue(request[0]['receive_only'])
-        self.assertEqual(len(replies),2)  # iAP ACK, followed by settings.
-        events,_=self.authenticate(probe)
-        self.assertFalse(any(e['state']=='honda_can_subscription_queued' for e in events))
+    def authenticate(self,p,sid=257,flags=8,seed=SEED):
+        with patch('hlauncher.protocol.session.pi_honda_device_info',return_value=DEVICE):
+            a,b=p.feed(incoming(sid,0xb1,b'\0'))
+            c,d=p.feed(incoming(sid,0xb1,b'\1\1'+seed+bytes([flags])+b'US'))
+        return a+c,b+d
 
-    def test_authentication_session_and_app_are_required_and_order_independent(self):
+    def test_full_request_matches_original_arm_serializer_golden(self):
+        self.assertEqual([hashlib.sha256(x).hexdigest()for x in subscription_payloads()],FIXTURE['payload_sha256'])
+        self.assertEqual([len(x) for x in subscription_payloads()],[685,21])
+        self.assertEqual(len(SUBSCRIPTIONS),54)
+        self.assertEqual([x['api_id'] for x in SIGNALS],list(range(1,169)))
+        self.assertEqual(pi_honda_identity(DEVICE)[-6:],bytes.fromhex('0000000000ff'))
+        p=self.probe();events,_=self.authenticate(p)
+        queued=[e for e in events if e['state']=='honda_can_subscription_queued']
+        self.assertEqual(len(queued),2)
+        self.assertTrue(all(e['receive_only'] and e['api_count']==168 for e in queued))
+        self.assertEqual([e['part']for e in queued],[1,2])
+        self.assertFalse(any(e['state']=='honda_can_subscription_queued'for e in self.authenticate(p)[0]))
+
+    def test_auth_requires_capability_seed_exact_identity_and_session(self):
+        for flags,seed in [(0,SEED),(2,SEED),(8,b'!!!!!!!!')]:
+            p=self.probe();events,_=self.authenticate(p,flags=flags,seed=seed)
+            self.assertFalse(any(e['state']=='honda_can_subscription_queued'for e in events))
         for changed in ('authenticated','active_app','stage','session'):
-            probe=self.probe()
-            if changed=='authenticated':probe.authenticated=False
-            elif changed=='active_app':probe.active_app=None
-            elif changed=='stage':probe.honda_stage.clear()
-            else:probe.sessions.pop(257)
-            events,_=self.authenticate(probe)
-            self.assertFalse(any(e['state']=='honda_can_subscription_queued' for e in events))
-        probe=self.probe();probe.honda_stage[257]='auth_requested'
-        self.authenticate(probe)
-        events,_=probe.feed(incoming(257,1,bytes.fromhex('001000000000')))
-        self.assertEqual(len([e for e in events if e['state']=='honda_can_subscription_queued']),1)
-
-    def test_fragmented_iap_and_commonlink_decode_both_sensors_and_zero(self):
-        raw=can_data([(0x17c,bytes.fromhex('0000032000000000')),
-                      (0x324,bytes.fromhex('823c000000000000'))])
-        for width in range(1,25):
-            probe=self.probe();self.authenticate(probe)
-            wire=incoming(257,0xc1,raw);events=[]
-            for offset in range(0,len(wire),width):events+=probe.feed(wire[offset:offset+width])[0]
-            records=[e for e in events if e['state']=='honda_can_data'][0]['records']
-            self.assertEqual(records[0]['fields'],dict(engine_rpm=800))
-            self.assertEqual(records[1]['fields'],dict(coolant_temperature_c=90,intake_temperature_c=20))
-        self.assertEqual(decode_records(can_data([(0x17c,bytes(8))]))[0]['fields']['engine_rpm'],0)
-        probe=self.probe();self.authenticate(probe)
-        events,_=probe.feed(incoming(258,0xc1,raw))
-        self.assertTrue(any(e['state']=='honda_can_unrequested' for e in events))
-        self.assertFalse(any(e['state']=='honda_can_data' for e in events))
-
-    def test_response_errors_timeout_and_late_data_are_logged_without_retry(self):
-        for raw,status in (('020040','accepted'),('0201c0','accepted'),('020141','rejected'),('020100','unrecognized')):
-            probe=self.probe();self.authenticate(probe)
-            events,_=probe.feed(incoming(257,0xc1,bytes.fromhex(raw)))
-            self.assertEqual([e for e in events if e['state']=='honda_can_subscription_response'][0]['status'],status)
-        request=probe.vehicle_subscription.requests[257]
-        events=probe.vehicle_subscription.tick(request['at']+11)
-        self.assertEqual(events[0]['state'],'honda_can_subscription_timeout')
-        self.assertFalse(events[0]['retry'])
-        self.assertEqual(probe.vehicle_subscription.tick(request['at']+12),[])
-        events,_=probe.feed(incoming(257,0xc1,can_data([(0x324,bytes(8))])))
-        self.assertTrue(any(e['state']=='honda_can_data' for e in events))
-
-    def test_reset_and_session_close_rearm_without_duplicate_requests(self):
-        probe=self.probe();self.authenticate(probe)
-        probe.close_session(257)
-        self.assertFalse(probe.vehicle_subscription.requests)
-        probe.sessions[257]=(1,GENERAL);probe.honda_stage[257]='session_start_notified'
-        self.assertTrue(self.authenticate(probe)[1])
-        self.assertTrue(probe.vehicle_subscription.requests)
-        probe.feed(packet(bytes.fromhex('00380001')))
-        self.assertFalse(probe.vehicle_subscription.requests)
-        self.assertFalse(probe.vehicle_auth_sessions)
-
-    def test_auth_is_scoped_and_bootstrap_close_does_not_revoke_owner(self):
-        probe=self.probe()
-        probe.honda_stage[258]='session_start_notified'
-        events,_=self.authenticate(probe)
-        self.assertEqual(probe.vehicle_session,257)
-        probe.close_session(258)
-        self.assertIn(257,probe.vehicle_subscription.requests)
-        self.assertIn(257,probe.vehicle_auth_sessions)
-        events,_=probe.feed(incoming(257,0xb1,b'\x01\x00'+bytes(9)+b'KA'))
-        self.assertFalse(probe.vehicle_subscription.requests)
-        self.assertIsNone(probe.vehicle_session)
-        self.assertTrue(any(e['state']=='honda_can_authorization' and not e['authorized'] for e in events))
-
-    def test_either_protocol_can_own_subscription_without_fixed_session_ids(self):
+            p=self.probe()
+            if changed=='authenticated':p.authenticated=False
+            elif changed=='active_app':p.active_app=None
+            elif changed=='stage':p.honda_stage.clear()
+            else:p.sessions.clear()
+            self.assertFalse(any(e['state']=='honda_can_subscription_queued'for e in self.authenticate(p)[0]))
+        p=self.probe();events,_=p.feed(incoming(257,0xb1,b'\1\1'+SEED+b'\x08US'))
+        self.assertTrue(any(e['state']=='honda_can_auth_invalid'for e in events))
+        self.assertFalse(p.vehicle_subscription.requests)
         for name in (GENERAL,HONDALINK):
-            probe=self.probe();probe.sessions={613:(1,name)}
-            probe.honda_stage={613:'session_start_notified'}
-            events,_=probe.feed(incoming(613,0xb1,b'\x01\x01'+bytes(9)+b'KA'))
-            queued=[e for e in events if e['state']=='honda_can_subscription_queued']
-            self.assertEqual([(e['session'],e['authorization_session'],e['protocol']) for e in queued],[(613,613,name)])
-            events,_=probe.feed(incoming(613,0xc1,can_data([(0x17c,bytes(8))])))
-            self.assertTrue(any(e['state']=='honda_can_data' for e in events))
+            p=self.probe(613,name);self.authenticate(p,613)
+            self.assertEqual(set(p.vehicle_subscription.requests),{613})
+        p=self.probe();self.authenticate(p);key=p.vehicle_subscription.keys[257]
+        self.authenticate(p,flags=18,seed=b'BwgJCgsM')
+        self.assertEqual(p.vehicle_subscription.keys[257],key)
 
-    def test_second_authenticated_channel_does_not_duplicate_subscription(self):
-        probe=self.probe();self.authenticate(probe)
-        probe.honda_stage[258]='session_start_notified'
-        events,_=probe.feed(incoming(258,0xb1,b'\x01\x01'+bytes(9)+b'KA'))
-        self.assertFalse(any(e['state']=='honda_can_subscription_queued' for e in events))
-        self.assertEqual(set(probe.vehicle_subscription.requests),{257})
+    def test_fragmented_encrypted_stream_decodes_native_fixture_and_unknown_virtual_ids(self):
+        records=[(int(x['id'],16),bytes.fromhex(x['data']))for x in FIXTURE['records']]
+        raw=can_data(records,key=session_key(SEED,DEVICE))
+        for width in (1,2,7,23,1024):
+            p=self.probe();self.authenticate(p);wire=incoming(257,0xc1,raw);events=[]
+            for at in range(0,len(wire),width):events+=p.feed(wire[at:at+width])[0]
+            event=next(e for e in events if e['state']=='honda_can_data')
+            self.assertEqual(event['data_type'],0)
+            values={k:v for r in event['records']for k,v in r['signals'].items()}
+            self.assertEqual(values['40'],30);self.assertEqual(values['132'],1234)
+            rpm=next(r for r in event['records']if r['can_id']==0x17c)
+            self.assertEqual(rpm['fields']['engine_rpm'],10000)
+            vin=next(r for r in event['records']if r['can_id']==0x99f00007)
+            self.assertEqual(vin['dlc'],19)
+            self.assertFalse(any(e['state']=='honda_can_receipt_sent'for e in events))
+        parsed=decode_records(can_data([(0xf1234567,bytes(255)),(0x17c,bytes(8))]))
+        self.assertIsNone(parsed[0]['can_class']);self.assertEqual(parsed[1]['fields']['engine_rpm'],0)
 
-    def test_transport_ack_and_settings_result_are_distinct_and_persisted(self):
-        for transport_code,phase in ((0,'no_settings_response'),(1,'transport_rejected')):
-            probe=self.probe();events,_=self.authenticate(probe)
-            request=probe.vehicle_subscription.requests[257];txn=request['transaction']
-            events2,_=probe.feed(packet(b'\x00\x41'+txn.to_bytes(2,'big')+bytes([transport_code,0x43])))
-            ack=[e for e in events2 if e['state']=='honda_can_subscription_transport_ack'][0]
+    def test_both_transport_acks_and_settings_result_are_distinct(self):
+        p=self.probe();self.authenticate(p);r=p.vehicle_subscription.requests[257]
+        for i,txn in enumerate(r['transactions']):
+            events,_=p.feed(packet(b'\0\x41'+txn.to_bytes(2,'big')+b'\0\x43'))
+            ack=next(e for e in events if e['state']=='honda_can_subscription_transport_ack')
+            self.assertEqual(ack['transport_status'],'partial'if i==0 else 'acknowledged')
             self.assertFalse(ack['settings_accepted'])
-            self.assertEqual(ack['transaction'],txn)
-            self.assertEqual(probe.vehicle_subscription.tick(request['at']+11)[0]['phase'],phase)
-            duplicate,_=probe.feed(packet(b'\x00\x41'+txn.to_bytes(2,'big')+bytes([transport_code,0x43])))
-            self.assertFalse(any(e['state']=='honda_can_subscription_transport_ack' for e in duplicate))
-            with tempfile.TemporaryDirectory() as folder:
-                monitor=ProtocolDiagnostics(folder,min_free=0);monitor.start()
-                for event in events+events2:monitor.observe(event)
-                self.assertEqual(monitor.snapshot()['vehicle_subscription']['status'],
-                    'Awaiting settings reply' if transport_code==0 else 'Transport rejected')
-                monitor.close()
-                spec=importlib.util.spec_from_file_location('capture_ack',Path(__file__).parents[1]/'scripts/protocol_capture.py')
-                module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module)
-                summary=module.summarize(list(Path(folder).glob('*.jsonl')))
-                self.assertEqual(summary['can_connections'][0]['session'],257)
-                self.assertEqual(summary['can_subscriptions'][-1]['transport_code'],transport_code)
-        probe=self.probe();self.authenticate(probe)
-        events,_=probe.feed(incoming(257,0xc1,bytes.fromhex('020140')))
-        request=probe.vehicle_subscription.requests[257]
-        self.assertEqual(probe.vehicle_subscription.tick(request['at']+11)[0]['phase'],'accepted_no_data')
+        for body,expected in [(b'\2\0\xc0','accepted'),(b'\2\0\x12','accepted'),(b'\2\1\xc0','rejected')]:
+            events,_=p.feed(incoming(257,0xc1,body))
+            self.assertEqual(next(e for e in events if e['state']=='honda_can_subscription_response')['status'],expected)
+        self.assertFalse(any(e['state']=='honda_can_subscription_queued'for e in p.tick()))
+        self.assertEqual(len(p.vehicle_subscription.tick(r['at']+11)),1)
+        self.assertEqual(p.vehicle_subscription.tick(r['at']+12),[])
 
-    def test_invalid_packets_never_yield_partial_readings_or_unknown_sensors(self):
-        raw=can_data([(0x17c,bytes(8)),(0x324,bytes(8))])
-        for malformed in (raw[:-1],raw+b'\x00',raw[:11]+b'\x00'+raw[12:],
-                          raw[:15]+b'\xff\xff'+raw[17:]):
-            with self.assertRaises(ValueError):decode_records(malformed)
-        self.assertEqual(decode_records(can_data([(0x123,bytes(8))]))[0]['fields'],{})
-        self.assertEqual(decode_records(can_data([(0x17c,bytes(4))]))[0]['fields'],{})
+    def test_diagnostics_acknowledged_and_never_replace_live_readings(self):
+        p=self.probe();self.authenticate(p);key=p.vehicle_subscription.keys[257]
+        with tempfile.TemporaryDirectory() as folder:
+            monitor=ProtocolDiagnostics(folder)
+            for kind,rpm in [(0,1000),(1,9000),(2,8000),(3,7000)]:
+                events,replies=p.feed(incoming(257,0xc1,can_data([(0x17c,b'\0\0'+rpm.to_bytes(2,'big')+bytes(4))],kind,key)))
+                for e in events:monitor.observe(e)
+                ack=[e for e in events if e['state']=='honda_can_receipt_sent']
+                self.assertEqual(len(ack),int(kind!=0))
+                if ack:self.assertEqual(ack[0]['payload'],'010301')
+            snap=monitor.snapshot()
+            self.assertEqual(snap['vehicle_signals'][43]['value'],1000)
+            self.assertEqual(len(snap['vehicle_can_records']),4)
+            monitor.close()
+
+    def test_wrong_key_and_malformed_collections_do_not_expose_partial_values(self):
+        p=self.probe();self.authenticate(p)
+        records=[(0x17c,bytes(8)),(0x324,bytes(8))]
+        for raw in (can_data(records),can_data(records,key=bytes(16)),can_data(records,key=p.vehicle_subscription.keys[257])[:-1]):
+            events,_=p.feed(incoming(257,0xc1,raw))
+            self.assertTrue(any(e['state']=='honda_can_data_invalid'for e in events))
+            self.assertFalse(any(e['state']=='honda_can_data'for e in events))
+        raw=can_data(records)
+        for end in range(len(raw)):
+            with self.assertRaises(ValueError):decode_records(raw[:end])
         rng=random.Random(77)
         for _ in range(500):
             try:decode_records(rng.randbytes(rng.randrange(150)))
             except ValueError:pass
-        probe=self.probe();self.authenticate(probe)
-        events,_=probe.feed(incoming(257,0xc1,raw[:-1]))
-        self.assertTrue(any(e['state']=='honda_can_data_invalid' for e in events))
-        self.assertFalse(any(e['state']=='honda_can_data' for e in events))
 
-    def test_samples_refresh_even_unchanged_and_captures_include_requests_and_values(self):
+    def test_source_priority_scaling_freshness_and_reconnect(self):
+        c=SignalCache()
+        c.update(decode_records(can_data([(r['message_id'],bytes(r['length']))for r in SUBSCRIPTIONS])),100,257)
+        self.assertEqual(sum(r['received']for r in c.snapshot(100)),168)
+        c.update(decode_records(can_data([(0x17c,bytes.fromhex('000003e800000000'))])),100,257)
+        c.update(decode_records(can_data([(0x12f85050,bytes.fromhex('0007d0000000'))])),130,257)
+        self.assertEqual(c.snapshot(130)[43]['value'],1000)
+        c.update(decode_records(can_data([(0x12f85050,bytes.fromhex('0007d0000000'))])),131,257)
+        self.assertEqual(c.snapshot(131)[43]['value'],2000)
+        self.assertTrue(c.snapshot(137)[43]['stale'])
+        c.clear(258);self.assertTrue(c.snapshot(137)[43]['received'])
+        c.clear(257);self.assertFalse(any(r['received']for r in c.snapshot(137)))
+        p=self.probe();self.authenticate(p);p.close_session(257)
+        self.assertFalse(p.vehicle_subscription.keys);self.assertFalse(p.vehicle_identities)
+        p=self.probe();self.authenticate(p);p.feed(packet(bytes.fromhex('00380001')))
+        self.assertFalse(p.vehicle_subscription.keys);self.assertFalse(p.vehicle_auth_sessions)
+
+    def test_capture_contains_all_signal_values_and_refreshes_unchanged_frames(self):
+        p=self.probe();events,_=self.authenticate(p)
         with tempfile.TemporaryDirectory() as folder:
             monitor=ProtocolDiagnostics(folder,min_free=0);monitor.start()
-            probe=self.probe()
-            for event in self.authenticate(probe)[0]:monitor.observe(event)
-            events,_=probe.feed(incoming(257,0xc1,can_data([(0x17c,bytes(8)),(0x324,bytes.fromhex('823c000000000000'))])))
-            for event in events:monitor.observe(event)
-            snap=monitor.snapshot()
-            self.assertEqual(snap['vehicle_subscription']['status'],'Receiving')
-            self.assertEqual(snap['vehicle_readings']['coolant_temperature_c']['value'],90)
-            old=monitor.vehicle.readings['engine_rpm']['at']
-            self.assertTrue(monitor.vehicle.snapshot_readings(old+6)['engine_rpm']['stale'])
-            for event in events:monitor.observe(event)
-            self.assertGreater(monitor.vehicle.readings['engine_rpm']['at'],old)
-            monitor.observe(dict(state='iap_data_session_closed',session=257))
-            self.assertFalse(monitor.snapshot()['vehicle_readings'])
+            for e in events:monitor.observe(e)
+            wire=incoming(257,0xc1,can_data([(0x324,bytes.fromhex('823c000000000000'))],key=p.vehicle_subscription.keys[257]))
+            for _ in range(3):
+                for e in p.feed(wire)[0]:monitor.observe(e)
+            row=monitor.snapshot()['vehicle_signals'][39]
+            self.assertEqual((row['value'],row['samples'],row['changes']),(90,3,0))
             monitor.close()
-            spec=importlib.util.spec_from_file_location('can_capture',Path(__file__).parents[1]/'scripts/protocol_capture.py')
-            module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module)
-            summary=module.summarize(list(Path(folder).glob('*.jsonl')))
-            self.assertEqual(summary['vehicle_readings']['engine_rpm']['value'],0)
-            self.assertEqual(summary['can_subscriptions'][0]['can_ids'],[0x17c,0x324])
-            self.assertEqual(summary['can_records']['0x324'],2)
+            saved=[json.loads(l)for f in Path(folder).glob('*.jsonl')for l in f.read_text().splitlines()]
+            self.assertEqual(next(e for e in saved if e['state']=='honda_can_data')['records'][0]['signals']['40'],90)
+            self.assertFalse(any('keys' in e for e in saved))
 
 
 if __name__=='__main__':unittest.main()

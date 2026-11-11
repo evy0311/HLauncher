@@ -48,7 +48,7 @@ class RadioUI(unittest.TestCase):
         methods=[ui.ssh_settings,ui.adapter_branding_page,ui.appearance_settings,ui.startup_settings,ui.recovery_page,lambda:ui.storage_confirm(True),ui.plugin_settings,lambda:ui.plugin_detail('carplay'),lambda:ui.plugin_detail('obd'),ui.tile_colors,
                  ui.color_settings,ui.system_diagnostics,ui.protocol_tests,
                  lambda:ui.debug_tools('menu'),lambda:ui.debug_tools('audio'),
-                 lambda:ui.debug_tools('colors'),lambda:ui.debug_tools('inputs'),ui.shutdown_page]
+                 lambda:ui.debug_tools('colors'),lambda:ui.debug_tools('inputs'),lambda:ui.debug_tools('volume'),ui.shutdown_page]
         with patch('hlauncher.ui.chrome.datetime') as clock:
             clock.now.return_value.strftime.return_value=time.strftime('%-I:%M')
             for method in methods:
@@ -69,6 +69,13 @@ class RadioUI(unittest.TestCase):
             self.assertFalse(ui.has_frame)
             self.assertTrue(any(action==ui.home for _,action in ui.actions))
         ui.host.active=None
+
+    def test_volume_page_routes_both_buttons_to_head_unit_bridge(self):
+        ui=self.ui;ui.debug_tools('volume')
+        with patch.object(ui.inputs,'request_volume') as request:
+            next(callback for box,callback in ui.actions if box==(24,248,352,320))()
+            next(callback for box,callback in ui.actions if box==(368,248,696,320))()
+        self.assertEqual(request.call_args_list,[(("down",),),(("up",),)])
 
     def test_picture_slider_drag_still_saves_and_storage_requires_completed_change(self):
         ui=self.ui;ui.color_settings();key,box=ui.picture_sliders[0]

@@ -53,7 +53,8 @@ channel or remote-player browsing is advertised or used. Its failure cannot
 terminate bluetoothd; the input monitor restarts it. BlueALSA still owns A2DP/SCO.
 
 Connection-audit update: outgoing AVRCP recovery now follows the authenticated,
-trusted Bluetooth peer with resolved services independently of hands-free state.
+trusted Bluetooth peer independently of hands-free state. The known AVRCP PSM
+does not require BlueZ ServicesResolved, which can remain false on this radio.
 Channel ownership is serialized; BlueZ loss invalidates in-flight connects.
 Standard charset/battery setup reports and MTU-bounded metadata continuation are
 handled. An idle bridge reports stopped; explicitly unknown active playback
@@ -69,13 +70,12 @@ required by the stock Honda parser. This identifies the compatibility proxy; it
 does not change the Pi's Bluetooth device name. The distro binary is retained.
 The build script itself does not restart services.
 
-No synthetic active/ringing calls are announced. CLCC returns no calls until a
-real destination-aware call-state source is implemented. Dial/redial commands
-are rejected rather than incorrectly converted to answer. Consequently the
-factory radio may still open its phone UI, and may not emit answer when it knows
-of no incoming call. Projection button support does not establish working
-hands-free microphone/call audio. The old standalone simulated-call microphone
-probe cannot share the RFCOMM dispatcher while this control worker owns it.
+During CarPlay call audio, the Bluetooth HFP `AT+CLCC` query returns the active
+call with caller details when the adapter provides them. When both the name and
+number are unavailable, the optional name field carries **CarPlay Call**. The
+radio decides which fields to display. The query returns an empty list when the
+call ends. Dial and redial remain unsupported. The standalone microphone probe
+cannot share the RFCOMM dispatcher with this control worker.
 
 ## In-car check
 
@@ -124,3 +124,17 @@ are maintained by BlueZ; this Pi reports 0x0048020c with services registered.
 The public alias remains HLauncher. HFP AG voice feature flags, the Apple XAPL
 iPhone response/Siri capability and Honda Siri query handling are separate from
 this classification. This is protocol compatibility, not complete iPhone emulation.
+
+## Experimental native volume
+
+Settings → System diagnostics → Hardware tests → Radio volume (experimental)
+provides Volume down and Volume up. Each tap sends one AVRCP pass-through
+press/release pair (`0x42` / `0x41`) to the paired head unit over its existing
+control channel, with a two-second cooldown and no automatic retries. It does
+not adjust the Pi mixer or phone gain. The page distinguishes radio acceptance,
+rejection, unsupported commands, disconnection and a missing reply. If the
+channel is closed, a tap requests an immediate connection attempt and reports
+the Bluetooth prerequisite or socket error. One pending tap expires after five
+seconds and is discarded on connection failure; it is never retried automatically. Acceptance
+alone does not prove that the radio changed its native volume; watch the factory
+volume display, including when HDMI is selected. Honda support is unverified.

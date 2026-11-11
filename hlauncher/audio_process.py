@@ -95,6 +95,13 @@ def main():
     def event(**item):
         try:control.send(json.dumps(item).encode())
         except (OSError,BlockingIOError):pass
+    if args.test_device is None and sys.platform.startswith('linux'):
+        # The mixer and its player children inherit this priority. Keep normal
+        # time sharing so audio cannot monopolize CPU needed for USB input.
+        try:
+            os.nice(-5)
+        except OSError as exc:
+            event(state='audio_priority_unavailable', error=str(exc))
     playback=Playback(event)
     from .voice_audio import VoiceAudio,VoicePlaybackSettings
     voice_route=VoiceAudio()

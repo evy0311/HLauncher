@@ -13,6 +13,23 @@ with patch.object(sys,'path',[str(ROOT/'sdk'),str(ROOT/'plugins/carplay'),*sys.p
 
 
 class CarplayDisconnect(unittest.TestCase):
+    def test_missing_unplug_event_hides_frozen_video_and_allows_recovery(self):
+        carplay = backend.CarplayHDMI()
+        carplay.receive_state(dict(state='phone_connected'))
+        carplay.frame = b'phone video'
+        carplay.last_decoded_at = 100
+        deadline = 100 + backend.VIDEO_TIMEOUT_SECONDS
+        with patch.object(backend.time, 'monotonic', return_value=deadline - .01):
+            self.assertEqual(carplay.snapshot()[1], b'phone video')
+        with patch.object(backend.time, 'monotonic', return_value=deadline):
+            _, frame, _, status = carplay.snapshot()
+            self.assertIsNone(frame)
+            self.assertIn('video paused', status)
+            self.assertTrue(carplay.phone_connected)
+            carplay.last_decoded_at = deadline
+            carplay.frame = b'resumed video'
+            self.assertEqual(carplay.snapshot()[1], b'resumed video')
+
     def test_cached_video_requires_connected_phone_and_clears_on_disconnect(self):
         carplay=backend.CarplayHDMI()
         carplay.frame=b'adapter splash or stale phone frame'

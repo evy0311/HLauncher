@@ -105,6 +105,25 @@ class ProjectionVoiceTests(unittest.TestCase):
         self.assertEqual(model.update({}),['+CIEV:2,0'])
         self.assertEqual(model.update({}),[])
 
+    def test_caller_metadata_follows_lease_without_appearing_in_events(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / 'voice.json'
+            events = []
+            voice = ProjectionVoice(lambda **event: events.append(event), path)
+            details = dict(name='Test Caller', number='+15550100', incoming=True)
+            flags = dict(call_audio=True, siri=False, recording=False)
+            voice.update('carplay', dict(flags, call=details))
+            voice.tick('carplay')
+            self.assertEqual(read_voice(path)['call'], details)
+            self.assertEqual(path.stat().st_mode & 0o777, 0o600)
+            self.assertNotIn('Test Caller', str(events))
+            self.assertNotIn('+15550100', str(events))
+            voice.tick('android-auto')
+            self.assertNotIn('call', read_voice(path))
+            voice.update('carplay', dict(flags, call_audio=False, call=details))
+            voice.tick('carplay')
+            self.assertNotIn('call', read_voice(path))
+
     def test_closed_iap_session_drops_decoder_and_handshake_without_closing_other_channels(self):
         probe=StartProbe();probe.authenticated=True
         probe.sessions={257:(1,'generals'),258:(2,'hondalink')}

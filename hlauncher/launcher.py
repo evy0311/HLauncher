@@ -501,7 +501,7 @@ class Launcher:
             levels={str(key):dict(source_peak=getattr(stream,'source_peak',0),
                 source_full_scale_samples=getattr(stream,'source_full_scale_samples',0),
                 converted_peak=getattr(stream,'converted_peak',0)) for key,stream in playback.streams.items()}
-        return dict(inputs=dict(status=self.inputs.status, transports=dict(self.inputs.control_status), buttons=self.inputs.buttons, results=dict(getattr(self.host,'button_results',{})), recent=list(self.inputs.history)), version=__version__, session=dict(self.host.session),
+        return dict(inputs=dict(status=self.inputs.status, volume=self.inputs.volume_status, transports=dict(self.inputs.control_status), buttons=self.inputs.buttons, results=dict(getattr(self.host,'button_results',{})), recent=list(self.inputs.history)), version=__version__, session=dict(self.host.session),
                     display=dict(width=self.fb.w,height=self.fb.h,
                                  backend='DRM' if getattr(self.fb,'kms',None) else 'Framebuffer'),
                     audio=dict(route=playback.route,device=playback.device,pipewire=playback.settings.values['pipewire'],
@@ -913,7 +913,7 @@ class Launcher:
                     except (OSError,ValueError) as exc:self.event(state='projection_background_failed',error=str(exc))
         self.obd.tick(self.host.session)
         now = time.monotonic()
-        if self.mode in ('debug_inputs','debug_audio') and now-self.debug_redraw >= .05:
+        if self.mode in ('debug_inputs','debug_audio','debug_volume') and now-self.debug_redraw >= .05:
             self.debug_redraw = now
             self.draw()
         if self.mode == "obd_settings" and self.obd.revision != self.obd_revision:self.draw()

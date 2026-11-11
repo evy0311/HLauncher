@@ -70,6 +70,16 @@ class RadioControls(unittest.TestCase):
             self.assertNotIn('123456789',str(hfp_observation(raw)))
         self.assertEqual(hfp_observation(b'AT+BVRA=1\r')['summary'],'AT+BVRA=1')
 
+    def test_hfp_call_list_uses_adapter_identity_and_carplay_fallback(self):
+        query = b'AT+CLCC\r'
+        voice = dict(plugin='carplay', call_audio=True)
+        self.assertEqual(hfp_request(query, voice), (('+CLCC: 1,0,0,0,0,"",129,"CarPlay Call"', 'OK'), None))
+        voice['call'] = dict(name='Jo"\r\n Smith', number='+1 (555) 0100', incoming=True)
+        self.assertEqual(hfp_request(query, voice), (('+CLCC: 1,1,0,0,0,"+15550100",145,"Jo Smith"', 'OK'), None))
+        voice['call'] = dict(number='5550100', incoming=False)
+        self.assertEqual(hfp_request(query, voice), (('+CLCC: 1,0,0,0,0,"5550100",129', 'OK'), None))
+        self.assertEqual(hfp_request(query, dict(voice, call_audio=False)), (('OK',), None))
+
     def test_receiver_reports_unknown_packet_and_real_press_before_ui_filtering(self):
         import socket
         import threading

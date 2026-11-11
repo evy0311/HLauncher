@@ -60,6 +60,20 @@ class AudioPlayback(unittest.TestCase):
             self.assertEqual(stream.converted_peak,.75)
             self.assertEqual(stream.source_full_scale_samples,0)
 
+    def test_voice_block_does_not_consume_partial_music(self):
+        import numpy as np
+
+        output = Playback(lambda **event: None, start_worker=False)
+        def feed(plugin, sample, frames):
+            output.feed(plugin, dict(sample_rate=48000, channels=2, stream=1,
+                                     pcm=struct.pack('<hh', sample, sample) * frames))
+
+        feed('music', 8192, 480)
+        feed('voice', 16384, 960)
+        np.testing.assert_array_equal(np.frombuffer(output.mix(), '<f4'), np.full(1920, .5))
+        feed('music', 8192, 480)
+        np.testing.assert_array_equal(np.frombuffer(output.mix(), '<f4'), np.full(1920, .25))
+
     def test_idle_flush_preserves_resampler_tail_and_restarts_after_a_gap(self):
         import numpy as np
         output=Playback(lambda **v:None,start_worker=False)

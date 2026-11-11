@@ -80,10 +80,16 @@ class ShutdownUI(unittest.TestCase):
 
 class MicrophoneConversion(unittest.TestCase):
     def test_mono_microphone_conversion_preserves_duration_and_unity(self):
-        converter=Resampler(8000,16000,channels=1)
+        converter = Resampler(8000, 16000, channels=1, realtime=True)
         try:
-            signal=(.1*np.sin(2*np.pi*440*np.arange(8000)/8000)).astype(np.float32).reshape(-1,1)
-            converted=np.concatenate([converter.process(signal[:4000]),converter.process(signal[4000:]),converter.flush()])
-            self.assertEqual(converted.shape,(16000,1))
-            self.assertAlmostEqual(float(np.max(np.abs(converted[200:-200]))),.1,places=3)
-        finally:converter.close()
+            signal = .1 * np.sin(2 * np.pi * 440 * np.arange(8000) / 8000)
+            # 20 ms Bluetooth capture periods should fit into individual
+            # 20 ms USB frames after a short resampler startup.
+            frames = [converter.process(signal[i:i + 160]) for i in range(0, len(signal), 160)]
+            self.assertTrue(all(len(frame) <= 320 for frame in frames))
+            self.assertTrue(all(len(frame) == 320 for frame in frames[3:]))
+            converted = np.concatenate([*frames, converter.flush()])
+            self.assertEqual(converted.shape, (16000, 1))
+            self.assertAlmostEqual(float(np.max(np.abs(converted[200:-200]))), .1, places=3)
+        finally:
+            converter.close()

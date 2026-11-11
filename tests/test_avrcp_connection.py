@@ -124,10 +124,12 @@ class AvrcpConnection(unittest.TestCase):
         try:self.assertEqual(outbound_mtu(left),48)
         finally:left.close();right.close()
 
-    def test_reconnect_uses_authenticated_resolved_peer_independently_of_hfp(self):
+    def test_reconnect_uses_authenticated_peer_even_when_sdp_is_unresolved(self):
         properties=dict(Connected=True,Paired=True,Trusted=True,ServicesResolved=True)
         self.assertTrue(radio_ready(properties))
-        for key in properties:
+        self.assertTrue(radio_ready(dict(properties,ServicesResolved=False)))
+        self.assertTrue(radio_ready(dict(Connected=True,Paired=True,Trusted=True)))
+        for key in ('Connected','Paired','Trusted'):
             self.assertFalse(radio_ready(dict(properties,**{key:False})))
         self.assertFalse(radio_ready({}))
 

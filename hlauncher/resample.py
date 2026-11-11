@@ -1,7 +1,12 @@
-"""Streaming 28-bit, linear-phase SoXR VHQ conversion; float unity gain throughout."""
+"""Streaming SoXR conversion for playback and real-time microphone capture."""
 import ctypes as C
 from ctypes.util import find_library
 import numpy as np
+
+SOXR_HQ = 4
+SOXR_VHQ = 6
+SOXR_DOUBLE_PRECISION = 16
+SOXR_VR = 32
 
 
 class Quality(C.Structure):
@@ -11,7 +16,7 @@ class Quality(C.Structure):
 
 
 class Resampler:
-    def __init__(self,input_rate,output_rate=48000,channels=2):
+    def __init__(self,input_rate,output_rate=48000,channels=2,*,realtime=False):
         self.state=None
         if channels not in (1,2):raise ValueError('Unsupported channel count')
         self.channels=channels
@@ -28,9 +33,12 @@ class Resampler:
         self.lib.soxr_process.restype=C.c_char_p
         self.lib.soxr_delete.argtypes=[C.c_void_p]
         self.lib.soxr_delete.restype=None
-        # VHQ = 28-bit precision; linear phase. Float32 interleaved I/O, scale 1
-        # and one processing thread are the documented defaults (no int clipping).
-        quality=self.lib.soxr_quality_spec(6,16)  # SOXR_VHQ | double-precision calculations.
+        # The variable-rate engine also works at a fixed ratio and emits small
+        # capture blocks without waiting for a playback-sized FFT batch.
+        if realtime:
+            quality = self.lib.soxr_quality_spec(SOXR_HQ, SOXR_VR)
+        else:
+            quality = self.lib.soxr_quality_spec(SOXR_VHQ, SOXR_DOUBLE_PRECISION)
         error=C.c_char_p()
         self.state=self.lib.soxr_create(input_rate,output_rate,channels,C.byref(error),None,C.byref(quality),None)
         if not self.state:raise RuntimeError(error.value.decode() if error.value else 'SoXR create failed')

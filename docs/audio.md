@@ -40,12 +40,21 @@ SoXR VHQ converter → direct ALSA, or buffered PipeWire input → EQ → native
 HDMI sink.
 
 The UI, frame rendering and Bluetooth control loop do not carry playback PCM.
-The CarPlay bridge reader also forwards PCM independently of H264 decoding and
-pixel conversion, so screen transitions cannot hold audio behind a slow video
-frame. Voice controls are applied by that reader in wire order before the next
-PCM packet. Encoded video/status buffering is bounded to 256 packets / 8 MiB;
-overflow reports an error and restarts the bridge rather than dropping H264
-reference frames or building an unbounded delay.
+The CarPlay USB bridge sends PCM and voice controls over a dedicated socket.
+Voice controls apply in wire order before the next PCM packet. A separate
+pipe carries 30 fps H.264 video. If that pipe backs up, the bridge sheds video
+until it can resume at an IDR with the stream's parameter sets. The screen can
+briefly hold its last picture while playback continues. The Pi gives the audio
+process higher CPU scheduling priority when permitted and runs the CarPlay
+decode thread at reduced priority.
+
+The phone and adapter still control when PCM reaches the USB bridge. A prolonged
+input gap can starve the HDMI output even with an idle Pi. Bridge statistics
+report PCM interarrival gaps, PCM packet counts, and dropped video packets.
+Compare those with PCM forwarding drops, mixer queue drops, and the HDMI
+player's underrun diagnostics in the debug log. A PCM gap can also reflect
+a pause or a change of stream. Player diagnostics are captured as they are
+reported instead of waiting for the player to exit.
 
 Source PCM is signed 16-bit at its declared rate. Mixing and EQ use float32 with
 unity gain. Sources at 48 kHz are not resampled. Other rates use OS-provided
@@ -53,7 +62,7 @@ unity gain. Sources at 48 kHz are not resampled. Other rates use OS-provided
 with float I/O, scale 1 and one converter thread. This replaces the much more
 expensive libsamplerate best-sinc path. Idle streams flush the converter tail
 after 150 ms and pad only their final partial block; new audio starts a fresh
-converter. Partial input packets are never individually padded.
+converter. Another stream becoming ready does not pad a live partial block.
 
 The native client in `native/pipewire_pcm.c` separates blocking stdin reads from
 the PipeWire realtime callback with a bounded, preallocated 200 ms SPSC ring.

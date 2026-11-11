@@ -48,8 +48,9 @@ requests and forwards 16 kHz mono PCM to the adapter. Identified Siri/call outpu
 defaults to Bluetooth SCO; diagnostics allow HDMI comparison. The radio gates
 microphone input behind a hands-free call state. This code path exists, but
 end-to-end Siri, incoming/outgoing calls and teardown still need in-car validation.
-Do not infer working microphone audio from a USB send count alone. Dongle events
-do not supply a complete caller list or ringing state.
+When the radio queries the active call over Bluetooth HFP, HLauncher supplies
+the name and number reported in the adapter's CallStatus packet. If neither
+field is available, it sends **CarPlay Call** in the optional name field.
 
 For testing, enable Debug and use the HondaLink Calls/mic diagnostics described
 in [recording a drive test](../../docs/setup.md#record-a-hondalink-drive-test).

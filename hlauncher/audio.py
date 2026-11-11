@@ -4,6 +4,8 @@ import array, math, os, select, subprocess, threading, time, sys
 from .playback import Playback
 from .config import RADIO_ADDRESS as DEVICE, RADIO_PATH as PATH
 
+CAPTURE_PERIOD_US = 20_000
+
 
 def levels(raw):
     samples = array.array("h")
@@ -76,14 +78,17 @@ class Capture:
         converter = None
         try:
             import dbus
+            from dbus.mainloop import NULL_MAIN_LOOP
 
-            bus = dbus.SystemBus(private=True)
+            # All calls on this short-lived capture bus are synchronous. Do not
+            # attach its watches to the launcher's GLib loop from this thread.
+            bus = dbus.SystemBus(private=True, mainloop=NULL_MAIN_LOOP)
             # libdbus otherwise exits the entire launcher when this temporary
             # connection is closed after Siri/call capture (even from a thread).
             bus.set_exit_on_disconnect(False)
             self.event(state='audio_capture_bus_open')
             manager = dbus.Interface(
-                bus.get_object("org.bluealsa", "/org/bluealsa"),
+                bus.get_object("org.bluealsa", "/org/bluealsa", introspect=False),
                 "org.freedesktop.DBus.ObjectManager",
             )
 
@@ -102,7 +107,7 @@ class Capture:
                 self.update(status="Connecting Bluetooth hands-free profile...")
                 try:
                     dbus.Interface(
-                        bus.get_object("org.bluez", PATH), "org.bluez.Device1"
+                        bus.get_object("org.bluez", PATH, introspect=False), "org.bluez.Device1"
                     ).ConnectProfile("0000111e-0000-1000-8000-00805f9b34fb", timeout=8)
                 except dbus.DBusException as exc:
                     self.event(state="audio_hfp_connect_error", error=str(exc))
@@ -145,7 +150,7 @@ class Capture:
                     "-c",
                     str(channels),
                     "--buffer-time=80000",
-                    "--period-time=20000",
+                    f"--period-time={CAPTURE_PERIOD_US}",
                 ],
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
@@ -156,7 +161,9 @@ class Capture:
                        output_rate=self.output_rate or rate)
             if self.output_rate and rate != self.output_rate:
                 from .resample import Resampler
-                converter=Resampler(rate,self.output_rate,channels=1)
+                converter = Resampler(rate, self.output_rate, channels=1, realtime=True)
+            # Keep pipe reads to one capture period for the live PCM path.
+            read_size = rate * CAPTURE_PERIOD_US // 1_000_000 * channels * 2 if self.output_rate else 3200
             last = time.monotonic()
             total = 0
             last_log = 0
@@ -168,7 +175,7 @@ class Capture:
                     [p.stdout] + ([p.stderr] if stderr_open else []), [], [], 0.2
                 )
                 for stream in ready:
-                    b = os.read(stream.fileno(), 3200)
+                    b = os.read(stream.fileno(), read_size if stream is p.stdout else 3200)
                     if stream is p.stderr:
                         if b:
                             diagnostics = (diagnostics + b.decode(errors="replace"))[
@@ -188,12 +195,11 @@ class Capture:
                     carry = data[end:]
                     dbfs, peak = levels(data[:end])
                     captured=data[:end]
-                    if self.output_rate:
+                    if converter:
                         import numpy as np
-                        samples=np.frombuffer(captured,dtype='<i2').astype(np.float32).reshape(-1,channels)/32768
-                        samples=samples.mean(axis=1,keepdims=True)
-                        if converter:samples=converter.process(samples)
-                        captured=np.clip(np.rint(samples*32768),-32768,32767).astype('<i2').tobytes()
+                        samples = np.frombuffer(captured, dtype='<i2').astype(np.float32) / 32768
+                        samples = converter.process(samples)
+                        captured = np.clip(np.rint(samples * 32768), -32768, 32767).astype('<i2').tobytes()
                     if captured:self.pcm(captured, self.output_rate or rate, 1 if self.output_rate else channels)
                     self.update(
                         status=(

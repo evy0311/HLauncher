@@ -83,11 +83,11 @@ def protocols(ui):
 
 def hardware(ui):
     kind=ui.mode.removeprefix('debug_')
-    p=page_for(ui,{'menu':'Hardware tests','audio':'Audio test','colors':'Video colors','inputs':'Radio buttons'}.get(kind,kind),
+    p=page_for(ui,{'menu':'Hardware tests','audio':'Audio test','colors':'Video colors','inputs':'Radio buttons','volume':'Radio volume'}.get(kind,kind),
                ui.system_diagnostics if kind=='menu' else ui.debug_tools)
     if kind=='menu':
         draw_rows(ui,p,[Row(title,lambda target=target:ui.debug_tools(target)) for title,target in
-                        (('Audio','audio'),('Video colors','colors'),('Radio buttons','inputs'))]+[
+                        (('Audio','audio'),('Video colors','colors'),('Radio buttons','inputs'),('Radio volume (experimental)','volume'))]+[
                             Row('HondaLink vehicle data',lambda:(ui.protocol_tab(1),ui.protocol_tests()))])
     elif kind=='audio':
         p.text((24,128),'Play a one-second tone through HDMI',19)
@@ -95,6 +95,15 @@ def hardware(ui):
             x=24+i*228;p.button((x,184,x+216,244),label,lambda label=label:ui.tone_test.start(label),size=23)
         p.button((24,280,240,324),'Stop',ui.tone_test.stop,secondary=True,size=22)
         p.notice(ui.tone_test.error or ('Playing '+ui.tone_test.channel if ui.tone_test.until else 'Ready'),360)
+    elif kind=='volume':
+        p.text((24,128),'Native radio volume · experimental',23)
+        p.text((24,170),'One press and release per tap. No automatic repeats.',17)
+        p.text((24,200),'Watch the radio volume display to confirm a change.',17)
+        p.button((24,248,352,320),'Volume down',lambda:ui.inputs.request_volume('down'),size=24)
+        p.button((368,248,696,320),'Volume up',lambda:ui.inputs.request_volume('up'),size=24)
+        p.text((24,350),p.fit(ui.inputs.volume_status,672,18),18)
+        p.text((24,394),'Sends Bluetooth volume keys to the head unit.',16)
+        p.text((24,422),'Radio support and HDMI-source behavior are unverified.',16)
     elif kind=='colors':
         for i,color in enumerate(('#ffffff','#ffff00','#00ffff','#00ff00','#ff00ff','#ff0000','#0000ff','#000000')):
             p.draw.rectangle((24+i*84,120,107+i*84,272),fill=color)

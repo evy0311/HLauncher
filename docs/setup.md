@@ -265,8 +265,9 @@ for comparison. Ordinary media stays on HDMI. The CarPlay dongle requests the
 radio microphone, converted to 16 kHz mono for USB, only during its voice/call
 capture requests. Returning to Settings preserves a background call. A stopped
 source, stale USB bridge or expired state lease clears voice routing/state.
-The dongle's call-audio events do not provide a caller list or incoming/outgoing
-ringing information; these are not fabricated.
+The factory phone screen can query the active call over Bluetooth. HLauncher
+uses Carlinkit caller metadata when available and supplies **CarPlay Call**
+when the adapter sends call audio without a name or number.
 
 After testing, summarize the retained captures over SSH:
 

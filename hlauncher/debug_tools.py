@@ -54,10 +54,14 @@ class InputMonitor:
         self.control_epochs = {'avrcp': 0, 'hfp': 0, 'hondalink-iap': 0}
         self.control_process = None
         self.traffic_pending = queue.Queue(128)
+        self.control_events = deque(maxlen=128)
         self.traffic = {source:dict(count=0,summary='No messages received',at=0)
                         for source in ('avrcp','hfp','hondalink')}
         self.traffic_dropped = 0
         self.steering_mode = None
+        self.volume_status = "Experimental / no command sent"
+        self.volume_requests = queue.Queue(1)
+        self.volume_last = -100
 
     def observe(self, source, summary, **fields):
         """Bound receiver-to-UI traffic; unknown messages never become button presses."""
@@ -67,10 +71,27 @@ class InputMonitor:
         try:self.traffic_pending.put_nowait(item)
         except queue.Full:self.traffic_dropped += 1
 
+    def request_volume(self, direction):
+        now=self.clock()
+        if direction not in ('up','down') or now-self.volume_last<2:return
+        process=self.control_process
+        if process is None or process.poll() is not None:
+            self.volume_status='Radio control worker unavailable'
+            return
+        self.volume_last=now
+        try:
+            self.volume_requests.put_nowait((now,direction))
+            self.volume_status='Requesting volume '+direction
+        except queue.Full:pass
+
     def receive_control(self,item):
         if not isinstance(item,dict):return
+        if item.get('state')=='radio_volume':
+            self.volume_status=str(item.get('status',''))[:100]
+            self.control_events.append(dict(state='radio_volume',status=self.volume_status))
+            return
         if item.get('state') in ('projection_hfp_tx','projection_hfp_state','protocol_packet'):
-            self.event(**item)
+            self.control_events.append(item)
             return
         if isinstance(item.get('observation'),dict):
             observation=item['observation']
@@ -83,8 +104,8 @@ class InputMonitor:
             self.control_epochs[transport] += 1
             self.control_status[transport]=str(item.get('status',''))[:100]
             details={key:item[key] for key in ('rx_packets','session_seconds') if key in item}
-            self.event(state='radio_control_transport',transport=transport,
-                       status=self.control_status[transport],**details)
+            self.control_events.append(dict(state='radio_control_transport',transport=transport,
+                                            status=self.control_status[transport],**details))
 
     def start(self):
         if sys.platform != 'linux' or not self.peer or self.peer == '00:00:00:00:00:00':
@@ -114,6 +135,10 @@ class InputMonitor:
             pass
 
     def drain(self):
+        # The pipe reader must keep accepting call commands even while the
+        # launcher is writing diagnostics or handling a voice transition.
+        for _ in range(len(self.control_events)):
+            self.event(**self.control_events.popleft())
         while True:
             try:item=self.traffic_pending.get_nowait()
             except queue.Empty:break
@@ -159,8 +184,9 @@ class InputMonitor:
         journal_trusted = False
         try:
             control = subprocess.Popen([sys.executable, '-m', 'hlauncher.controls_worker'],
-                stdout=subprocess.PIPE, stderr=None, bufsize=0)
+                stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=None, bufsize=0)
             self.control_process = control
+            os.set_blocking(control.stdin.fileno(), False)
             os.set_blocking(control.stdout.fileno(), False)
             buffers[control.stdout.fileno()] = b''
             journal = subprocess.Popen(['journalctl', '-f', '-n', '0', '-o', 'json', '_COMM=bluealsa'],
@@ -170,13 +196,22 @@ class InputMonitor:
             while not self.stop_event.is_set():
                 now = self.clock()
                 if control.poll() is not None and now >= next_scan:
-                    oldfd=control.stdout.fileno();control.stdout.close();buffers.pop(oldfd,None)
+                    oldfd=control.stdout.fileno();control.stdout.close();control.stdin.close();buffers.pop(oldfd,None)
                     self.control_status.clear()
                     control=subprocess.Popen([sys.executable,'-m','hlauncher.controls_worker'],
-                        stdout=subprocess.PIPE,stderr=None,bufsize=0)
+                        stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=None,bufsize=0)
                     self.control_process=control
+                    os.set_blocking(control.stdin.fileno(),False)
                     os.set_blocking(control.stdout.fileno(),False)
                     buffers[control.stdout.fileno()]=b''
+                try:
+                    requested,direction=self.volume_requests.get_nowait()
+                    if now-requested<.5:
+                        raw=(json.dumps(dict(volume=direction))+'\n').encode()
+                        if os.write(control.stdin.fileno(),raw)!=len(raw):raise OSError('Short command write')
+                    else:self.volume_status='Request expired / tap again'
+                except queue.Empty:pass
+                except OSError:self.volume_status='Radio control worker unavailable'
                 if now >= next_scan:
                     next_scan = now + 2
                     journal_trusted = self.single_radio_rfcomm()
@@ -227,13 +262,14 @@ class InputMonitor:
                             if parsed := hfp_command(message): self.offer(*parsed, 'hfp-command')
         except Exception as exc:
             self.status = 'Input observer unavailable: '+type(exc).__name__
-            self.event(state='radio_input_observer_error', error=str(exc))
+            self.control_events.append(dict(state='radio_input_observer_error', error=str(exc)))
         finally:
             if control:
                 control.terminate()
                 try: control.wait(timeout=2)
                 except subprocess.TimeoutExpired: control.kill(); control.wait(timeout=1)
                 control.stdout.close()
+                control.stdin.close()
             for fd in devices: os.close(fd)
             if journal:
                 journal.terminate()

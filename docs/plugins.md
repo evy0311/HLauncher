@@ -207,7 +207,10 @@ containing the boolean fields `call_audio`, `siri` and `recording`. These repres
 actual projection transport events; refresh at least every two seconds while
 running. Only the selected audio source reaches the HFP controller. A five-second
 producer lease and six-second exported-state lease prevent stale call state.
-Caller identity, call direction and ringing are not inferred from audio events.
+During call audio, `fields` can include a `call` object with optional `name`,
+`number` and boolean `incoming` values reported by the projection engine.
+Caller details follow the same lease and are omitted from protocol logs.
+The radio can query the active call through Bluetooth HFP.
 
 A plugin with `audio.capture` can request `audio.capture.start` with
 `sample_rate: 16000` for mono S16LE microphone PCM, delivered through `audio.format`

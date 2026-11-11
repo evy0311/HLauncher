@@ -1,6 +1,8 @@
 """Reuse installed node-carplay bridge/H264 decoder; bounded asynchronous input."""
 
 import base64, json, os, pathlib, struct, subprocess, sys, threading, time, select
+import socket
+from contextlib import ExitStack
 from hlauncher_sdk.picture import PictureSettings
 from hlauncher_sdk.projection import inherited_fds
 from collections import deque
@@ -11,6 +13,16 @@ RUNTIME = pathlib.Path(__file__).resolve().parent / "runtime/usb"
 LOG_DIR = pathlib.Path(
     os.environ.get("HLAUNCHER_LOG_DIR", "/var/log/hlauncher/carplay")
 )
+CONNECTION_STATUS = {
+    "waiting_dongle": "Waiting for Carlinkit USB dongle",
+    "dongle_ready": "Connect iPhone to Carlinkit",
+    "phone_connected": "iPhone connected; waiting for video",
+    "phone_disconnected": "iPhone disconnected",
+    "usb_failure": "USB dongle connection lost",
+}
+# The bridge requests a fresh keyframe every five seconds. Allow two requests
+# plus a margin before hiding a frozen frame when no disconnect event arrives.
+VIDEO_TIMEOUT_SECONDS = 12
 
 
 def read_packet(stream):
@@ -24,19 +36,20 @@ def read_packet(stream):
         return bytes(b)
 
     kind, n = struct.unpack("!BI", exact(5))
-    if kind not in (1, 2, 3) or n > 8 * 1024 * 1024:
+    if kind not in (1, 2, 3, 4) or n > 8 * 1024 * 1024 or (kind == 4 and n):
         raise ValueError("invalid bridge packet")
     return kind, exact(n)
 
 
 class BridgePackets:
-    """Drain PCM independently of decode/render; never discard H264 references."""
-    def __init__(self, stream, stop, audio, state):
+    """Drain audio and control while the decoder reads its separate video pipe."""
+    def __init__(self, stream, stop, audio, state, *, video):
         self.stream, self.stop, self.audio, self.state = stream, stop, audio, state
         self.condition = threading.Condition()
         self.pending = deque()
         self.bytes = 0
         self.error = None
+        self.video = video
         self.thread = threading.Thread(target=self.read, daemon=True)
         self.thread.start()
 
@@ -51,12 +64,20 @@ class BridgePackets:
                 if kind == 3:
                     self.audio(data)
                     continue
-                if kind == 2:
-                    # Apply voice controls in wire order before the next PCM packet.
-                    self.state(json.loads(data))
+                if kind != 2:
+                    raise ValueError('Unexpected packet on CarPlay audio channel')
+                # Apply voice controls in wire order before the next PCM packet.
+                state = json.loads(data)
+                self.state(state)
+                if state.get('state') == 'projection_call':
+                    continue  # Caller details are never queued for UI diagnostics.
                 with self.condition:
-                    if len(self.pending) >= 256 or self.bytes + len(data) > 8*1024*1024:
-                        raise RuntimeError('CarPlay video/status backlog exceeded')
+                    # Audio/voice and connection state already took effect. A
+                    # stalled video consumer can lose old UI notifications.
+                    while self.pending and (len(self.pending) >= 256
+                                            or self.bytes + len(data) > 8*1024*1024):
+                        _, old = self.pending.popleft()
+                        self.bytes -= len(old)
                     self.pending.append((kind, data))
                     self.bytes += len(data)
                     self.condition.notify()
@@ -69,15 +90,23 @@ class BridgePackets:
         with self.condition:
             if self.error:
                 raise self.error
-            if not self.pending:
+            if not self.pending and self.video is None:
                 self.condition.wait(.05)
             if self.error:
                 raise self.error
-            if not self.pending:
-                return None
-            kind, data = self.pending.popleft()
-            self.bytes -= len(data)
-            return kind, data
+            if self.pending:
+                kind, data = self.pending.popleft()
+                self.bytes -= len(data)
+                return kind, data
+        if self.video is not None and select.select([self.video], [], [], .02)[0]:
+            try:
+                kind, data = read_packet(self.video)
+                if kind not in (1, 4):
+                    raise ValueError('Unexpected packet on CarPlay video channel')
+                return kind, data
+            except (EOFError, ValueError):
+                self.video = None
+        return None
 
 
 class CarplayHDMI:
@@ -92,6 +121,8 @@ class CarplayHDMI:
         self.stop_event = threading.Event()
         self.frame = None
         self.phone_connected = False
+        self.last_decoded_at = None
+        self.connection_epoch = 0
         self.version = 0
         self.status = "Select CarPlay"
         self.status_version = 0
@@ -99,6 +130,7 @@ class CarplayHDMI:
         self.frames = 0
         self.host_ui_requested = False
         self.audio_forwarded = self.audio_dropped = 0
+        self.bridge_audio = {}
         self.decode_packets = 0
         self.decode_seconds = 0.0
         self.decode_max_ms = 0.0
@@ -109,6 +141,7 @@ class CarplayHDMI:
         self.visible = threading.Event()
         self.background_video_packets = 0
         self.voice = dict(call_audio=False,siri=False,recording=False)
+        self.call_details = {}
         self.mic_queue=deque(maxlen=10)
         self.mic_received=self.mic_dropped=self.mic_usb_bytes=self.mic_usb_errors=self.mic_usb_dropped=0
         self.mic_format=None
@@ -139,6 +172,7 @@ class CarplayHDMI:
         self.touch_router = TouchRouter()
         self.frame = None
         self.phone_connected = False
+        self.last_decoded_at = None
         self.frames = 0
         self.host_ui_requested = False
         self.adapter_branding="waiting"
@@ -275,7 +309,10 @@ class CarplayHDMI:
         with self.lock:
             if not self.proc or self.proc.poll() is not None or time.monotonic()-self.last_bridge_message>5:
                 return dict(call_audio=False,siri=False,recording=False)
-            return dict(self.voice)
+            voice = dict(self.voice)
+            if voice['call_audio'] and self.call_details:
+                voice['call'] = dict(self.call_details)
+            return voice
 
     def finish_button(self, sequence, result):
         with self.lock:
@@ -304,6 +341,7 @@ class CarplayHDMI:
                 "decoded_frames": self.frames,
                 "audio_packets_forwarded": self.audio_forwarded,
                 "audio_packets_dropped": self.audio_dropped,
+                **self.bridge_audio,
                 "input_packets": self.decode_packets,
                 "video_visible": self.visible.is_set(),
                 "background_video_packets": self.background_video_packets,
@@ -342,7 +380,11 @@ class CarplayHDMI:
 
     def snapshot(self):
         with self.lock:
-            return self.version, self.frame if self.phone_connected else None, self.status_version, self.status
+            frame = self.frame if self.phone_connected else None
+            if (frame is not None and self.last_decoded_at is not None
+                    and time.monotonic() - self.last_decoded_at >= VIDEO_TIMEOUT_SECONDS):
+                return self.version, None, self.status_version, "CarPlay video paused. Check your iPhone connection."
+            return self.version, frame, self.status_version, self.status
 
     def forward_audio(self, data):
         self.last_bridge_message = time.monotonic()
@@ -364,30 +406,47 @@ class CarplayHDMI:
                 self.notify("carplay_audio_forward_error", error=str(exc))
 
     def receive_connection_state(self, state):
-        if state.get('state')=='phone_connected':
-            with self.lock:self.phone_connected=True
-        elif state.get('state') in ('phone_disconnected','usb_failure','waiting_dongle','dongle_ready'):
-            with self.lock:
-                self.phone_connected=False
-                self.frame=None
-                self.version+=1
+        kind = state.get('state')
+        if kind not in CONNECTION_STATUS:
+            return
+        with self.lock:
+            self.phone_connected = kind == 'phone_connected'
+            if not self.phone_connected:
+                self.connection_epoch += 1
+                self.last_decoded_at = None
+                self.frame = None
+                self.version += 1
+                self.voice = dict(call_audio=False, siri=False, recording=False)
+                self.call_details = {}
+                self.voice_streams.clear()
+                if kind in ('phone_disconnected', 'usb_failure'):
+                    self.queue_media(clear=True)
+            self.set_status(CONNECTION_STATUS[kind])
 
     def receive_state(self, state):
         self.last_bridge_message = time.monotonic()
         self.receive_connection_state(state)
+        if state.get('state') == 'stream_stats':
+            with self.lock:
+                self.bridge_audio = {key: state[key] for key in
+                                     ('pcm_packets', 'pcm_gap_max_ms', 'video_packets_dropped')
+                                     if key in state}
         if state.get('state')=='projection_voice':
             fields=state.get('fields',{})
             if set(fields)==set(self.voice) and all(type(v) is bool for v in fields.values()):
-                with self.lock:self.voice=dict(fields)
+                with self.lock:
+                    if self.voice['call_audio'] and not fields['call_audio']:
+                        self.call_details = {}
+                    self.voice = dict(fields)
+        if state.get('state') == 'projection_call':
+            details = state.get('call')
+            with self.lock:
+                self.call_details = details if isinstance(details, dict) else {}
         if state.get('state')=='audio_control':
             command=state.get('command');stream=state.get('audio_type')
             role='call' if command in (4,5) else 'siri'
             if command in (4,8) and type(stream) is int and 0<=stream<=255:self.voice_streams[role]=stream
             if command in (5,9):self.voice_streams.pop(role,None)
-        if state.get('state') in ('phone_disconnected', 'usb_failure'):
-            with self.lock:
-                self.voice = dict(call_audio=False, siri=False, recording=False)
-                self.voice_streams.clear()
 
     def run(self, w, h):
         decoder = None
@@ -400,15 +459,28 @@ class CarplayHDMI:
             )
             from h264 import H264StreamDecoder
 
-            decoder = H264StreamDecoder(w, h)
             picture = PictureSettings()
-            decoder.decoder.picture = dict(picture.values)
+            def open_decoder():
+                try:
+                    result = H264StreamDecoder(w, h)
+                    result.decoder.picture = dict(picture.values)
+                    return result
+                except (OSError, RuntimeError, ValueError) as exc:
+                    self.notify('carplay_video_error', error=str(exc))
+                    return None
+
             picture_check = 0
             last_color_metadata = None
             logdir = LOG_DIR
             logdir.mkdir(parents=True, exist_ok=True)
-            with (logdir / f"carplay-hdmi-node-{time.time_ns()}.log").open("wb") as err:
-                env = dict(os.environ, CIVIC_CARPLAY_FPS="60", CIVIC_CARPLAY_RESET="0")
+            with ExitStack() as stack:
+                err = stack.enter_context((logdir / f"carplay-hdmi-node-{time.time_ns()}.log").open("wb"))
+                pcm_reader, pcm_writer = socket.socketpair()
+                stack.enter_context(pcm_reader)
+                stack.enter_context(pcm_writer)
+                pcm = stack.enter_context(pcm_reader.makefile('rb', buffering=0))
+                env = dict(os.environ, CIVIC_CARPLAY_FPS="30", CIVIC_CARPLAY_RESET="0",
+                           HLAUNCHER_CARPLAY_PCM_FD=str(pcm_writer.fileno()))
                 proc = subprocess.Popen(
                     ["/usr/bin/node", str(RUNTIME / "bridge.mjs")],
                     cwd=RUNTIME,
@@ -417,48 +489,69 @@ class CarplayHDMI:
                     stderr=err,
                     bufsize=0,
                     env=env,
-                    pass_fds=inherited_fds(),
+                    pass_fds=(*inherited_fds(), pcm_writer.fileno()),
                 )
+                pcm_writer.close()
                 self.proc = proc
                 self.notify("carplay_hdmi_bridge_started", pid=proc.pid)
                 threading.Thread(
                     target=self.send_inputs, args=(proc,), daemon=True
                 ).start()
-                titles = {
-                    "waiting_dongle": "Waiting for Carlinkit USB dongle",
-                    "dongle_ready": "Connect iPhone to Carlinkit",
-                    "phone_connected": "iPhone connected; waiting for video",
-                    "phone_disconnected": "iPhone disconnected",
-                    "usb_failure": "USB dongle connection lost",
-                }
-                packets = BridgePackets(proc.stdout, reader_stop, self.forward_audio, self.receive_state)
+                packets = BridgePackets(pcm, reader_stop, self.forward_audio, self.receive_state,
+                                        video=proc.stdout)
+                # On Linux nice is per thread. The bridge, audio reader and input
+                # threads above keep their original priority.
+                if sys.platform.startswith('linux'):
+                    try:
+                        os.nice(5)
+                    except OSError as exc:
+                        self.notify('carplay_video_priority_error', error=str(exc))
+                decoder = open_decoder()
                 last_visible = False
+                decoded_epoch = None
                 while not self.stop_event.is_set():
                     visible = self.visible.is_set()
-                    if visible and not last_visible:
-                        preview = decoder.decoder.redraw() if self.phone_connected else None
+                    if decoder and visible and not last_visible:
+                        preview = decoder.decoder.redraw()
                         if preview is not None:
                             with self.lock:
-                                self.frame = preview
-                                self.version += 1
+                                if self.phone_connected and decoded_epoch == self.connection_epoch:
+                                    self.frame = preview
+                                    self.version += 1
                     last_visible = visible
                     if time.monotonic() - picture_check > .1:
                         picture_check = time.monotonic()
-                        if picture.refresh():
+                        if picture.refresh() and decoder:
                             decoder.decoder.picture = dict(picture.values)
-                            preview = decoder.decoder.redraw() if visible and self.phone_connected else None
+                            preview = decoder.decoder.redraw() if visible else None
                             if preview is not None:
                                 with self.lock:
-                                    self.frame = preview
-                                    self.version += 1
+                                    if self.phone_connected and decoded_epoch == self.connection_epoch:
+                                        self.frame = preview
+                                        self.version += 1
                             self.notify('display_picture_applied', **picture.values)
                     packet = packets.take()
                     if packet is None:
                         continue
                     kind, data = packet
+                    if kind == 4:
+                        if decoder:
+                            decoder.close()
+                        decoder = open_decoder()
+                        continue
                     if kind == 1:
+                        if decoder is None:
+                            continue
+                        with self.lock:
+                            frame_epoch = self.connection_epoch if self.phone_connected else None
                         began = time.perf_counter()
-                        pictures = decoder.feed(data, render=visible)
+                        try:
+                            pictures = decoder.feed(data, render=visible)
+                        except (RuntimeError, ValueError) as exc:
+                            self.notify('carplay_video_error', error=str(exc))
+                            decoder.close()
+                            decoder = open_decoder()
+                            continue
                         if not visible:
                             self.background_video_packets += 1
                         elapsed = time.perf_counter() - began
@@ -471,7 +564,10 @@ class CarplayHDMI:
                             self.decode_max_ms = max(self.decode_max_ms, elapsed * 1000)
                         for frame in pictures:
                             with self.lock:
-                                if not self.phone_connected:continue
+                                if not self.phone_connected or frame_epoch != self.connection_epoch:
+                                    continue
+                                decoded_epoch = frame_epoch
+                                self.last_decoded_at = time.monotonic()
                                 self.frame = frame
                                 self.version += 1
                                 self.frames += 1
@@ -506,13 +602,6 @@ class CarplayHDMI:
                         if state.get("state") == "host_ui_requested":
                             with self.lock:
                                 self.host_ui_requested = True
-                        if state.get("state") in titles:
-                            self.set_status(titles[state["state"]])
-                            if state["state"] in ("phone_disconnected", "usb_failure"):
-                                self.queue_media(clear=True)
-                                with self.lock:
-                                    self.frame = None
-                                    self.version += 1
         except Exception as exc:
             if not self.stop_event.is_set():
                 with self.lock:
@@ -543,5 +632,6 @@ class CarplayHDMI:
                             stream.close()
             with self.lock:
                 self.voice = dict(call_audio=False, siri=False, recording=False)
+                self.call_details = {}
                 self.voice_streams.clear()
             self.proc = None

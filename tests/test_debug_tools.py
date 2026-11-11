@@ -47,6 +47,18 @@ class DebugTools(unittest.TestCase):
         monitor.offer('dial','trigger','hfp-command');monitor.drain()
         self.assertEqual(monitor.buttons['dial']['count'],1)
 
+    def test_followup_hangups_reach_the_queue_without_synchronous_diagnostics(self):
+        events = []
+        monitor = InputMonitor(lambda **event: events.append(event), '')
+        for _ in range(2):
+            monitor.receive_control(dict(state='projection_hfp_tx', summary='+CIEV:2,1'))
+            monitor.receive_control(dict(button='hang_up', action='trigger', source='hfp-command'))
+            monitor.receive_control(dict(state='projection_hfp_tx', summary='+CIEV:2,0'))
+        self.assertEqual(events, [])
+        self.assertEqual([button['button'] for button in monitor.drain()], ['hang_up', 'hang_up'])
+        self.assertEqual([event['summary'] for event in events if event['state'] == 'projection_hfp_tx'],
+                         ['+CIEV:2,1', '+CIEV:2,0'] * 2)
+
     def test_phone_class_preserves_other_configuration_and_is_idempotent(self):
         import importlib.util
         path=Path(__file__).resolve().parents[1]/'scripts/configure_phone_identity.py'

@@ -38,6 +38,38 @@
      }
    }
  }
+@@ -254,6 +254,7 @@
+ enum MediaType {
+   Data = 1,
+   AlbumCover = 3,
++  CallStatus = 100,
+ }
+ 
+ export class MediaData extends Message {
+@@ -270,6 +271,7 @@
+         }
+       }
+     | { type: MediaType.AlbumCover; base64Image: string }
++    | { type: MediaType.CallStatus; call: unknown }
+ 
+   constructor(header: MessageHeader, data: Buffer) {
+     super(header)
+@@ -285,6 +287,15 @@
+       this.payload = {
+         type,
+         media: JSON.parse(mediaData.toString('utf8')),
++      }
++    } else if (type === MediaType.CallStatus) {
++      if (data.length > 1024) return
++      const nul = data.indexOf(0, 4)
++      try {
++        const call: unknown = JSON.parse(data.subarray(4, nul < 0 ? data.length : nul).toString('utf8'))
++        this.payload = { type, call }
++      } catch {
++        // A JSON error can contain caller details. Ignore malformed call packets.
+       }
+     } else {
+       console.info(`Unexpected media type: ${type}`)
 --- a/src/modules/messages/sendable.ts
 +++ b/src/modules/messages/sendable.ts
 @@ -273,6 +273,8 @@

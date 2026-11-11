@@ -2,6 +2,8 @@
 import hashlib
 import re
 import struct
+import time
+from .projection_voice import normalize_call
 
 OPERATIONS = {0x44:'play',0x46:'pause',0x45:'stop',0x4b:'next',0x4c:'previous'}
 # BlueALSA 4 owns these commands even when its external dispatcher is open.
@@ -10,12 +12,17 @@ BUILTIN = {'+BRSF','+CIND','+CMER','+BIA','+NREC','+VGM','+VGS','+BTRH',
 
 
 class HfpProjection:
-    """Mirror only confirmed call-audio and Siri state; no caller or ringing fiction."""
+    """Mirror confirmed call audio and Siri state."""
     def __init__(self):
         self.previous=None
+        self.call_started = None
 
     def update(self, fields):
         current=(fields.get('call_audio') is True,fields.get('siri') is True)
+        if not current[0]:
+            self.call_started = None
+        elif self.call_started is None:
+            self.call_started = time.monotonic()
         messages=[]
         for i,prefix in enumerate(('+CIEV:2,','+BVRA:')):
             if self.previous is None:
@@ -52,7 +59,7 @@ def avrcp_observation(raw,reply=None):
     if reply and len(reply)>=6:summary+=f' / reply 0x{reply[3]:02x}'
     return dict(source='avrcp',summary=summary,bytes=len(raw))
 
-def hfp_request(raw):
+def hfp_request(raw, voice=None):
     """Return (responses, event). Never log dial strings or invent call state."""
     if len(raw)>512: return (), None
     text=raw.decode('ascii',errors='replace').strip().upper()
@@ -71,7 +78,22 @@ def hfp_request(raw):
     # Observe these physical requests even though projection has no dial API.
     if cmd.startswith('D'): return ('ERROR',), ('dial','trigger')
     if cmd=='+BLDN': return ('ERROR',), ('redial','trigger')
-    if cmd=='+CLCC': return ('OK',), None  # No known calls, no synthetic call.
+    if cmd == '+CLCC':
+        if not voice or voice.get('call_audio') is not True:
+            return ('OK',), None
+        details = normalize_call(voice.get('call'))
+        number = details.get('number', '')
+        label = details.get('name')
+        if not label and not number:
+            label = 'CarPlay Call' if voice.get('plugin') == 'carplay' else 'Projection Call'
+        # HFP requires a direction. Use outgoing as the neutral default when
+        # the adapter reports only call audio, with no incoming call event.
+        direction = int(details.get('incoming', False))
+        number_type = 145 if number.startswith('+') else 129
+        listing = f'+CLCC: 1,{direction},0,0,0,"{number}",{number_type}'
+        if label:
+            listing += f',"{label}"'
+        return (listing, 'OK'), None
     if cmd in ('+CNUM','+COPS?'): return ('OK',), None
     # Dial/redial needs a destination-aware telephony API. Never reinterpret it as answer.
     return ('ERROR',), None

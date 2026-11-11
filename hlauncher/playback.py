@@ -55,6 +55,7 @@ class Playback:
         self.start_worker = start_worker
         self.thread = None
         self.proc = None
+        self.stderr_reader = None
         self.written = self.failures = 0
         self.peak=0.0
         self.clip_samples=0
@@ -124,14 +125,19 @@ class Playback:
                     cut = (len(entry.pending) - RATE*4 + 7) // 8 * 8
                     del entry.pending[:cut]
                     entry.dropped += cut
-        if not any(len(entry.pending)>=BLOCK or (entry.pending and time.monotonic()-entry.last_input>.15)
-                   for entry,_ in jobs):return None
+        now = time.monotonic()
+        ready = [entry for entry, _ in jobs if len(entry.pending) >= BLOCK
+                 or (entry.pending and now - entry.last_input > .15)]
+        if not ready:
+            return None
         mixed=np.zeros(FRAMES*2,dtype=np.float32)
-        for entry,_ in jobs:
-            if entry.pending:
-                data=bytes(entry.pending[:BLOCK]);del entry.pending[:BLOCK]
-                data+=bytes(BLOCK-len(data))
-                mixed+=np.frombuffer(data,dtype='<f4')
+        for entry in ready:
+            # Another stream becoming ready must not pad a live partial block
+            # with silence. Hold those samples for their next PCM packet.
+            data = bytes(entry.pending[:BLOCK])
+            del entry.pending[:BLOCK]
+            data += bytes(BLOCK - len(data))
+            mixed += np.frombuffer(data, dtype='<f4')
         peak=float(np.max(np.abs(mixed)))
         self.peak=max(self.peak,peak)
         self.clip_samples+=int(np.count_nonzero(np.abs(mixed)>1.0))
@@ -198,6 +204,10 @@ class Playback:
                             stdin=subprocess.PIPE, stdout=subprocess.DEVNULL,
                             stderr=subprocess.PIPE, env=env, bufsize=0, start_new_session=True,
                             pipesize=131072)  # Float stereo uses twice the former S16 pipe capacity.
+                        self.stderr_reader = threading.Thread(
+                            target=self.read_diagnostics, args=(self.proc.stderr,), daemon=True,
+                        )
+                        self.stderr_reader.start()
                         startup_until = time.monotonic() + (5 if applied[1] else 2)
                         try:
                             code = self.proc.wait(timeout=.05)
@@ -239,8 +249,17 @@ class Playback:
         finally:
             self.reap()
 
+    def read_diagnostics(self, stream):
+        # Timestamp underruns as they happen and keep stderr from filling up.
+        with stream:
+            for line in iter(lambda: stream.readline(4096), b''):
+                diagnostic = line.decode(errors='replace').strip()
+                if diagnostic:
+                    self.event(state='audio_hdmi_alsa', diagnostic=diagnostic)
+
     def reap(self):
         proc, self.proc = self.proc, None
+        reader, self.stderr_reader = self.stderr_reader, None
         if not proc:
             return
         if proc.poll() is None:
@@ -259,8 +278,6 @@ class Playback:
                 proc.wait(timeout=2)
             except subprocess.TimeoutExpired:
                 return
-        diagnostic = proc.stderr.read(4096).decode(errors='replace').strip()
-        if diagnostic:
-            self.event(state='audio_hdmi_alsa', diagnostic=diagnostic)
         proc.stdin.close()
-        proc.stderr.close()
+        if reader:
+            reader.join(timeout=.2)

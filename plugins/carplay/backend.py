@@ -419,8 +419,6 @@ class CarplayHDMI:
                 self.voice = dict(call_audio=False, siri=False, recording=False)
                 self.call_details = {}
                 self.voice_streams.clear()
-                if kind in ('phone_disconnected', 'usb_failure'):
-                    self.queue_media(clear=True)
             self.set_status(CONNECTION_STATUS[kind])
 
     def receive_state(self, state):
@@ -512,7 +510,7 @@ class CarplayHDMI:
                 while not self.stop_event.is_set():
                     visible = self.visible.is_set()
                     if decoder and visible and not last_visible:
-                        preview = decoder.decoder.redraw()
+                        preview = decoder.decoder.redraw() if self.phone_connected else None
                         if preview is not None:
                             with self.lock:
                                 if self.phone_connected and decoded_epoch == self.connection_epoch:
@@ -523,7 +521,7 @@ class CarplayHDMI:
                         picture_check = time.monotonic()
                         if picture.refresh() and decoder:
                             decoder.decoder.picture = dict(picture.values)
-                            preview = decoder.decoder.redraw() if visible else None
+                            preview = decoder.decoder.redraw() if visible and self.phone_connected else None
                             if preview is not None:
                                 with self.lock:
                                     if self.phone_connected and decoded_epoch == self.connection_epoch:
@@ -599,6 +597,8 @@ class CarplayHDMI:
                             self.finish_button(sequence, result)
                         if state.get('state') == 'media_metadata':
                             self.queue_media(normalize(state.get('media')))
+                        elif state.get('state') in ('phone_disconnected', 'usb_failure'):
+                            self.queue_media(clear=True)
                         if state.get("state") == "host_ui_requested":
                             with self.lock:
                                 self.host_ui_requested = True

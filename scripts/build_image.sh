@@ -71,13 +71,15 @@ done
 find "$work/root/tmp/hlauncher-source" -type d \( -name node_modules -o -name __pycache__ \) -prune -exec rm -rf {} +
 chroot "$work/root" /bin/bash /tmp/hlauncher-source/scripts/install.sh
 chroot "$work/root" /bin/bash /tmp/hlauncher-source/scripts/install_android_auto.sh
+state_uuid=$(blkid -s UUID -o value "${loop}p3")
+# Prepare the image while /opt/hlauncher is still a directory on the offline root.
+python3 "$source_root/scripts/prepare_image.py" --root "$work/root" --persist "$work/persist" --state-uuid "$state_uuid" --country "$country"
 if [[ -n ${HLAUNCHER_RELEASE_VERSION:-} ]]; then
   python3 "$source_root/scripts/package_release.py" --root "$work/root" --persist "$work/persist" \
     --version "$HLAUNCHER_RELEASE_VERSION" --key "$HLAUNCHER_RELEASE_KEY" \
     --output "$HLAUNCHER_RELEASE_OUTPUT" --commit "$HLAUNCHER_RELEASE_COMMIT"
+  systemctl --root "$work/root" enable hlauncher-updater.service
 fi
-state_uuid=$(blkid -s UUID -o value "${loop}p3")
-python3 "$source_root/scripts/prepare_image.py" --root "$work/root" --persist "$work/persist" --state-uuid "$state_uuid" --country "$country"
 if [[ -n ${HLAUNCHER_LOCAL_TEST_SSH_KEY:-} ]]; then
   python3 "$source_root/scripts/configure_test_image.py" --root "$work/root" --public-key "$HLAUNCHER_LOCAL_TEST_SSH_KEY"
 fi

@@ -80,7 +80,7 @@ class Launcher:
         self.storage_info = dict(protected=False, available=False, message='Checking storage layout')
         self.storage_checked = 0
         self.setup_list_page = 0
-        self.mode = "home"
+        self.mode = "home" if self.prefs.safety_notice_accepted else "safety_notice"
         self.page = 0
         self.settings_page = 0
         self.actions = []
@@ -98,6 +98,9 @@ class Launcher:
         return ui_font(size + 2 if size >= 18 else size, 600 if size >= 18 else 400)
 
     def setup_page(self, restart=False):
+        if not self.prefs.safety_notice_accepted:
+            self.safety_notice()
+            return
         from .onboarding import Onboarding
         self.tone_test.stop()
         self.host.deactivate()
@@ -218,7 +221,11 @@ class Launcher:
         self.draw()
 
     def recovery_page(self):
-        self.recovery_return = self.setup_resume if self.mode=='onboarding' else self.updates_page if self.mode=='updates' else self.system_settings
+        self.recovery_return = {
+            'safety_notice': self.safety_notice,
+            'onboarding': self.setup_resume,
+            'updates': self.updates_page,
+        }.get(self.mode, self.system_settings)
         self.host.deactivate()
         self.mode = 'recovery_settings'
         self.press = None
@@ -285,14 +292,38 @@ class Launcher:
             "com.honda.hondalink.launcher",
         ):
             return False
-        if not self.prefs.data['setup_complete']:
+        self.show_start_page()
+        return True
+
+    def safety_notice(self, message=''):
+        self.mode = 'safety_notice'
+        self.pending_default = False
+        self.press = None
+        self.banner = message
+        self.draw()
+
+    def accept_safety_notice(self):
+        try:
+            self.prefs.accept_safety_notice()
+        except OSError:
+            self.safety_notice('Could not save your choice. Try again.')
+            return
+        self.show_start_page()
+
+    def show_start_page(self):
+        if not self.prefs.safety_notice_accepted:
+            self.safety_notice()
+        elif not self.prefs.data['setup_complete']:
+            self.banner = ''
             self.setup_page()
         else:
             self.home()
             self.pending_default = True
-        return True
 
     def home(self, message=""):
+        if not self.prefs.safety_notice_accepted:
+            self.safety_notice()
+            return
         if hasattr(self, 'wizard') and not self.prefs.data['setup_complete']:
             self.setup_page()
             return
@@ -314,6 +345,16 @@ class Launcher:
         self.mode = "settings"
         self.settings_page = 0
         self.banner = ""
+        self.press = None
+        self.draw()
+
+    def about_settings(self):
+        self.mode = 'about_settings'
+        self.press = None
+        self.draw()
+
+    def legal_info(self):
+        self.mode = 'legal_info'
         self.press = None
         self.draw()
 
@@ -697,6 +738,9 @@ class Launcher:
         return False
 
     def open_plugin(self, plugin_id):
+        if not self.prefs.safety_notice_accepted:
+            self.safety_notice()
+            return
         if plugin_id == 'obd':
             self.obd.close()
             self.obd.enabled=False
@@ -759,6 +803,10 @@ class Launcher:
 
     def draw(self):
         self.scroll_view=None
+        if self.mode == "safety_notice":
+            from .ui.onboarding import draw_safety_notice
+            draw_safety_notice(self)
+            return
         if self.mode == "home":
             from .ui.home import draw_launcher
             draw_launcher(self)
@@ -905,7 +953,8 @@ class Launcher:
         if time.monotonic()-getattr(self,'projection_checked',0)>1:
             self.projection_checked=time.monotonic()
             manifest=self.manifests.get('carplay')
-            if (self.prefs.data['setup_complete'] and not self.pending_default and self.mode not in ('onboarding','shutdown_pending')
+            if (self.prefs.safety_notice_accepted and self.prefs.data['setup_complete']
+                    and not self.pending_default and self.mode not in ('onboarding','shutdown_pending')
                     and manifest and self.prefs.enabled(manifest)):
                 from .projection import carplay_adapter_present
                 if self.host.branding.pending or carplay_adapter_present():
@@ -931,7 +980,7 @@ class Launcher:
                 self.picture_values = dict(self.picture.values)
                 self.apply_picture()
                 if self.mode != 'plugin':self.draw()
-        if self.pending_default and self.prefs.data['setup_complete']:
+        if self.pending_default and self.prefs.safety_notice_accepted and self.prefs.data['setup_complete']:
             self.pending_default = False
             plugin_id = self.prefs.data["default_plugin"]
             if plugin_id in self.manifests and self.prefs.enabled(

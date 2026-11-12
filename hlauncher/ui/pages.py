@@ -17,6 +17,19 @@ def page_for(ui,title,back=None):
                 ui.pressed_box if ui.press is not None else None,show_clock=ui.prefs.data['show_clock'])
 
 
+def about(ui):
+    page = page_for(ui, 'About', ui.settings)
+    page.bar((24,144,696,200), 'Legal info', ui.legal_info)
+    present(ui, page)
+
+
+def legal_info(ui):
+    from .onboarding import safety_notice_text
+    page = page_for(ui, 'Legal info', ui.about_settings)
+    safety_notice_text(page)
+    present(ui, page)
+
+
 def system(ui):
     p=page_for(ui,'System',ui.settings)
     info=ui.storage_info
@@ -282,4 +295,4 @@ def waiting(ui):
 
 PAGES={'ssh_settings':ssh,'adapter_branding':adapter_branding,'appearance_settings':appearance,'startup_settings':startup,'system_settings':system,'recovery_settings':network,'hotspot_settings':hotspot,'storage_confirm':storage,
        'plugins_settings':plugins,'plugin_detail':plugin_detail,'tile_colors':themes,'colors':picture,'hdmi_test':hdmi,
-       'shutdown_confirm':shutdown,'shutdown_pending':shutdown}
+       'shutdown_confirm':shutdown,'shutdown_pending':shutdown,'about_settings':about,'legal_info':legal_info}

@@ -19,22 +19,29 @@ class Row:
 
 
 def render(rows, back, *, theme='Red', size=(720,480), clock=None,
-           pressed=None, banner='', version='', show_clock=False):
+           pressed=None, banner='', version='', show_clock=False, footer=None):
     back_box=scale_bounds(BACK_BOUNDS,size)
     image=render_chrome(theme,child=True,clock=clock,pressed=pressed==back_box,show_clock=show_clock)
     d=ImageDraw.Draw(image)
     heading=caption('Settings',28)
     image.paste(heading,(24,72),heading)
     actions=[(back_box,back)]
+    tiles = []
     for i,row in enumerate(rows):
         x=24+(i%2)*344;y=144+(i//2)*88
-        box=(x,y,x+328,y+76);actual=scale_bounds(box,size)
-        image.paste(art.settings_bar(theme,328,76),(x,y))
+        tiles.append((row, (x,y,x+328,y+76), 29))
+    if footer is not None:
+        tiles.append((footer, (24,408,696,446), 23))
+    for row, box, font_size in tiles:
+        x, y, right, bottom = box
+        width, height = right-x, bottom-y
+        actual=scale_bounds(box,size)
+        image.paste(art.settings_bar(theme,width,height),(x,y))
         if pressed==actual:
-            overlay=Image.new('RGBA',(328,76),(255,255,255,25))
+            overlay=Image.new('RGBA',(width,height),(255,255,255,25))
             image.paste(overlay,(x,y),overlay)
-        title=caption(row.title,29)
-        image.paste(title,(x+(328-title.width)//2,y+(76-title.height)//2),title)
+        title=caption(row.title,font_size)
+        image.paste(title,(x+(width-title.width)//2,y+(height-title.height)//2),title)
         actions.append((actual,row.action))
     if version:d.text((24,452),'HLauncher '+version,font=interface_font(14),fill='#93929e',anchor='lt')
     if banner:
@@ -54,7 +61,8 @@ def draw_launcher(launcher):
           Row('System','',launcher.system_settings)]
     frame=render(rows,launcher.home,theme=launcher.prefs.data['tile_color'],
                  size=(launcher.fb.w,launcher.fb.h),banner=launcher.banner,version=__version__,
-                 pressed=launcher.pressed_box if launcher.press is not None else None,show_clock=launcher.prefs.data['show_clock'])
+                 pressed=launcher.pressed_box if launcher.press is not None else None,
+                 show_clock=launcher.prefs.data['show_clock'],footer=Row('About','',launcher.about_settings))
     launcher.actions=frame.actions
     launcher.home_clock=datetime.now().strftime('%Y-%m-%d %H:%M')
     launcher.fb.image(dither_rgb565(frame.image))

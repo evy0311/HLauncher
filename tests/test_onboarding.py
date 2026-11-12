@@ -10,7 +10,7 @@ import unittest
 from unittest.mock import patch
 from http.server import ThreadingHTTPServer
 
-from hlauncher.config import Preferences, ROOT, TILE_COLORS
+from hlauncher.config import Preferences, ROOT, SAFETY_NOTICE_VERSION, TILE_COLORS
 from hlauncher.catalog import Manifest
 from hlauncher.onboarding import Onboarding
 from hlauncher.setup_state import SetupState, atomic_json
@@ -22,7 +22,7 @@ from hlauncher.recovery import handler_for, Maintenance
 from hlauncher import storage
 from test_architecture import Display
 
-PEER='64:D4:BD:EE:25:FC'
+PEER='02:00:00:00:00:11'
 OTHER='AA:BB:CC:DD:EE:FF'
 
 
@@ -44,6 +44,9 @@ class Setup(unittest.TestCase):
         with self.assertRaises(ValueError):wizard.default('carplay')
         wizard.plugin('carplay');wizard.default('carplay');wizard.plugin('carplay')
         self.assertIsNone(wizard.prefs.data['default_plugin'])
+        with self.assertRaises(ValueError):
+            wizard.finish()
+        reloaded.accept_safety_notice()
         wizard.finish()
         self.assertTrue(Preferences(self.prefs.path).data['setup_complete'])
         self.assertFalse(Preferences(self.prefs.path).data['debug_mode'])
@@ -52,11 +55,45 @@ class Setup(unittest.TestCase):
         self.prefs.path.write_text(json.dumps({'enabled':{'carplay':False},'default_plugin':'obd'}))
         loaded=Preferences(self.prefs.path)
         self.assertTrue(loaded.data['setup_complete'])
+        self.assertFalse(loaded.safety_notice_accepted)
         self.assertFalse(loaded.enabled(self.manifests['carplay']))
         self.assertFalse(loaded.data['debug_mode'])
 
+    def test_upgrade_gates_startup_until_current_notice_is_saved(self):
+        self.prefs.path.write_text(json.dumps({
+            'setup_complete': True, 'default_plugin': 'carplay',
+            'safety_notice_version': True,
+        }))
+        prefs = Preferences(self.prefs.path)
+        ui = Launcher(framebuffer=Display(), preferences=prefs, manifests=self.manifests)
+        try:
+            with patch.object(ui.host, 'activate') as activate:
+                self.assertTrue(ui.launch('com.honda.hondalink.launcher'))
+                self.assertEqual(ui.mode, 'safety_notice')
+                ui.open_plugin('carplay')
+                activate.assert_not_called()
+            ui.actions[0][1]()
+            self.assertEqual(ui.mode, 'recovery_settings')
+            ui.actions[0][1]()
+            self.assertEqual(ui.mode, 'safety_notice')
+            with patch.object(prefs, 'save', side_effect=OSError):
+                ui.actions[-1][1]()
+            self.assertEqual(ui.mode, 'safety_notice')
+            self.assertFalse(prefs.safety_notice_accepted)
+            ui.actions[-1][1]()
+            self.assertEqual(ui.mode, 'home')
+            self.assertTrue(ui.pending_default)
+            reloaded = Preferences(prefs.path)
+            self.assertTrue(reloaded.safety_notice_accepted)
+            self.assertEqual(reloaded.data['safety_notice_version'], SAFETY_NOTICE_VERSION)
+            self.assertEqual(reloaded.data['default_plugin'], 'carplay')
+            with patch('hlauncher.config.SAFETY_NOTICE_VERSION', SAFETY_NOTICE_VERSION + 1):
+                self.assertFalse(Preferences(prefs.path).safety_notice_accepted)
+        finally:
+            ui.close()
+
     def test_finish_overrides_concurrent_recovery_debug_setting(self):
-        self.prefs.save()
+        self.prefs.accept_safety_notice()
         web=Preferences(self.prefs.path)
         web.data['debug_mode']=True;web.save()
         Onboarding(self.prefs,self.manifests).finish()
@@ -198,6 +235,8 @@ class Setup(unittest.TestCase):
         ui=Launcher(framebuffer=Display(),preferences=self.prefs,manifests=self.manifests)
         try:
             self.assertTrue(ui.launch('com.honda.hondalink.launcher'))
+            self.assertEqual(ui.mode, 'safety_notice')
+            ui.actions[-1][1]()
             self.assertEqual(ui.mode,'onboarding')
             for step in range(6):
                 ui.wizard.save(setup_step=step);ui.draw()
@@ -213,6 +252,7 @@ class Setup(unittest.TestCase):
         finally:ui.close()
 
     def test_themed_wizard_buttons_save_choices_and_navigate(self):
+        self.prefs.accept_safety_notice()
         ui=Launcher(framebuffer=Display(),preferences=self.prefs,manifests=self.manifests)
         try:
             ui.setup_page()

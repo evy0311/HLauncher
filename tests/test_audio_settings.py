@@ -64,7 +64,9 @@ class AudioSettingsTests(unittest.TestCase):
         from hlauncher.config import Preferences
         from test_architecture import Display
         with tempfile.TemporaryDirectory() as folder:
-            ui=Launcher(framebuffer=Display(),preferences=Preferences(Path(folder)/'settings.json'),manifests={})
+            prefs = Preferences(Path(folder)/'settings.json')
+            prefs.accept_safety_notice()
+            ui=Launcher(framebuffer=Display(),preferences=prefs,manifests={})
             try:
                 ui.audio_page()
                 for i,key in enumerate(EQ_BANDS):

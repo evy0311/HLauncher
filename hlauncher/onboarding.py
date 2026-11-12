@@ -45,6 +45,8 @@ class Onboarding:
         self.save(tile_color=name)
 
     def finish(self):
+        if not self.prefs.safety_notice_accepted:
+            raise ValueError('Review the safety notice before finishing setup')
         selected=self.prefs.data['default_plugin']
         if selected not in self.manifests or not self.prefs.enabled(self.manifests[selected]):selected=None
         self.default(selected)

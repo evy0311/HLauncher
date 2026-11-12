@@ -15,6 +15,34 @@ def welcome(page):
     page.text((24,296),'Next, choose your apps, startup screen and color theme',17)
 
 
+def safety_notice_text(page):
+    lines = (
+        'The driver is responsible for operating the vehicle safely,',
+        'staying attentive, and following applicable laws.',
+        'Set up, adjust, or watch video only while safely parked.',
+        'Use the vehicle’s instruments for safety-critical information.',
+        'HLauncher is provided as is, without warranty, under the GPL.',
+        'To the extent permitted by law, HLauncher’s authors and',
+        'contributors are not liable for accidents, injuries, property',
+        'damage, or other losses arising from use or misuse.',
+    )
+    for index, line in enumerate(lines):
+        page.text((24, 140 + index * 24), line, 20)
+
+
+def draw_safety_notice(launcher):
+    page = Page('Safety notice', None, launcher.prefs.data['tile_color'],
+                (launcher.fb.w, launcher.fb.h), launcher.pressed_box,
+                heading_y=88, show_clock=launcher.prefs.data['show_clock'])
+    safety_notice_text(page)
+    page.text((24, 336), 'Cancel opens Wi-Fi & pairing for recovery.', 17)
+    if launcher.banner:
+        page.text((24, 370), launcher.banner, 17, fill='#efbd82')
+    page.button((24, 408, 240, 460), 'Cancel', launcher.recovery_page, secondary=True)
+    page.button((456, 408, 696, 460), 'I understand', launcher.accept_safety_notice, selected=True)
+    present(launcher, page)
+
+
 def draw_launcher(launcher):
     step=launcher.wizard.step
     can_exit=getattr(launcher,'setup_can_exit',False)

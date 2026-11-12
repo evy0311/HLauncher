@@ -1,105 +1,106 @@
 {
   "provenance": "Original iOS SDK fixture and ARM serializer comparison, 2026-11-10",
+  "fixture_note": "Provenance describes the original protocol reference and serializer comparison. All record payloads here are synthetic. The hashes are golden digests of subscription requests.",
   "records": [
     {
       "id": "0x12F81010",
       "length": 5,
-      "data": "0900008000"
+      "data": "0000000000"
     },
     {
       "id": "0x12F85050",
       "length": 6,
-      "data": "3c0000200000"
+      "data": "000000000000"
     },
     {
       "id": "0x17C",
       "length": 8,
-      "data": "00002710a1000000"
+      "data": "0000099200000000"
     },
     {
       "id": "0x12F85150",
       "length": 5,
-      "data": "5003800000"
+      "data": "0000000000"
     },
     {
       "id": "0x12F85351",
       "length": 8,
-      "data": "3000000000008000"
+      "data": "0000000000000000"
     },
     {
       "id": "0x12F85450",
       "length": 8,
-      "data": "c000000000000000"
+      "data": "0000000000000000"
     },
     {
       "id": "0x12F96750",
       "length": 8,
-      "data": "13adae4fff010000"
+      "data": "0000000000000000"
     },
     {
       "id": "0x12F97350",
       "length": 2,
-      "data": "c70e"
+      "data": "0000"
     },
     {
       "id": "0x12F97150",
       "length": 3,
-      "data": "00e278"
+      "data": "000000"
     },
     {
       "id": "0x1A6",
       "length": 8,
-      "data": "0400006900000000"
+      "data": "0000000000000000"
     },
     {
       "id": "0x294",
       "length": 8,
-      "data": "1800000017700400"
+      "data": "0000000000000000"
     },
     {
       "id": "0x320",
       "length": 8,
-      "data": "0000200000180000"
+      "data": "0000000000000000"
     },
     {
       "id": "0x324",
       "length": 8,
-      "data": "4650271000000f00"
+      "data": "8000000000000000"
     },
     {
       "id": "0x32F",
       "length": 8,
-      "data": "0020000000000000"
+      "data": "0000000000000000"
     },
     {
       "id": "0x454",
       "length": 8,
-      "data": "640d000000000000"
+      "data": "0000000000000000"
     },
     {
       "id": "0x99F00003",
       "length": 4,
-      "data": "078e1f00"
+      "data": "00000000"
     },
     {
       "id": "0x99F00004",
       "length": 4,
-      "data": "1d034900"
+      "data": "00000000"
     },
     {
       "id": "0x99F00005",
       "length": 4,
-      "data": "000004d2"
+      "data": "0000002a"
     },
     {
       "id": "0x99F00006",
       "length": 8,
-      "data": "8000000000000001"
+      "data": "0000000000000000"
     },
     {
       "id": "0x99F00007",
       "length": 19,
-      "data": "354831344d3546353142433030303138300000"
+      "data": "544553542d56454849434c452d303030310000"
     }
   ],
   "payload_sha256": [

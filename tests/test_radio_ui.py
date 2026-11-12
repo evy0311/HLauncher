@@ -19,7 +19,7 @@ class RadioUI(unittest.TestCase):
     def setUp(self):
         self.temp=tempfile.TemporaryDirectory();self.folder=Path(self.temp.name)
         prefs=Preferences(self.folder/'settings.json');prefs.data.update(setup_complete=True,debug_mode=True,tile_color='Red')
-        prefs.save()
+        prefs.accept_safety_notice()
         manifests={p:Manifest.load(ROOT/'plugins'/p,bundled=True) for p in ('carplay','android-auto','obd')}
         self.ui=Launcher(framebuffer=Display(),preferences=prefs,manifests=manifests)
     def tearDown(self):self.ui.close();self.temp.cleanup()
@@ -158,7 +158,7 @@ class RadioUI(unittest.TestCase):
         from hlauncher.setup_state import SetupState
         from hlauncher.ui.first_boot import render
         from sdk.hlauncher_sdk.theme import dither_rgb565
-        state=SetupState(self.folder);state.admit('64:D4:BD:EE:25:FC',{'Alias':'HandsFreeLink'});state.verify('64:D4:BD:EE:25:FC')
+        state=SetupState(self.folder);state.admit('02:00:00:00:00:11',{'Alias':'HandsFreeLink'});state.verify('02:00:00:00:00:11')
         bootstrap=BootstrapLauncher(lambda **v:None,SimpleNamespace(close=lambda:None),state)
         with patch('hlauncher.display.Framebuffer',side_effect=lambda event:Display()),patch('hlauncher.bootstrap.time.strftime',return_value='now'),patch('subprocess.run'):
             bootstrap.show_pairing()

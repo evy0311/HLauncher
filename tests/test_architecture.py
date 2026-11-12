@@ -45,7 +45,9 @@ class Architecture(unittest.TestCase):
         self.temp.cleanup()
 
     def preferences(self):
-        return Preferences(self.root / "settings.json")
+        prefs = Preferences(self.root / "settings.json")
+        prefs.accept_safety_notice()
+        return prefs
 
     def test_preferences_survive_restart_and_disable_clears_default(self):
         prefs = self.preferences()
@@ -302,7 +304,7 @@ class Architecture(unittest.TestCase):
         ui=Launcher(framebuffer=Display(),preferences=self.preferences(),manifests={'carplay':self.carplay})
         try:
             ui.settings()
-            self.assertEqual(len(ui.actions),7)
+            self.assertEqual(len(ui.actions),8)
             ui.actions[5][1]()
             self.assertEqual(ui.mode,'startup_settings')
             ui.actions[1][1]()
@@ -320,6 +322,21 @@ class Architecture(unittest.TestCase):
             self.assertEqual(ui.mode,'plugins_settings')
             ui.settings();ui.actions[6][1]()
             self.assertEqual(ui.mode,'system_settings')
+            ui.settings()
+            saved = ui.prefs.path.read_bytes()
+            about_box, open_about = ui.actions[-1]
+            self.assertLessEqual(about_box[3], ui.fb.h)
+            self.assertGreaterEqual(about_box[1], max(box[3] for box, _ in ui.actions[:-1]))
+            open_about()
+            self.assertEqual(ui.mode, 'about_settings')
+            ui.actions[1][1]()
+            self.assertEqual(ui.mode, 'legal_info')
+            self.assertEqual(len(ui.actions), 1)
+            ui.actions[0][1]()
+            self.assertEqual(ui.mode, 'about_settings')
+            ui.actions[0][1]()
+            self.assertEqual(ui.mode, 'settings')
+            self.assertEqual(ui.prefs.path.read_bytes(), saved)
             ui.settings();ui.actions[0][1]()
             self.assertEqual(ui.mode,'home')
         finally:ui.close()

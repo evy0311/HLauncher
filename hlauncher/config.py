@@ -36,11 +36,15 @@ def serial_number():
         return b"HLauncher"
 
 
+SAFETY_NOTICE_VERSION = 2
+
+
 class Preferences:
     def __init__(self, path=None):
         self.path = Path(path) if path else STATE_DIR / "settings.json"
         self.data = {"enabled": {}, "background": {}, "default_plugin": None, "tile_color": "Red", "custom_color": "#198B96",
-                     "setup_complete": False, "setup_step": 0, "debug_mode": False, "show_clock": False, "ssh_enabled": True}
+                     "setup_complete": False, "setup_step": 0, "safety_notice_version": 0,
+                     "debug_mode": False, "show_clock": False, "ssh_enabled": True}
         try:
             loaded = json.loads(self.path.read_text())
             if not isinstance(loaded, dict) or not isinstance(
@@ -49,6 +53,9 @@ class Preferences:
                 raise ValueError("invalid settings")
             # Existing installations retain their choices; only fresh images auto-onboard.
             self.data['setup_complete'] = loaded.get('setup_complete', True) is True
+            version = loaded.get('safety_notice_version')
+            if type(version) is int:
+                self.data['safety_notice_version'] = version
             self.data['debug_mode'] = loaded.get('debug_mode', False) is True
             self.data['show_clock'] = loaded.get('show_clock', False) is True
             self.data['ssh_enabled'] = loaded.get('ssh_enabled', True) is True
@@ -81,6 +88,20 @@ class Preferences:
             pass
 
         self._saved = copy.deepcopy(self.data)
+
+    @property
+    def safety_notice_accepted(self):
+        version = self.data['safety_notice_version']
+        return type(version) is int and version == SAFETY_NOTICE_VERSION
+
+    def accept_safety_notice(self):
+        previous = self.data['safety_notice_version']
+        self.data['safety_notice_version'] = SAFETY_NOTICE_VERSION
+        try:
+            self.save(force=('safety_notice_version',))
+        except OSError:
+            self.data['safety_notice_version'] = previous
+            raise
 
     def enabled(self, manifest):
         return self.data["enabled"].get(

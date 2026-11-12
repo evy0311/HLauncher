@@ -13,7 +13,7 @@ from hlauncher.protocol.vehicle_can import GENERAL, HONDALINK, decode_records, s
 from hlauncher.protocol.vehicle_signals import SIGNALS, SUBSCRIPTIONS, SignalCache
 from hlauncher.protocol_diagnostics import ProtocolDiagnostics
 
-FIXTURE=json.loads((Path(__file__).parent/'fixtures/hondalink-native-can.json').read_text())
+FIXTURE = json.loads((Path(__file__).parent / 'fixtures/hondalink-native-can.json').read_text())
 DEVICE=bytes.fromhex('020304050607')
 SEED=b'AQIDBAUG'
 
@@ -79,7 +79,8 @@ class VehicleCAN(unittest.TestCase):
         return a+c,b+d
 
     def test_full_request_matches_original_arm_serializer_golden(self):
-        self.assertEqual([hashlib.sha256(x).hexdigest()for x in subscription_payloads()],FIXTURE['payload_sha256'])
+        self.assertEqual([hashlib.sha256(x).hexdigest() for x in subscription_payloads()],
+                         FIXTURE['payload_sha256'])
         self.assertEqual([len(x) for x in subscription_payloads()],[685,21])
         self.assertEqual(len(SUBSCRIPTIONS),54)
         self.assertEqual([x['api_id'] for x in SIGNALS],list(range(1,169)))
@@ -112,8 +113,9 @@ class VehicleCAN(unittest.TestCase):
         self.authenticate(p,flags=18,seed=b'BwgJCgsM')
         self.assertEqual(p.vehicle_subscription.keys[257],key)
 
-    def test_fragmented_encrypted_stream_decodes_native_fixture_and_unknown_virtual_ids(self):
-        records=[(int(x['id'],16),bytes.fromhex(x['data']))for x in FIXTURE['records']]
+    def test_fragmented_encrypted_stream_decodes_synthetic_records_and_unknown_ids(self):
+        records = [(int(record['id'], 16), bytes.fromhex(record['data']))
+                   for record in FIXTURE['records']]
         raw=can_data(records,key=session_key(SEED,DEVICE))
         for width in (1,2,7,23,1024):
             p=self.probe();self.authenticate(p);wire=incoming(257,0xc1,raw);events=[]
@@ -121,9 +123,10 @@ class VehicleCAN(unittest.TestCase):
             event=next(e for e in events if e['state']=='honda_can_data')
             self.assertEqual(event['data_type'],0)
             values={k:v for r in event['records']for k,v in r['signals'].items()}
-            self.assertEqual(values['40'],30);self.assertEqual(values['132'],1234)
+            self.assertEqual(values['40'], 88)
+            self.assertEqual(values['132'], 42)
             rpm=next(r for r in event['records']if r['can_id']==0x17c)
-            self.assertEqual(rpm['fields']['engine_rpm'],10000)
+            self.assertEqual(rpm['fields']['engine_rpm'], 2450)
             vin=next(r for r in event['records']if r['can_id']==0x99f00007)
             self.assertEqual(vin['dlc'],19)
             self.assertFalse(any(e['state']=='honda_can_receipt_sent'for e in events))

@@ -16,7 +16,9 @@ class ButtonFeedback(unittest.TestCase):
     def test_press_release_and_slide_off(self):
         with tempfile.TemporaryDirectory() as folder:
             fb = Display()
-            ui = Launcher(framebuffer=fb, preferences=Preferences(Path(folder)/'settings.json'), manifests={})
+            prefs = Preferences(Path(folder)/'settings.json')
+            prefs.accept_safety_notice()
+            ui = Launcher(framebuffer=fb, preferences=prefs, manifests={})
             try:
                 normal = fb.last.tobytes()
                 bounds, _ = ui.actions[-1]

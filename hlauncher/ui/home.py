@@ -33,7 +33,7 @@ def caption(text, size):
 @dataclass(frozen=True)
 class Entry:
     label: str
-    icon: str
+    icon: str | Path
     action: Callable
 
 
@@ -108,8 +108,8 @@ def render(entries, *, theme='Red', size=(720,480), page=0, clock=None,
 
 def draw_launcher(launcher):
     """Thin adapter; callbacks and enabled/default plugin policy remain core-owned."""
-    entries=[Entry(m.name,m.id,lambda pid=m.id:launcher.open_plugin(pid))
-             for m in sorted(launcher.enabled(),key=lambda m:(m.id!='carplay',m.name.casefold()))]
+    entries=[Entry(m.name,m.icon or m.id,lambda pid=m.id:launcher.open_plugin(pid))
+             for m in sorted(launcher.enabled(),key=lambda m:(not m.bundled,m.id!='carplay',m.name.casefold()))]
     entries += [Entry('Audio','audio',launcher.audio_page),Entry('Settings','settings',launcher.settings)]
     frame=render(entries,theme=launcher.prefs.data['tile_color'],size=(launcher.fb.w,launcher.fb.h),
                  page=launcher.page,banner=launcher.banner,change_page=launcher.change_page,

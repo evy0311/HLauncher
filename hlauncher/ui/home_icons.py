@@ -20,6 +20,17 @@ def gradient(size, top, bottom):
 
 
 def render_icon(kind, size):
+    if isinstance(kind, Path):
+        try:
+            with Image.open(kind, formats=['PNG']) as source:
+                if max(source.size) <= 256 and not getattr(source, 'is_animated', False):
+                    icon = ImageOps.contain(source.convert('RGBA'), (size, size), Image.Resampling.LANCZOS)
+                    if icon.getbbox():
+                        output = Image.new('RGBA', (size, size))
+                        output.alpha_composite(icon, ((size-icon.width)//2, (size-icon.height)//2))
+                        return output
+        except (OSError, ValueError, Image.DecompressionBombError):
+            pass
     canvas=Image.new('RGBA',(72*S,72*S));d=ImageDraw.Draw(canvas)
     def box(x,y,w,h):return tuple(round(v*S) for v in (x,y,x+w,y+h))
     def points(values):return [(round(x*S),round(y*S)) for x,y in values]

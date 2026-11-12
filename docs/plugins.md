@@ -1,49 +1,69 @@
 # Plugins
 
-Settings belongs to the launcher. CarPlay, Android Auto and live BLE OBD Gauges ship as plugins under `plugins/`.
+CarPlay, Android Auto, and OBD Gauges come with HLauncher. User-installed plugins appear in **Settings → Plugins**. Enable a plugin to add its tile to Home. Swipe left or right to move between pages when there are more than four apps. Audio and Settings appear on every page.
 
-## Install a plugin
+## Install on the radio
 
-From the installed application:
+- **USB.** Copy the `.hlp` file to the root of a FAT32 or exFAT USB drive, or to a folder named `HLauncher` at its root. Connect it to the Pi and open **Settings → Plugins → Add plugin → Scan USB drive**. Select the package and review its source, version, and permissions. Install it, then enable it and approve any camera or network access it needs. The drive can be removed after installation. This works offline.
+- **GitHub.** In **Add plugin → Add GitHub repository**, enter `owner/repo`. The repository needs a public stable GitHub Release with one or more `.hlp` assets. Select a package and review it before installing. Use **Check GitHub for update** in the plugin’s settings to check the same repository again. For a private repo, package a local checkout and use USB or SSH.
+- **SSH.** Copy a package or source directory to the Pi and use the commands below. Installed and enabled plugins appear on the radio without a launcher restart.
 
 ```bash
+scp hello.hlp pi@PI_ADDRESS:/tmp/hello.hlp
+ssh pi@PI_ADDRESS
 cd /opt/hlauncher
 sudo python3 -m hlauncher plugins list
-sudo python3 -m hlauncher plugins install /path/to/plugin
-# Or a repository, optionally selecting a subfolder:
-sudo python3 -m hlauncher plugins install https://github.com/OWNER/REPO.git --subdir plugins/NAME
-sudo systemctl restart hlauncher
+sudo python3 -m hlauncher plugins install /tmp/hello.hlp
+sudo python3 -m hlauncher plugins enable hello
+# An alternative install source is a local source directory or a public release:
+# sudo python3 -m hlauncher plugins install /path/to/hello
+# sudo python3 -m hlauncher plugins install https://github.com/OWNER/REPO --asset hello.hlp
+# A plugin must request each permission that is being granted:
+# sudo python3 -m hlauncher plugins enable my-camera --camera /dev/video0
+# sudo python3 -m hlauncher plugins enable my-network-app --endpoint 192.168.1.10:8554
 ```
 
-External plugins are copied into `/var/lib/hlauncher/plugins/ID`. Read the author's dependency instructions, then enable the plugin in Settings. The installer copies source; it does not run install hooks or install packages. It rejects symlinks, entrypoints outside the plugin directory, duplicate IDs and attempts to replace bundled plugins. Review code before installing it. Services currently run as root, including plugin workers.
+A normal HLauncher software update or application rollback preserves external packages and data under `/var/lib/hlauncher/plugin-manager`. The update confirmation warns that compatibility can change and lists known API mismatches when an online release declares its plugin API. An installed plugin whose API is unsupported is listed in Settings with the reason. Reflashing the SD card from a fresh image replaces the persistent partition, so back it up first.
 
-To try the included example:
+Use `plugins update SOURCE` to install a higher plugin version. Use `plugins rollback ID` or **Restore previous version** in the plugin settings to switch versions while retaining data. Use `plugins disable ID` to hide the tile or `plugins remove ID` to uninstall the code and retain its data for a future reinstall. Updates requesting additional permissions require the user to enable the plugin and approve the new access. Plugin authors are responsible for keeping their data readable across their own updates and rollbacks.
 
-```bash
-sudo python3 -m hlauncher plugins install examples/hello
-sudo systemctl restart hlauncher
-```
+On first launch, existing source installs from `/var/lib/hlauncher/plugins` are archived under `/var/lib/hlauncher/plugin-manager/legacy` so a rollback cannot discover them through the old root runner. Files and launcher preferences are preserved. Use `plugins list` to locate a legacy source and reinstall it after review. Old plugin-specific files remain in the archived folder. Reconfigure device or network access when enabling it in the new manager.
 
-Enable Hello in Settings. It draws a page; touching it returns to the launcher. To remove an external plugin, disable it, stop HLauncher, remove its own directory from `/var/lib/hlauncher/plugins`, then restart. Bundled plugins are maintained through this repository.
+Fresh images include the Linux worker sandbox. On a Pi upgraded from an older image, install `bubblewrap` once using `sudo apt install bubblewrap` with SD card protection off. For a USB camera plugin that uses FFmpeg, install `ffmpeg` as well. The bundled plugins use their existing runtime.
 
-## Layout
+## Author and package a plugin
 
-A plugin is a directory with `plugin.json`, an entrypoint and any private dependencies:
+Start with `examples/hello`. The source directory contains a manifest, entrypoint, and any private code or assets it needs:
 
 ```json
 {
   "api_version": 1,
+  "version": "1.0.0",
   "id": "hello",
   "name": "Hello",
   "entrypoint": ["python3", "worker.py"],
-  "capabilities": ["display", "touch", "session"],
+  "capabilities": ["display", "touch"],
+  "permissions": [],
   "color": "#18416e"
 }
 ```
 
-Entrypoints can be Python or Node. `default_enabled` affects bundled plugins only. `keep_alive: true` declares support for background mode. CarPlay and Android Auto retain their worker while menus are visible, but share one exclusive projection lease. Selecting either stops the other and waits for its USB process tree to exit. CarPlay can start in the background when its adapter appears, without opening its tile. Other plugins may expose a background toggle in Settings. Without this declaration the host terminates it on exit. CarPlay stays warm so returning home does not disconnect the dongle.
+Choose a unique lowercase ID and keep it for later versions. The ID, entrypoint, and API describe the interface with the launcher. The three-part version describes the plugin release. Use Python with the HLauncher SDK or Node with the documented wire protocol. For Node, ship any dependencies as regular files within the package. Use the target's runtime and installed system dependencies. Installation runs no build scripts or dependency installers. External workers run only while their app is open.
 
-Add a plugin under `plugins/ID` in a pull request to bundle it. Include its dependency instructions, license, tests and a README describing what hardware it needs. Use `examples/hello` as a small starting point. An external repository can use exactly the same directory structure.
+From the HLauncher checkout on a development computer with Python and Pillow:
+
+```bash
+python3 -m hlauncher plugins validate examples/hello
+python3 -m hlauncher plugins preview examples/hello /tmp/hello.png
+python3 -m hlauncher plugins pack examples/hello /tmp/hello.hlp
+python3 -m hlauncher plugins validate /tmp/hello.hlp
+```
+
+Preview runs your worker as your local user and captures its first frame. Use it with source you authored or reviewed. Verify camera, network, and Pi-specific dependencies on the target. For an AI agent, provide this guide and `examples/hello` as references, then ask it to build and validate a package targeting API 1.
+
+A `.hlp` is a ZIP containing regular files at its root, including `plugin.json`. The installer limits packages to 64 MiB and 4,096 files, rejects links and paths outside the package, and reserves the bundled IDs. The package digest identifies the exact installed revision. To supply tile art, set `"icon": "icon.png"` in the manifest and include a static PNG up to 256 × 256 and 64 KiB.
+
+External plugins can request `display`, `touch`, `session`, `audio.playback`, and `media.publish`. Each worker has read-only package and SDK files, its own writable `HLAUNCHER_DATA_DIR`, and a launcher-owned **Home** button. `camera` permission exposes one approved V4L2 device through `HLAUNCHER_CAMERA_DEVICE`. `network` permission enables Python SDK `Client.connect()` to the approved numeric IP and TCP port. The method returns a connected socket. It does not provide DNS, UDP, or arbitrary outbound connections. Radio controls, raw Bluetooth and USB interfaces, and microphone capture are reserved.
 
 ## API 1
 
@@ -85,7 +105,7 @@ CarPlay uses node-CarPlay's `SendMultiTouch` for both one- and two-finger input.
 
 `audio.status` exposes current support. `audio.capture` is opt-in, only allowed for the foreground plugin, and ends on deactivation. Capture sends `audio.format` followed by signed 16-bit little-endian PCM packets. Queues are bounded; PCM may be dropped if the plugin cannot keep up. The radio can produce digital silence outside hands-free voice mode. Call simulation is not part of this API, and CarPlay does not consume microphone PCM yet. Plugins with `audio.playback` can use `Client.playback(pcm, rate, channels, stream)` for signed 16-bit little-endian output. The core owns PCM mixing/resampling and HDMI playback. Submission is nonblocking and can drop PCM under backpressure. Keep-alive plugins can continue audio on the launcher; stopping the plugin releases playback. Capture still stops on deactivation.
 
-A plugin cannot take down the Python Bluetooth loop through an exception in its own process. This is not isolation from kernel failures, out-of-memory conditions or malicious privileged code.
+The external runtime uses Linux namespaces, an unprivileged worker, and per-worker CPU, memory, and process limits. Bundle authors with direct hardware requirements should discuss them separately from external package permissions.
 
 ## Now-playing reports
 

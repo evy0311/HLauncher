@@ -119,6 +119,8 @@ Storage restart is offered only after the protection job has completed.
 
 ## Settings categories and early welcome
 
+Home fits four app tiles per page. Swipe left or right or tap a page arrow to see the other apps. Audio and Settings appear on every page.
+
 Settings uses two columns of rectangular category bars: Plugins, Appearance,
 Audio & EQ, OBD Gauges, Startup and System. Child lists use the shared horizontal
 color wash with inset values or Off/On controls. Appearance contains background

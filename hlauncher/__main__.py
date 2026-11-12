@@ -23,7 +23,7 @@ def main():
         run()
     else:
         raise SystemExit(
-            "Usage: python3 -m hlauncher [run [--seconds N] | colors [--interactive] | now-playing [--watch] [--json] | plugins list | plugins install SOURCE [--subdir PATH]]"
+            "Usage: python3 -m hlauncher [run [--seconds N] | colors [--interactive] | now-playing [--watch] [--json] | plugins --help]"
         )
 
 

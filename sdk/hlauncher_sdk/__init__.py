@@ -1,5 +1,6 @@
 """HLauncher plugin API 1. Control messages are JSON; video uses leased slots."""
 
+from array import array
 import collections
 import json
 import mmap
@@ -45,6 +46,10 @@ class Client:
         self.socket.setblocking(False)
         self.playback_socket=socket.socket(fileno=int(os.environ['HLAUNCHER_PLAYBACK_FD'])) if 'HLAUNCHER_PLAYBACK_FD' in os.environ else self.socket
         self.playback_socket.setblocking(False)
+        fd = os.environ.get('HLAUNCHER_NETWORK_FD')
+        self.network = socket.socket(fileno=int(fd)) if fd is not None else None
+        if self.network:
+            self.network.settimeout(3)
         self.width = int(os.environ["HLAUNCHER_WIDTH"])
         self.height = int(os.environ["HLAUNCHER_HEIGHT"])
         self.frame_bytes = self.width * self.height * 2
@@ -124,7 +129,28 @@ class Client:
     def home(self):
         return self.send(type="launcher.home")
 
+    def connect(self):
+        """Open TCP to the endpoint approved in Plugin Settings."""
+        if self.network is None:
+            raise PermissionError('Plugin has no approved TCP endpoint')
+        with self.lock:
+            self.network.sendall(b'connect')
+            descriptors = array('i')
+            result, ancillary, _, _ = self.network.recvmsg(1, socket.CMSG_SPACE(descriptors.itemsize))
+            for level, kind, data in ancillary:
+                if level == socket.SOL_SOCKET and kind == socket.SCM_RIGHTS:
+                    descriptors.frombytes(data[:len(data) - len(data) % descriptors.itemsize])
+            if result == b'+' and len(descriptors) == 1:
+                connection = socket.socket(fileno=descriptors[0])
+                connection.set_inheritable(False)
+                return connection
+            for descriptor in descriptors:
+                os.close(descriptor)
+            raise ConnectionError('Could not connect to the approved endpoint')
+
     def close(self):
+        if self.network is not None:
+            self.network.close()
         if self.playback_socket is not self.socket:self.playback_socket.close()
         self.memory.close()
         self.socket.close()

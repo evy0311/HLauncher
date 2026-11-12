@@ -84,6 +84,10 @@ fi
 cp "$source_root/scripts/trim_runtime.py" "$work/root/tmp/trim-runtime.py"
 chroot "$work/root" /usr/bin/python3 /tmp/trim-runtime.py
 rm "$work/root/tmp/trim-runtime.py"
+# App-only upgrades can provision this same system runtime separately.
+chroot "$work/root" /usr/bin/apt-get update
+chroot "$work/root" /usr/bin/apt-get install -y --no-install-recommends bubblewrap ffmpeg
+chroot "$work/root" /usr/bin/apt-get clean
 chroot "$work/root" /usr/bin/python3 -m hlauncher.storage --verify
 if [[ -e $work/policy-rc.d ]]; then cp -a "$work/policy-rc.d" "$policy"; else rm "$policy"; fi
 rm -rf "$work/root/tmp/hlauncher-source"

@@ -138,8 +138,14 @@ def storage(ui):
 def plugins(ui):
     p=page_for(ui,'Plugins',ui.settings)
     entries=sorted(ui.manifests.values(),key=lambda m:m.id!='carplay')
-    draw_rows(ui,p,[Row(m.name,lambda pid=m.id:ui.plugin_detail(pid)) for m in entries])
-    if not entries:p.text((24,128),'No plugins installed',20)
+    rows = [Row(m.name, lambda pid=m.id: ui.plugin_detail(pid),
+                value='' if m.bundled else m.version) for m in entries]
+    if ui.plugin_manager:
+        rows.append(Row('Add plugin', ui.plugin_manager.add))
+        if ui.plugin_store.legacy_sources():
+            rows.append(Row('Older plugins saved', ui.legacy_plugin_notice))
+    draw_rows(ui, p, rows)
+    if not rows:p.text((24,128),'No plugins installed',20)
     p.notice(ui.banner,462)
     present(ui,p)
 
@@ -149,6 +155,25 @@ def plugin_detail(ui):
     if manifest is None:return plugins(ui)
     p=page_for(ui,manifest.name,ui.plugin_settings)
     rows=[Row('Enabled',lambda:ui.toggle_plugin(manifest.id),toggle=ui.prefs.enabled(manifest))]
+    if manifest.revision and ui.plugin_manager:
+        manager = ui.plugin_manager
+        rows = [Row('Enabled', lambda: manager.toggle(manifest), toggle=ui.prefs.enabled(manifest)),
+                Row('Version', None, value=manifest.version)]
+        if 'camera' in manifest.permissions:
+            rows.append(Row('USB camera', lambda: manager.camera_page(manifest.id), value=manifest.camera))
+        if 'network' in manifest.permissions:
+            rows.append(Row('TCP endpoint', lambda: manager.endpoint_page(manifest.id), value=manifest.endpoint))
+        if manifest.origin.startswith('GitHub '):
+            rows.append(Row('Check GitHub for update', lambda: manager.check_update(manifest)))
+        if ui.plugin_store.has_previous(manifest.id):
+            rows.append(Row('Restore previous version', lambda: manager.change(manifest.id, 'rollback')))
+        rows.append(Row('Uninstall', lambda: manager.confirm_remove(manifest.id)))
+        message = ui.banner or manifest.blocked or ('Paused after repeated failures. Disable and enable to retry.'
+                                                   if ui.host.suspended(manifest.id) else manifest.origin)
+        draw_rows(ui, p, rows, bottom=422, key='plugin:'+manifest.id, size=25)
+        p.notice(message)
+        present(ui, p)
+        return
     if manifest.id=='carplay':
         rows.append(Row('Adapter icon',ui.adapter_branding_page))
     elif manifest.id=='obd':rows.append(Row('OBD adapter',ui.obd_settings))

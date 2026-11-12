@@ -90,13 +90,22 @@ class Updates(unittest.TestCase):
         return manifest,signature,archive
 
     def test_install_and_manual_restore_preserve_user_state(self):
+        from hlauncher.plugins import PluginStore, install_source
+        store = PluginStore(self.state)
+        plugin = install_source(store, ROOT / 'examples/hello')
+        store.change('hello', 'enable')
+        data = plugin.data_path / 'preferences'
+        data.write_text('plugin settings')
         before=(self.state/'settings.json').read_bytes()
         self.installer.install(*self.bundle())
+        self.assertEqual(store.manifests()['hello'].revision, plugin.revision)
         self.assertEqual(self.installer.status(),dict(current='1.1.0',previous='1.0.0'))
         self.assertFalse(updater.read(self.installer.state_path).get('pending'))
         self.installer.rollback()
         self.assertEqual(self.installer.status(),dict(current='1.0.0',previous='1.1.0'))
         self.assertEqual((self.state/'settings.json').read_bytes(),before)
+        self.assertTrue(store.manifests()['hello'].enabled)
+        self.assertEqual(data.read_text(), 'plugin settings')
         self.installer.rollback();self.assertEqual(self.installer.current(),'1.1.0')
         self.assertTrue(any(c[:2]==['systemctl','stop'] for c in self.calls))
         self.assertFalse(any('hlauncher-updater.service' in c for c in self.calls))
@@ -379,6 +388,10 @@ class ReleaseImage(unittest.TestCase):
                 ui.updates_page()
                 for index,operation in ((1,'check'),(2,'install'),(3,'rollback')):
                     ui.actions[index][1]()
+                    if operation == 'install':
+                        self.assertEqual(ui.mode, 'update_confirm')
+                        self.assertFalse((folder/'update-request.json').exists())
+                        next(callback for _, callback in ui.actions if callback == ui.confirm_update)()
                     self.assertEqual(updater.read(folder/'update-request.json'),dict(operation=operation))
                     (folder/'update-request.json').unlink()
                 self.assertEqual(ui.mode,'updates')
@@ -421,6 +434,8 @@ class ReleaseNotes(unittest.TestCase):
                 self.assertFalse(any(callback==ui.install_update for _,callback in ui.actions))
                 updater.atomic(folder/'update-status.json',info);ui.draw()
                 next(callback for _,callback in ui.actions if callback==ui.install_update)()
+                self.assertEqual(ui.mode,'update_confirm')
+                next(callback for _,callback in ui.actions if callback==ui.confirm_update)()
                 self.assertEqual(ui.mode,'updates')
                 self.assertEqual(updater.read(folder/'update-request.json'),dict(operation='install'))
             finally:ui.close()

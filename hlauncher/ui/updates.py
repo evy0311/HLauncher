@@ -8,8 +8,20 @@ from sdk.hlauncher_sdk.fonts import font
 
 def draw_launcher(launcher):
     info=status(launcher.prefs.path.parent)
-    page=Page('Software updates',launcher.system_settings,launcher.prefs.data['tile_color'],
+    page=Page('Software updates',(launcher.updates_page if launcher.mode == 'update_confirm' else launcher.system_settings),launcher.prefs.data['tile_color'],
               (launcher.fb.w,launcher.fb.h),launcher.pressed_box if launcher.press is not None else None,show_clock=launcher.prefs.data['show_clock'])
+    if launcher.mode == 'update_confirm':
+        page.text((24, 120), 'Install HLauncher ' + (launcher.confirm_update_version or ''), 26)
+        page.text((24, 190), 'Your plugins and their data will be kept.', 22)
+        page.text((24, 230), 'Some plugins may stop working after this update.', 21)
+        incompatible = launcher.update_incompatible_plugins
+        if incompatible:
+            text = f'{len(incompatible)} incompatible: ' + ', '.join(incompatible)
+            page.text((24, 277), page.fit(text, 672, 18), 18, fill='#efbd82')
+        page.button((24, 350, 340, 410), 'Back', launcher.updates_page, secondary=True)
+        page.button((366, 350, 696, 410), 'Restart and install', launcher.confirm_update)
+        present(launcher, page)
+        return
     busy=info['phase'] in ('checking','downloading','installing')
     page.text((24,120),'Installed',18)
     page.text((696,120),info.get('current',__version__),20,fill='#efedf6',anchor='rt')

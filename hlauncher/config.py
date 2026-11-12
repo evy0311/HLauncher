@@ -104,11 +104,15 @@ class Preferences:
             raise
 
     def enabled(self, manifest):
+        if getattr(manifest, 'revision', ''):
+            return manifest.enabled and not manifest.blocked
         return self.data["enabled"].get(
             manifest.id, manifest.bundled and manifest.default_enabled
         )
 
     def background_enabled(self, manifest):
+        if getattr(manifest, 'revision', ''):
+            return False
         if manifest.id in ("carplay", "android-auto"):
             return manifest.keep_alive
         return manifest.keep_alive and self.data['background'].get(manifest.id, True)

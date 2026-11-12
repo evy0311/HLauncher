@@ -4,7 +4,13 @@ from dataclasses import dataclass
 import json
 from pathlib import Path
 import re
-from .config import ROOT, STATE_DIR
+from .config import ROOT
+
+API_VERSION = 1
+RESERVED_IDS = frozenset(('carplay', 'android-auto', 'obd'))
+PLUGIN_ID = re.compile(r"[a-z][a-z0-9_-]{0,47}")
+PERMISSIONS = frozenset(('camera', 'network'))
+EXTERNAL_CAPABILITIES = frozenset(('display', 'touch', 'session', 'audio.playback', 'media.publish'))
 
 CAPABILITIES = {"display", "touch", "session", "audio.status", "audio.capture", "audio.playback", "media.publish", "input.buttons", "projection.voice"}
 
@@ -21,21 +27,41 @@ class Manifest:
     keep_alive: bool = False
     color: str = "#18416e"
 
+    api_version: int = API_VERSION
+    version: str = "0.0.0"
+    icon: Path | None = None
+    permissions: frozenset = frozenset()
+    revision: str = ""
+    origin: str = ""
+    camera: str = ""
+    endpoint: str = ""
+    blocked: str = ""
+    enabled: bool = False
+    data_path: Path | None = None
+
     @classmethod
-    def load(cls, folder, bundled=False):
+    def load(cls, folder, bundled=False, *, allow_incompatible=False):
         folder = Path(folder).resolve()
-        data = json.loads((folder / "plugin.json").read_text())
+        descriptor = folder / "plugin.json"
+        if descriptor.stat().st_size > 16384:
+            raise ValueError("Plugin manifest is too large")
+        try:
+            data = json.loads(descriptor.read_text())
+        except (ValueError, RecursionError) as exc:
+            raise ValueError("Invalid plugin manifest JSON") from exc
         if not isinstance(data, dict):
             raise ValueError("manifest must be an object")
-        if data.get("api_version") != 1:
-            raise ValueError("unsupported plugin API")
+        api = data.get("api_version")
+        if type(api) is not int or not 1 <= api <= 65535:
+            raise ValueError("invalid plugin API version")
+        blocked = "" if api == API_VERSION else f"Requires plugin API {api}"
+        if blocked and not allow_incompatible:
+            raise ValueError(blocked)
         plugin_id = data.get("id", "")
-        if not isinstance(plugin_id, str) or not re.fullmatch(
-            r"[a-z][a-z0-9_-]{0,47}", plugin_id
-        ):
+        if not isinstance(plugin_id, str) or not PLUGIN_ID.fullmatch(plugin_id):
             raise ValueError("invalid plugin id")
         name = data.get("name")
-        if not isinstance(name, str) or not 1 <= len(name) <= 32:
+        if not isinstance(name, str) or not 1 <= len(name) <= 32 or not name.isprintable():
             raise ValueError("invalid plugin name")
         entry = data.get("entrypoint")
         if (
@@ -46,8 +72,10 @@ class Manifest:
             raise ValueError("entrypoint must be [python3|node, relative script]")
         if not isinstance(entry[1], str):
             raise ValueError("invalid entrypoint")
-        script = (folder / entry[1]).resolve()
-        if not script.is_relative_to(folder) or not script.is_file():
+        relative = Path(entry[1])
+        script = (folder / relative).resolve()
+        if (relative.is_absolute() or ".." in relative.parts or entry[1].startswith("-")
+                or not script.is_relative_to(folder) or not script.is_file()):
             raise ValueError("entrypoint escapes plugin folder or is missing")
         caps = data.get("capabilities", [])
         if not isinstance(caps, list) or not all(
@@ -57,6 +85,19 @@ class Manifest:
         color = data.get("color", "#18416e")
         if not isinstance(color, str) or not re.fullmatch(r"#[0-9a-fA-F]{6}", color):
             raise ValueError("invalid tile color")
+        version = data.get("version", "0.0.0")
+        if not isinstance(version, str) or not re.fullmatch(r"(?:0|[1-9][0-9]{0,4})(?:\.(?:0|[1-9][0-9]{0,4})){2}", version):
+            raise ValueError("Plugin version must be major.minor.patch")
+        icon = None
+        if "icon" in data:
+            if data["icon"] != "icon.png":
+                raise ValueError("Plugin icon must be named icon.png")
+            icon = folder / "icon.png"
+            if icon.is_symlink() or not icon.is_file() or icon.stat().st_size > 65536:
+                raise ValueError("Plugin icon must be a PNG under 64 KiB")
+        permissions = data.get("permissions", [])
+        if not isinstance(permissions, list) or any(not isinstance(p, str) or p not in PERMISSIONS for p in permissions):
+            raise ValueError("Unknown external plugin permission")
         return cls(
             plugin_id,
             name,
@@ -66,7 +107,8 @@ class Manifest:
             bundled,
             data.get("default_enabled") is True,
             data.get("keep_alive") is True,
-            color,
+            color, api_version=api, version=version, icon=icon,
+            permissions=frozenset(permissions), blocked=blocked,
         )
 
 
@@ -75,7 +117,7 @@ def discover(event=lambda **kw: None, roots=None):
     roots = (
         roots
         if roots is not None
-        else [(ROOT / "plugins", True), (STATE_DIR / "plugins", False)]
+        else [(ROOT / "plugins", True)]
     )
     for root, bundled in roots:
         root = Path(root)

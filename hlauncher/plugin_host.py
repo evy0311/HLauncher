@@ -2,6 +2,7 @@
 
 from collections import deque
 import json
+import fcntl
 import mmap
 import os
 from pathlib import Path
@@ -28,8 +29,12 @@ def channel():
 
 
 class Worker:
-    def __init__(self, manifest, width, height, event, playback=None):
-        self.lease=ProjectionLease() if manifest.id in PROJECTIONS else None
+    def __init__(self, manifest, width, height, event, playback=None, log_dir=None):
+        from . import plugin_sandbox
+        restricted = not manifest.bundled
+        sandbox_command = plugin_sandbox.command(manifest) if restricted else None
+        self.network = None
+        self.lease=ProjectionLease() if manifest.bundled and manifest.id in PROJECTIONS else None
         self.manifest = manifest
         self.event = event
         self.width, self.height = width, height
@@ -37,8 +42,13 @@ class Worker:
         self.socket, child = channel()
         self.socket.setblocking(False)
         # TemporaryFile is anonymous after opening on Linux and closes with the worker.
-        self.file = tempfile.TemporaryFile()
+        self.file = (os.fdopen(os.memfd_create('hlauncher-frames', os.MFD_ALLOW_SEALING), 'r+b')
+                     if restricted else tempfile.TemporaryFile())
         self.file.truncate(self.frame_bytes * SLOTS)
+        if restricted:
+            self.file.flush()
+            fcntl.fcntl(self.file, fcntl.F_ADD_SEALS,
+                        fcntl.F_SEAL_SHRINK | fcntl.F_SEAL_GROW | fcntl.F_SEAL_SEAL)
         self.memory = mmap.mmap(self.file.fileno(), self.frame_bytes * SLOTS)
         self.queue = deque()
         self.queue_lock = threading.Lock()
@@ -56,7 +66,7 @@ class Worker:
         self.active = False
         self.started = self.last_message = time.monotonic()
         self.status = "Starting " + manifest.name + "..."
-        logs = LOG_DIR / "plugins" / manifest.id
+        logs = (Path(log_dir) if log_dir is not None else LOG_DIR) / "plugins" / manifest.id
         logs.mkdir(parents=True, exist_ok=True)
         self.stderr = open(os.devnull, "wb")
         env = dict(os.environ)
@@ -78,18 +88,28 @@ class Worker:
         audio_socket = playback.open_plugin(manifest) if playback and hasattr(playback,'open_plugin') else None
         if audio_socket:env['HLAUNCHER_PLAYBACK_FD']=str(audio_socket.fileno())
         try:
+            if restricted and manifest.endpoint:
+                self.network = plugin_sandbox.Network(manifest.endpoint)
+                env['HLAUNCHER_NETWORK_FD'] = str(self.network.child.fileno())
+            descriptors = [child.fileno(), self.file.fileno()]
+            if audio_socket: descriptors.append(audio_socket.fileno())
+            if self.lease: descriptors.append(self.lease.fd)
+            if self.network: descriptors.append(self.network.child.fileno())
             self.proc = subprocess.Popen(
-                command,
+                sandbox_command if restricted else command,
                 cwd=manifest.path,
-                env=env,
-                pass_fds=(child.fileno(), self.file.fileno())+((audio_socket.fileno(),) if audio_socket else ())+((self.lease.fd,) if self.lease else ()),
+                env=plugin_sandbox.environment(env, manifest) if restricted else env,
+                pass_fds=tuple(descriptors),
                 stdin=subprocess.DEVNULL,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
                 start_new_session=True,
             )
+            if self.network:
+                self.network.start()
             threading.Thread(target=self.capture_output,args=(logs,),daemon=True).start()
         except Exception:
+            if self.network:self.network.close()
             if self.lease:self.lease.close()
             self.socket.close()
             self.memory.close()
@@ -171,7 +191,10 @@ class Worker:
                 raise EOFError("plugin connection closed")
             if flags & socket.MSG_TRUNC:
                 raise ValueError("oversized plugin packet")
-            message = decode(raw)
+            try:
+                message = decode(raw)
+            except (RecursionError, UnicodeError) as exc:
+                raise ValueError("invalid plugin packet") from exc
             self.last_message = time.monotonic()
             if message["type"] == "audio.pcm":
                 raise ValueError("capture PCM cannot be submitted as playback")
@@ -225,6 +248,7 @@ class Worker:
         except ProcessLookupError:
             pass
         self.socket.close()
+        if self.network:self.network.close()
         self.memory.close()
         self.file.close()
         self.stderr.close()
@@ -262,6 +286,7 @@ class PluginHost:
         self.audio = audio
         self.background_allowed = background_allowed or (lambda m: m.keep_alive)
         self.workers = {}
+        self.failures = {}
         self.active = None
         self.projection_request=None
         self.projection_deadline=0
@@ -291,7 +316,8 @@ class PluginHost:
             self.media.select_source(plugin_id)
             if hasattr(self.audio,'select_source'):self.audio.select_source(plugin_id)
             if hasattr(getattr(self.audio,'playback',None),'enable'):self.audio.playback.enable(plugin_id,True)
-        worker.send(type='radio.session',**self.session)
+        if not getattr(worker.manifest, 'revision', '') or 'session' in worker.manifest.capabilities:
+            worker.send(type='radio.session',**self.session)
         worker.send(type='host.activate' if foreground else 'host.start',visible=foreground)
         self.event(state='plugin_activated' if foreground else 'plugin_background_started',plugin=plugin_id)
         return worker
@@ -324,7 +350,8 @@ class PluginHost:
         self.deactivate()
         if plugin_id in PROJECTIONS:self.request_projection(plugin_id,True)
         else:
-            self.active=plugin_id;self._start(plugin_id,True)
+            self._start(plugin_id,True)
+            self.active=plugin_id
 
     def ensure_background_carplay(self):
         if 'carplay' not in self.manifests:return
@@ -469,12 +496,20 @@ class PluginHost:
         if message.get('final', True) is not False:
             self.button_pending.pop(sequence, None)
 
+    def suspended(self, plugin_id):
+        return self.failures.get(plugin_id, 0) >= 2
+
     def failed(self, plugin_id, error):
+        manifest = self.manifests.get(plugin_id)
+        if manifest and manifest.revision:
+            self.failures[plugin_id] = self.failures.get(plugin_id, 0) + 1
         foreground = self.active == plugin_id
         self.event(state="plugin_failed", plugin=plugin_id, error=str(error))
         self.stop(plugin_id)
         if foreground:
-            self.home(str(error)[:120])
+            message = ('Plugin paused after repeated failures. Open Plugin Settings.'
+                       if self.suspended(plugin_id) else str(error)[:120])
+            self.home(message)
 
     def tick(self):
         self._projection_tick()
@@ -503,7 +538,7 @@ class PluginHost:
                         self.home("")
                         break
                     elif kind == "health":
-                        if isinstance(message.get("metrics"), dict):
+                        if not getattr(worker.manifest, 'revision', '') and isinstance(message.get("metrics"), dict):
                             worker.metrics = message["metrics"]
                             if plugin_id=='carplay':
                                 self.branding.update(worker.metrics.get('adapter_branding_request_id'),
@@ -542,6 +577,8 @@ class PluginHost:
                             raise ValueError('Invalid projection microphone statistics')
                         self.event(state='projection_mic_stats',plugin=plugin_id,**fields)
                     elif kind.startswith("audio."):
+                        if getattr(worker.manifest, 'revision', '') and kind != 'audio.playback.pcm':
+                            raise ValueError('Reserved audio operation')
                         self.audio.request(
                             worker, message, active=self.active == plugin_id
                         )

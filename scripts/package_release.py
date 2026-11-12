@@ -15,6 +15,7 @@ import tarfile
 
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
 from hlauncher import updater
+from hlauncher.catalog import API_VERSION
 
 
 def public_key(private, output):
@@ -125,7 +126,7 @@ def package(root, persist, version, key, output, commit):
     filename=f'HLauncher-{version}-pi4-arm64.tar.xz'
     unpacked=archive_tree(output/filename,[('app',app),('runtime',runtime)])
     item=dict(format=1,updater=1,state_schema=1,platform=updater.PLATFORM,system_contract=system_contract,
-              local_test=bool(os.environ.get('HLAUNCHER_LOCAL_TEST_SSH_KEY')),
+              plugin_api=API_VERSION, local_test=bool(os.environ.get('HLAUNCHER_LOCAL_TEST_SSH_KEY')),
               version=version,archive=filename,size=(output/filename).stat().st_size,
               unpacked_size=unpacked,sha256=updater.sha256(output/filename),commit=commit)
     updater.validate_manifest(item,config)

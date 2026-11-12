@@ -192,7 +192,7 @@ class Architecture(unittest.TestCase):
     def test_worker_frame_lease_and_return_message(self):
         from hlauncher import plugin_host
 
-        manifest = Manifest.load(ROOT / "examples/hello")
+        manifest = Manifest.load(ROOT / "examples/hello", bundled=True)
         with patch.object(plugin_host, "LOG_DIR", self.root / "logs"):
             worker = Worker(manifest, 32, 24, lambda **kw: None)
         try:

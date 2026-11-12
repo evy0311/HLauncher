@@ -51,7 +51,23 @@ class Launcher:
         self.hdmi_output={}
         self.hdmi_test_exact=True
         self.hdmi_test_inset=False
-        self.manifests = discover(event) if manifests is None else manifests
+        self.plugin_manager = None
+        self.plugin_stamp = None
+        if manifests is None:
+            from .plugins import PluginStore
+            from .ui.plugins import Manager
+            self.plugin_store = PluginStore(self.prefs.path.parent)
+            try:
+                self.plugin_store.park_legacy()
+            except OSError as exc:
+                self.event(state='plugin_migration_failed', error=str(exc))
+            self.plugin_manager = Manager(self, self.plugin_store)
+            self.manifests = discover(event)
+            self.manifests.update(self.plugin_store.manifests(event))
+        else:
+            self.manifests = manifests
+        self.home_swipe = None
+        self.plugin_home_pressed = False
         self.audio = AudioBroker(event, independent=independent_audio)
         self.host = PluginHost(
             self.manifests, self.fb.w, self.fb.h, event, self.home, self.audio,
@@ -105,7 +121,7 @@ class Launcher:
         self.tone_test.stop()
         self.host.deactivate()
         self.setup_can_exit = bool(self.prefs.data['setup_complete'] and self.mode in ('settings','system_settings'))
-        self.wizard = Onboarding(self.prefs, self.manifests)
+        self.wizard = Onboarding(self.prefs, {key: value for key, value in self.manifests.items() if value.bundled})
         if restart:
             if self.prefs.data['setup_complete']:self.wizard.save(setup_step=0)
             else:self.wizard.restart()
@@ -188,7 +204,25 @@ class Launcher:
         self.draw()
 
     def install_update(self):
+        from .update_client import offered_plugin_api, status
+        self.confirm_update_version = status(self.prefs.path.parent).get('available')
+        api = offered_plugin_api(self.confirm_update_version)
+        self.update_incompatible_plugins = [
+            manifest.name for manifest in self.manifests.values()
+            if api is not None and manifest.revision and manifest.api_version != api
+        ]
+        self.mode = 'update_confirm'
+        self.press = None
+        self.draw()
+
+    def confirm_update(self):
+        from .update_client import status
+        offer = status(self.prefs.path.parent)
         self.updates_page()
+        if not self.confirm_update_version or self.confirm_update_version != offer.get('available'):
+            self.banner = 'The update offer changed. Check for updates again.'
+            self.draw()
+            return
         self.update_request('install')
 
     def update_request(self, operation):
@@ -284,7 +318,43 @@ class Launcher:
         self.draw()
 
     def enabled(self):
-        return [m for m in self.manifests.values() if self.prefs.enabled(m)]
+        return [m for m in self.manifests.values() if self.prefs.enabled(m) and not self.host.suspended(m.id)]
+
+    def refresh_plugins(self):
+        if not self.plugin_manager:
+            return
+        try:
+            info = self.plugin_store.index.stat()
+            stamp = (info.st_ino, info.st_mtime_ns, info.st_size)
+        except OSError:
+            stamp = None
+        if stamp == self.plugin_stamp:
+            return
+        self.plugin_stamp = stamp
+        current = self.plugin_store.manifests(self.event)
+        for plugin_id, old in list(self.manifests.items()):
+            if old.bundled:
+                continue
+            new = current.get(plugin_id)
+            if old == new:
+                continue
+            was_active = self.host.active == plugin_id
+            self.host.stop(plugin_id)
+            if new is None or old.revision != new.revision or old.enabled != new.enabled:
+                self.host.failures.pop(plugin_id, None)
+            del self.manifests[plugin_id]
+            if was_active:
+                self.home('Plugin changed. Open it again from Home.')
+        self.manifests.update(current)
+        if self.mode in ('home', 'plugins_settings', 'plugin_detail'):
+            if self.mode == 'plugin_detail' and self.settings_plugin_id not in self.manifests:
+                self.plugin_settings()
+            else:
+                self.draw()
+
+    def legacy_plugin_notice(self):
+        self.banner = 'Older plugins were saved. Use plugins list over SSH to review and reinstall them.'
+        self.draw()
 
     def launch(self, app_id):
         if app_id not in (
@@ -332,6 +402,8 @@ class Launcher:
         self.restore_hdmi_range()
         self.host.deactivate()
         self.mode = "home"
+        self.home_swipe = None
+        self.plugin_home_pressed = False
         self.press = None
         self.has_frame = False
         self.pending_default = False
@@ -744,13 +816,13 @@ class Launcher:
         if plugin_id == 'obd':
             self.obd.close()
             self.obd.enabled=False
-        if plugin_id not in self.manifests or not self.prefs.enabled(
-            self.manifests[plugin_id]
-        ):
+        if (plugin_id not in self.manifests or not self.prefs.enabled(self.manifests[plugin_id])
+                or self.host.suspended(plugin_id)):
             self.home("Plugin unavailable")
             return
         try:
             self.mode = "plugin"
+            self.plugin_home_pressed = False
             self.has_frame = False
             self.press = None
             self.last_status = None
@@ -758,7 +830,8 @@ class Launcher:
             self.draw()
         except (OSError, ValueError) as exc:
             self.event(state="plugin_launch_failed", plugin=plugin_id, error=str(exc))
-            self.home("Could not start " + self.manifests[plugin_id].name)
+            self.home(str(exc)[:120] if self.manifests[plugin_id].revision and isinstance(exc, ValueError)
+                      else "Could not start " + self.manifests[plugin_id].name)
 
     def toggle_plugin(self, plugin_id):
         manifest = self.manifests[plugin_id]
@@ -819,7 +892,10 @@ class Launcher:
             from .ui.release_notes import draw_launcher
             draw_launcher(self)
             return
-        if self.mode == "updates":
+        if self.mode == 'plugin_manager':
+            self.plugin_manager.draw()
+            return
+        if self.mode in ('updates', 'update_confirm'):
             from .ui.updates import draw_launcher
             draw_launcher(self)
             return
@@ -859,6 +935,28 @@ class Launcher:
         self.page = (self.page + delta) % max(1, count)
         self.draw()
 
+    def swipe_home(self, action, point):
+        if self.mode != 'home' or len(self.enabled()) <= 4:
+            self.home_swipe = None
+            return False
+        if action == 'down':
+            self.home_swipe = point
+        elif action in ('up', 'unused') and self.home_swipe:
+            start, self.home_swipe = self.home_swipe, None
+            end = point or self.last_xy
+            if end:
+                dx = (end[0] - start[0]) / self.fb.w
+                dy = (end[1] - start[1]) / self.fb.h
+                if abs(dx) >= .10 and abs(dx) >= 1.5 * abs(dy):
+                    self.press = self.pressed_box = None
+                    target = self.page + (1 if dx < 0 else -1)
+                    count = math.ceil(len(self.enabled()) / 4)
+                    if 0 <= target < count:
+                        self.page = target
+                    self.draw()
+                    return True
+        return False
+
     def change_settings_page(self, delta):
         count = math.ceil(len(self.manifests) / 3)
         self.settings_page = (self.settings_page + delta) % max(1, count)
@@ -872,6 +970,8 @@ class Launcher:
         if point:
             self.last_xy = point
         action = primary["action"]
+        if self.swipe_home(action, point):
+            return
         from .ui.scroll_list import touch as scroll_touch
         if scroll_touch(self,action,point or self.last_xy):return
         if self.mode=='custom_color':
@@ -882,6 +982,19 @@ class Launcher:
         # Plugins own their full viewport after their first frame. Home is provided
         # by the app's own host-return action (the Honda icon in CarPlay).
         if self.mode == "plugin" and self.has_frame:
+            manifest = self.manifests.get(self.host.active)
+            if manifest and manifest.revision:
+                from .ui.plugin_overlay import home_box
+                x0, y0, x1, y1 = home_box(self.fb.w, self.fb.h)
+                inside = point and x0 <= point[0] < x1 and y0 <= point[1] < y1
+                if action == 'down' and inside:
+                    self.plugin_home_pressed = True
+                if self.plugin_home_pressed:
+                    if action in ('up', 'unused'):
+                        self.plugin_home_pressed = False
+                        if inside or (self.last_xy and x0 <= self.last_xy[0] < x1 and y0 <= self.last_xy[1] < y1):
+                            self.home()
+                    return
             self.host.touch(touch)
             return
         if action == "down":
@@ -917,6 +1030,11 @@ class Launcher:
             self.home()
 
     def tick(self):
+        if self.plugin_manager:
+            self.plugin_manager.tick()
+            if time.monotonic() - getattr(self, 'plugin_checked', 0) > 1:
+                self.plugin_checked = time.monotonic()
+                self.refresh_plugins()
         waiting_projection = (self.mode == "plugin" and self.host.active in ('carplay','android-auto')
                               and not self.has_frame)
         if (self.mode not in ("plugin","shutdown_pending") or waiting_projection) and time.strftime('%Y-%m-%d %H:%M') != getattr(self, 'home_clock', None):
@@ -1001,6 +1119,10 @@ class Launcher:
                 self.host.failed(plugin_id, exc)
             return
         if frame is not None:
+            manifest = self.manifests.get(self.host.active)
+            if manifest and manifest.revision:
+                from .ui.plugin_overlay import overlay
+                frame = overlay(frame, self.fb.w, self.fb.h)
             self.fb.blit(frame)
             self.has_frame = True
             self.last_frame_at = time.monotonic()

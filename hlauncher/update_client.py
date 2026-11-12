@@ -13,6 +13,17 @@ def status(folder=STATE_DIR):
     return dict(phase='unavailable',message='Updates require an update-enabled HLauncher image')
 
 
+def offered_plugin_api(version):
+    from .updater import read
+    # The updater creates this offer only after verifying signed release metadata.
+    offer = read('/persist/hlauncher/download/offer.json').get('manifest')
+    if version and isinstance(offer, dict) and offer.get('version') == version:
+        api = offer.get('plugin_api')
+        if type(api) is int and 1 <= api <= 65535:
+            return api
+    return None
+
+
 def request(operation, folder=STATE_DIR):
     if operation not in ('check','install','rollback','import'):raise ValueError('Unknown update operation')
     path=Path(folder)/'update-request.json'

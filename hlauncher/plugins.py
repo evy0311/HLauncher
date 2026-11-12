@@ -92,9 +92,9 @@ class PluginStore:
         endpoint = grant.get('network', '')
         blocked = manifest.blocked
         if not blocked and 'camera' in grant and not re.fullmatch(r'/dev/video[0-9]{1,3}', camera):
-            blocked = 'Invalid camera permission'
+            blocked = 'Invalid camera selection'
         if not blocked and not manifest.permissions <= grant.keys():
-            blocked = 'Review permissions before enabling'
+            blocked = 'Configure the camera or TCP endpoint before enabling'
         return replace(manifest, revision=revision, origin=record.get('origin', 'Local'),
                        enabled=record.get('enabled') is True, blocked=blocked,
                        camera=camera if 'camera' in manifest.permissions else '',
@@ -162,10 +162,6 @@ class PluginStore:
             grant = {key: value for key, value in grant.items() if key in manifest.permissions}
             data = self.root / 'data' / manifest.id
             data.mkdir(mode=0o700, parents=True, exist_ok=True)
-            # The sandbox drops to an unprivileged identity before opening these files.
-            if os.geteuid() == 0:
-                from .plugin_sandbox import UID
-                os.chown(data, UID, UID)
             sync_dir(data.parent)
             record = dict(current=revision, origin=origin, grant=grant,
                           enabled=bool(old and old.get('enabled') and manifest.permissions <= grant.keys()))
@@ -222,11 +218,11 @@ class PluginStore:
                 if endpoint is not None:
                     if 'network' not in manifest.permissions:
                         raise ValueError('This plugin did not request a network connection')
-                    from .plugin_sandbox import parse_endpoint
+                    from .plugin_network import parse_endpoint
                     parse_endpoint(endpoint)
                     grant['network'] = endpoint
                 if not manifest.permissions <= grant.keys():
-                    raise ValueError('Approve the requested camera or network endpoint first')
+                    raise ValueError('Configure the requested camera or TCP endpoint first')
                 record['grant'] = grant
                 if self.manifest(plugin_id, record).blocked:
                     raise ValueError(manifest.blocked)

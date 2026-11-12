@@ -67,7 +67,12 @@ class Launcher:
         else:
             self.manifests = manifests
         self.home_swipe = None
+        self.home_slide = 0.0
+        self.home_settle = None
+        from .ui.home_edit import Editor
+        self.home_editor = Editor(self)
         self.plugin_home_pressed = False
+        self.camera_frame = None
         self.audio = AudioBroker(event, independent=independent_audio)
         self.host = PluginHost(
             self.manifests, self.fb.w, self.fb.h, event, self.home, self.audio,
@@ -318,7 +323,7 @@ class Launcher:
         self.draw()
 
     def enabled(self):
-        return [m for m in self.manifests.values() if self.prefs.enabled(m) and not self.host.suspended(m.id)]
+        return [m for m in self.manifests.values() if self.prefs.enabled(m)]
 
     def refresh_plugins(self):
         if not self.plugin_manager:
@@ -340,8 +345,6 @@ class Launcher:
                 continue
             was_active = self.host.active == plugin_id
             self.host.stop(plugin_id)
-            if new is None or old.revision != new.revision or old.enabled != new.enabled:
-                self.host.failures.pop(plugin_id, None)
             del self.manifests[plugin_id]
             if was_active:
                 self.home('Plugin changed. Open it again from Home.')
@@ -402,7 +405,11 @@ class Launcher:
         self.restore_hdmi_range()
         self.host.deactivate()
         self.mode = "home"
+        self.camera_frame = None
         self.home_swipe = None
+        self.home_slide = 0.0
+        self.home_settle = None
+        self.home_editor.reset()
         self.plugin_home_pressed = False
         self.press = None
         self.has_frame = False
@@ -418,6 +425,10 @@ class Launcher:
         self.settings_page = 0
         self.banner = ""
         self.press = None
+        self.draw()
+
+    def dismiss_home_notice(self):
+        self.banner = ''
         self.draw()
 
     def about_settings(self):
@@ -816,12 +827,12 @@ class Launcher:
         if plugin_id == 'obd':
             self.obd.close()
             self.obd.enabled=False
-        if (plugin_id not in self.manifests or not self.prefs.enabled(self.manifests[plugin_id])
-                or self.host.suspended(plugin_id)):
+        if plugin_id not in self.manifests or not self.prefs.enabled(self.manifests[plugin_id]):
             self.home("Plugin unavailable")
             return
         try:
             self.mode = "plugin"
+            self.camera_frame = None
             self.plugin_home_pressed = False
             self.has_frame = False
             self.press = None
@@ -920,7 +931,18 @@ class Launcher:
         elif self.mode=='diagnostics':diagnostics.system(self)
         elif self.mode=='protocol_tests':diagnostics.protocols(self)
         elif self.mode.startswith('debug_'):diagnostics.hardware(self)
-        elif self.mode=='plugin' and not self.has_frame:pages.waiting(self)
+        elif self.mode=='plugin':
+            if self.camera_frame is not None and self.has_frame:
+                self.draw_camera()
+            elif not self.has_frame:
+                pages.waiting(self)
+
+    def draw_camera(self):
+        from .ui.plugin_overlay import camera_header
+        header = camera_header(self.prefs.data['tile_color'], self.fb.w, self.fb.h,
+                               show_clock=self.prefs.data['show_clock'],
+                               pressed=self.plugin_home_pressed, clock=time.strftime('%-I:%M'))
+        self.fb.blit(header + self.camera_frame)
 
     def input_tab(self, index):
         self.debug_input_page=index
@@ -930,32 +952,63 @@ class Launcher:
     def test_radio_button(self, name):
         self.inputs.offer(name,'trigger','screen')
 
+    def home_manifests(self):
+        return sorted(self.enabled(), key=lambda m: (not m.bundled, m.id != 'carplay', m.name.casefold()))
+
+    def home_pages(self):
+        return self.home_editor.pages(m.id for m in self.home_manifests())
+
     def change_page(self, delta):
-        count = math.ceil(len(self.enabled()) / 4)
-        self.page = (self.page + delta) % max(1, count)
+        self.home_slide = 0.0
+        self.home_settle = None
+        self.page = (self.page + delta) % len(self.home_pages())
         self.draw()
 
     def swipe_home(self, action, point):
-        if self.mode != 'home' or len(self.enabled()) <= 4:
+        if self.mode != 'home' or self.banner or self.home_editor.dialog():
             self.home_swipe = None
+            self.home_slide = 0.0
+            self.home_settle = None
             return False
         if action == 'down':
-            self.home_swipe = point
-        elif action in ('up', 'unused') and self.home_swipe:
-            start, self.home_swipe = self.home_swipe, None
-            end = point or self.last_xy
-            if end:
-                dx = (end[0] - start[0]) / self.fb.w
-                dy = (end[1] - start[1]) / self.fb.h
-                if abs(dx) >= .10 and abs(dx) >= 1.5 * abs(dy):
+            self.home_swipe = point if len(self.home_pages()) > 1 else None
+        elif self.home_swipe and action in ('move', 'up', 'unused'):
+            end = point or self.last_xy or self.home_swipe
+            dx = (end[0] - self.home_swipe[0]) / self.fb.w
+            dy = (end[1] - self.home_swipe[1]) / self.fb.h
+            horizontal = abs(dx) >= .025 and abs(dx) >= 1.5 * abs(dy)
+            target = self.page + (1 if dx < 0 else -1)
+            available = 0 <= target < len(self.home_pages())
+            if action == 'move' and (horizontal or self.home_slide):
+                self.press = self.pressed_box = None
+                self.home_slide = dx if available else dx * .25
+                self.draw()
+                return True
+            if action in ('up', 'unused'):
+                self.home_swipe = None
+                if self.home_slide or horizontal:
                     self.press = self.pressed_box = None
-                    target = self.page + (1 if dx < 0 else -1)
-                    count = math.ceil(len(self.enabled()) / 4)
-                    if 0 <= target < count:
+                    self.home_slide = dx if available else dx * .25
+                    if horizontal and abs(dx) >= .10 and available:
+                        self.home_slide += target - self.page
                         self.page = target
+                    self.home_settle = (time.monotonic(), self.home_slide)
                     self.draw()
                     return True
         return False
+
+    def tick_home_slide(self, now):
+        if self.home_settle is None:
+            return
+        started, offset = self.home_settle
+        progress = min(6, int((now - started) * 30)) / 6
+        next_offset = offset * (1 - progress) ** 3
+        redraw = round(next_offset * 720) != round(self.home_slide * 720)
+        self.home_slide = next_offset
+        if progress == 1:
+            self.home_settle = None
+        if redraw and self.mode == 'home':
+            self.draw()
 
     def change_settings_page(self, delta):
         count = math.ceil(len(self.manifests) / 3)
@@ -970,6 +1023,14 @@ class Launcher:
         if point:
             self.last_xy = point
         action = primary["action"]
+        if self.mode == 'home' and self.home_settle is not None:
+            if action != 'down':
+                return
+            self.home_slide = 0.0
+            self.home_settle = None
+            self.draw()
+        if self.mode == 'home' and self.home_editor.touch(action, point):
+            return
         if self.swipe_home(action, point):
             return
         from .ui.scroll_list import touch as scroll_touch
@@ -979,21 +1040,27 @@ class Launcher:
             if touch(self,action,point or self.last_xy):return
         if self.mode == 'colors' and self.color_touch(action, point or self.last_xy):
             return
-        # Plugins own their full viewport after their first frame. Home is provided
-        # by the app's own host-return action (the Honda icon in CarPlay).
+        # External plugins retain a launcher-owned way back to Home.
         if self.mode == "plugin" and self.has_frame:
             manifest = self.manifests.get(self.host.active)
             if manifest and manifest.revision:
-                from .ui.plugin_overlay import home_box
-                x0, y0, x1, y1 = home_box(self.fb.w, self.fb.h)
+                from .ui.plugin_overlay import back_box, camera_top
+                camera = 'camera' in manifest.permissions
+                x0, y0, x1, y1 = back_box(self.fb.w, self.fb.h, camera=camera)
                 inside = point and x0 <= point[0] < x1 and y0 <= point[1] < y1
                 if action == 'down' and inside:
                     self.plugin_home_pressed = True
+                    if camera:
+                        self.draw()
                 if self.plugin_home_pressed:
                     if action in ('up', 'unused'):
                         self.plugin_home_pressed = False
                         if inside or (self.last_xy and x0 <= self.last_xy[0] < x1 and y0 <= self.last_xy[1] < y1):
                             self.home()
+                        elif camera:
+                            self.draw()
+                    return
+                if camera and action == 'down' and point and point[1] < camera_top(self.fb.h):
                     return
             self.host.touch(touch)
             return
@@ -1035,6 +1102,9 @@ class Launcher:
             if time.monotonic() - getattr(self, 'plugin_checked', 0) > 1:
                 self.plugin_checked = time.monotonic()
                 self.refresh_plugins()
+        now = time.monotonic()
+        self.home_editor.tick(now)
+        self.tick_home_slide(now)
         waiting_projection = (self.mode == "plugin" and self.host.active in ('carplay','android-auto')
                               and not self.has_frame)
         if (self.mode not in ("plugin","shutdown_pending") or waiting_projection) and time.strftime('%Y-%m-%d %H:%M') != getattr(self, 'home_clock', None):
@@ -1120,11 +1190,15 @@ class Launcher:
             return
         if frame is not None:
             manifest = self.manifests.get(self.host.active)
-            if manifest and manifest.revision:
-                from .ui.plugin_overlay import overlay
-                frame = overlay(frame, self.fb.w, self.fb.h)
-            self.fb.blit(frame)
             self.has_frame = True
+            if manifest and not manifest.bundled and 'camera' in manifest.permissions:
+                self.camera_frame = frame
+                self.draw_camera()
+            else:
+                if manifest and manifest.revision:
+                    from .ui.plugin_overlay import overlay
+                    frame = overlay(frame, self.fb.w, self.fb.h)
+                self.fb.blit(frame)
             self.last_frame_at = time.monotonic()
         else:
             status = self.host.status()

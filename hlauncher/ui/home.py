@@ -35,6 +35,7 @@ class Entry:
     label: str
     icon: str | Path
     action: Callable
+    id: str | None = None
 
 
 @dataclass
@@ -44,75 +45,178 @@ class Frame:
     page: int
 
 
-def render(entries, *, theme='Red', size=(720,480), page=0, clock=None,
-           banner='', change_page=None, pressed=None, show_clock=False):
+def slot_box(slot):
+    tw, th = art.TILE_SIZE
+    x, y = 46 + (slot % 3) * (tw + 20), 80 + (slot // 3) * (th + 20)
+    return x, y, x + tw, y + th
+
+
+def remove_button_box(right, top):
+    center_x, center_y = right - 9, top + 9
+    return center_x - 24, center_y - 24, center_x + 24, center_y + 24
+
+
+@lru_cache(maxsize=128)
+def tile_label(text):
+    width = art.TILE_SIZE[0] - 20
+    size = LABEL_SIZE
+    while size > 18 and caption(text, size).width > width:
+        size -= 1
+    if caption(text, size).width > width:
+        while text and caption(text + '…', size).width > width:
+            text = text[:-1]
+        text += '…'
+    return caption(text, size)
+
+
+@lru_cache(maxsize=128)
+def tile_image(theme, text, icon_name, corner, active):
+    width, height = art.TILE_SIZE
+    tile = art.tile(theme).copy()
+    icon = art.glyph(icon_name, 80)
+    icon_x = (width - icon.width) // 2
+    caption_y = height - 40
+    mirror_y = 20 + 2 * icon.getbbox()[3] - icon.height + 3
+    reflected = art.reflection(icon_name, icon.width, max(1, caption_y - 6 - mirror_y))
+    label = tile_label(text)
+    tile.alpha_composite(icon, (icon_x, 20))
+    tile.alpha_composite(reflected, (icon_x, mirror_y))
+    tile.alpha_composite(label, ((width - label.width) // 2, caption_y - 1))
+
+    draw = ImageDraw.Draw(tile)
+    if active:
+        tint = art.blend(art.accent(theme), (245, 243, 255), .65)
+        draw.rounded_rectangle((2, 2, width - 3, height - 3), radius=8, outline=tint, width=2)
+        wash = Image.new('RGBA', tile.size)
+        ImageDraw.Draw(wash).rounded_rectangle((2, 2, width - 3, height - 3), radius=8,
+                                               fill=(255, 255, 255, 20))
+        tile.alpha_composite(wash)
+    if corner:
+        # Leave room for the button to overhang the tile.
+        padding = 12
+        padded = Image.new('RGBA', (width + 2 * padding, height + 2 * padding))
+        padded.alpha_composite(tile, (padding, padding))
+        left, top, right, bottom = remove_button_box(width + padding, padding)
+        x, y = (left + right) // 2, (top + bottom) // 2
+        draw = ImageDraw.Draw(padded)
+        draw.ellipse((x - 18, y - 18, x + 18, y + 18), fill='#27232b', outline='#e3d7e0', width=2)
+        draw.line((x - 8, y, x + 8, y), fill='#f4eef2', width=3)
+        tile = padded
+    return tile
+
+
+def render(layout, *, theme='Red', size=(720,480), page=0, clock=None,
+           message='', dismiss=None, change_page=None, pressed=None, show_clock=False,
+           editor=None, confirmation=None, slide=0.0):
     """Render from a canonical 720×480 layout and return matching touch regions.
 
-    Up to four plugin entries per page, followed by persistent Audio/Settings.
     The ordinary three-plugin setup matches the approved five-tile mockup.
     """
-    plugins=list(entries[:-2]);utilities=list(entries[-2:])
-    pages=max(1,(len(plugins)+3)//4);page=max(0,min(page,pages-1))
-    visible=plugins[page*4:page*4+4]+utilities
-    image=render_chrome(theme,clock=clock,show_clock=show_clock);d=ImageDraw.Draw(image)
+    editing = editor is not None
+    pages = len(layout)
+    page = max(0, min(page, pages - 1))
+    image=render_chrome(theme,clock=clock,show_clock=show_clock and not editing);d=ImageDraw.Draw(image)
     sx,sy=size[0]/720,size[1]/480
     def bounds(box):return tuple(round(v*(sx if i%2==0 else sy)) for i,v in enumerate(box))
     actions=[]
     tw,th=art.TILE_SIZE
-    for i,entry in enumerate(visible):
-        # 28 px above/below the grid, measured from the bottom of the header.
-        x=46+(i%3)*(tw+20);y=80+(i//3)*(th+20);box=(x,y,x+tw,y+th)
+    def draw_tile(entry, x, y, active=False, corner=False):
         shadow=art.tile_shadow(tw,th)
         image.paste(shadow,(x-8,y-5),shadow)
-        surface=art.tile(theme)
-        image.paste(surface,(x,y),surface)
-        icon_size=80;icon_x=(tw-icon_size)//2;caption_y=th-40
-        icon=art.glyph(entry.icon,icon_size)
-        image.paste(icon,(x+icon_x,y+20),icon)
-        # Mirror around the visible glyph's bottom, not its transparent padding.
-        floor=icon.getbbox()[3]
-        mirror_y=20+2*floor-icon.height+3
-        # End the gradient six pixels above the caption; never squash the mirror.
-        reflected=art.reflection(entry.icon,icon_size,max(1,caption_y-6-mirror_y))
-        image.paste(reflected,(x+icon_x,y+mirror_y),reflected)
-        text=entry.label;size_text=LABEL_SIZE
-        while size_text>18 and d.textlength(text,font=label_font(size_text))*LABEL_WIDTH>tw-20:size_text-=1
-        if d.textlength(text,font=label_font(size_text))*LABEL_WIDTH>tw-20:
-            while text and d.textlength(text+'…',font=label_font(size_text))*LABEL_WIDTH>tw-20:text=text[:-1]
-            text+='…'
-        label=caption(text,size_text)
-        image.paste(label,(x+(tw-label.width)//2,y+caption_y-1),label)
-        actual=bounds(box)
-        if pressed==actual:
-            tint=art.blend(art.accent(theme),(245,243,255),.65)
-            d.rounded_rectangle((x+2,y+2,x+tw-3,y+th-3),radius=8,outline=tint,width=2)
-            # Small neutral highlight, not the other screens' oversized glow.
-            wash=Image.new('RGBA',(tw-4,th-4),(255,255,255,20))
-            mask=Image.new('L',wash.size);ImageDraw.Draw(mask).rounded_rectangle((0,0,tw-5,th-5),radius=8,fill=20)
-            image.paste(wash,(x+2,y+2),mask)
-        actions.append((actual,entry.action))
-    if pages>1 and change_page is not None:
-        for x,label,delta in ((470,'‹',-1),(598,'›',1)):
-            b=(x,4,x+40,48)
-            d.text((x+20,9),label,font=interface_font(28),fill='white',anchor='mt')
-            actions.append((bounds(b),lambda delta=delta:change_page(delta)))
-        d.text((554,20),f'{page+1} / {pages}',font=interface_font(16),fill='#c4c2d1',anchor='mt')
-    if banner:
-        text=banner
-        font=interface_font(14)
-        while text and d.textlength(text,font=font)>380:text=text[:-1]
-        d.text((24,454),text,font=font,fill='#efbd82',anchor='lt')
+        tile = tile_image(theme, entry.label, entry.icon, corner, active)
+        image.paste(tile, (x + (tw - tile.width) // 2, y + (th - tile.height) // 2), tile)
+    gesture = editor.gesture if editing else None
+    offset = round(slide * 720)
+    neighbor = page + (-1 if offset > 0 else 1)
+    visible_pages = [page]
+    if offset and 0 <= neighbor < pages:
+        visible_pages.append(neighbor)
+    for visible_page in visible_pages:
+        shift = offset + (visible_page - page) * 720
+        for i, entry in enumerate(layout[visible_page]):
+            left, y, right, bottom = slot_box(i)
+            x = left + shift
+            if entry is None or (gesture and gesture.plugin_id == entry.id):
+                if editing:
+                    d.rounded_rectangle((x, y, right + shift, bottom), radius=10, outline='#857381', width=2)
+                continue
+            actual = bounds((left, y, right, bottom))
+            has_corner = editing and entry.id in editor.ui.manifests
+            draw_tile(entry, x, y, active=not offset and pressed == actual, corner=has_corner)
+            if not offset:
+                if not editing:
+                    actions.append((actual, entry.action))
+                elif has_corner:
+                    actions.append((bounds(remove_button_box(right, y)), lambda pid=entry.id: editor.confirm(pid)))
+    if gesture and gesture.page < len(layout):
+        dragged = layout[gesture.page][gesture.slot]
+        if dragged is not None and dragged.id == gesture.plugin_id:
+            target = editor.target_slot(gesture.point)
+            if gesture.moved and target is not None:
+                d.rounded_rectangle(slot_box(target), radius=10, outline='#f0dbe5', width=3)
+            origin = slot_box(gesture.slot)
+            x = round(min(720-tw, max(0, origin[0] + gesture.point[0] - gesture.start[0])))
+            y = round(min(480-th, max(55, origin[1] + gesture.point[1] - gesture.start[1])))
+            draw_tile(dragged, x, y, active=True)
+    if pages > 1:
+        for index in range(pages):
+            center = 360 + (2 * index - pages + 1) * 22
+            color = '#f4edf2' if index == page else '#827982'
+            d.rounded_rectangle((center - 13, 465, center + 13, 469), radius=2, fill=color)
+            if change_page is not None:
+                actions.append((bounds((center - 21, 458, center + 21, 480)),
+                                lambda delta=index-page: change_page(delta)))
+    if editing:
+        from .controls import Page
+        from .home_edit import MAX_PAGES
+        header = Page('', None, theme, size, pressed)
+        header.image, header.draw = image, d
+        if pages < MAX_PAGES:
+            header.button((552, 6, 624, 46), '+ Page', editor.add_page, size=16, secondary=True)
+        header.button((634, 6, 704, 46), 'Done', editor.done, size=19)
+        actions += header.actions
+    if confirmation is not None or (message and dismiss is not None):
+        from .controls import Page
+        from .projection import wrap_status
+
+        dialog = Page('Notice', None, theme, size, pressed)
+        dialog.image.paste(Image.blend(image, Image.new('RGB', image.size), .64), (0, 0))
+        title, body, buttons = confirmation or ('Notice', message, [('OK', dismiss)])
+        lines = wrap_status(str(body), dialog.draw, interface_font(22), 464)
+        height = 132 + len(lines) * 28
+        top = (480 - height) // 2
+        dialog.panel((96, top, 624, top + height))
+        dialog.label((124, top + 18), title, 25)
+        for i, line in enumerate(lines):
+            dialog.text((124, top + 60 + 28 * i), line, 22, fill='#f4f4f7')
+        width = 148
+        left = (720 - (len(buttons) * (width + 12) - 12)) // 2
+        for label, action in buttons:
+            dialog.button((left, top + height - 60, left + width, top + height - 14), label, action,
+                          secondary=label in ('Cancel', 'No'))
+            left += width + 12
+        image, actions = dialog.image, dialog.actions
     if size!=(720,480):image=image.resize(size,Image.Resampling.LANCZOS)
     return Frame(image,actions,page)
 
 
 def draw_launcher(launcher):
     """Thin adapter; callbacks and enabled/default plugin policy remain core-owned."""
-    entries=[Entry(m.name,m.icon or m.id,lambda pid=m.id:launcher.open_plugin(pid))
-             for m in sorted(launcher.enabled(),key=lambda m:(not m.bundled,m.id!='carplay',m.name.casefold()))]
-    entries += [Entry('Audio','audio',launcher.audio_page),Entry('Settings','settings',launcher.settings)]
-    frame=render(entries,theme=launcher.prefs.data['tile_color'],size=(launcher.fb.w,launcher.fb.h),
-                 page=launcher.page,banner=launcher.banner,change_page=launcher.change_page,
+    from .home_edit import SETTINGS
+
+    entries=[Entry(m.name,m.icon or m.id,lambda pid=m.id:launcher.open_plugin(pid),m.id)
+             for m in launcher.home_manifests()]
+    # entries.append(Entry('Audio', 'audio', launcher.audio_page, AUDIO))
+    entries.append(Entry('Settings', 'settings', launcher.settings, SETTINGS))
+    by_id = {entry.id: entry for entry in entries}
+    editor = launcher.home_editor
+    layout = [[by_id.get(pid) for pid in page] for page in launcher.home_pages()]
+    confirmation = editor.dialog()
+    frame=render(layout,theme=launcher.prefs.data['tile_color'],size=(launcher.fb.w,launcher.fb.h),
+                 page=launcher.page,message=launcher.banner,dismiss=launcher.dismiss_home_notice,
+                 change_page=launcher.change_page,
+                 slide=launcher.home_slide,
+                 editor=editor if editor.editing else None, confirmation=confirmation,
                  pressed=launcher.pressed_box if launcher.press is not None else None,show_clock=launcher.prefs.data['show_clock'])
     launcher.actions=frame.actions;launcher.page=frame.page
     launcher.home_clock=datetime.now().strftime('%Y-%m-%d %H:%M')

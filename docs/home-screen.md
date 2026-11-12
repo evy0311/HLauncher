@@ -10,7 +10,7 @@ Phone-provided projection video remains unchanged.
 - `hlauncher/ui/home_art.py` owns fading mirror reflections, gradient surfaces,
   fine bevels and themed background illumination. `home_icons.py` draws the
   original colored source icons, instrument dial, EQ sliders and silver gear.
-  Artwork is cached, with no animation or image generation at runtime.
+  Artwork is cached. Tiles stay still in Home edit mode until dragged.
 - `hlauncher/ui/assets/fonts/` bundles Noto Sans JP at Bold (700) for tile labels,
   with its OFL license and source checksum. Barlow Condensed SemiBold remains
   the clock face, and existing Roboto remains the header face. Noto Sans JP is
@@ -24,11 +24,17 @@ references; their generated text and backgrounds are not baked into the UI.
 
 The canonical layout is 720×480, with 196×176 tiles at x=46/262/478 and y=80/276.
 The grid has 28 pixels of space above and below it, measured below the header.
-Icons use an 80-pixel canvas; reflections fade out before captions. Paging
-controls live in the header so they cannot overlap the enlarged tiles.
+Icons use an 80-pixel canvas; reflections fade out before captions. Tiles follow
+your finger as you swipe between pages. You can also tap a bar below the tiles
+to change pages. The active page bar is brighter.
 Touch regions scale with the displayed image on other framebuffer dimensions.
-CarPlay appears first, then the remaining enabled plugins, Audio and Settings.
-Four plugin entries fit per page alongside the two persistent utility entries.
+On a fresh layout, CarPlay appears first, then the remaining enabled plugins and
+Settings. Each page has six slots. Hold a tile to edit Home. Drag tiles into
+empty slots or onto another tile to swap positions. Hold a dragged tile at either
+edge to turn the page. Use **+ Page** to add a page, up to three, and **Done** to
+leave edit mode. Layout changes are saved as you make them. Settings can move to
+any slot. Use a plugin's corner button to disable it or uninstall a plugin you
+installed yourself.
 Long external-plugin labels shrink and ellipsize rather than overlap.
 
 The existing Settings → Tile color preference selects Blue, Red, Green, Amber,
@@ -122,7 +128,7 @@ Storage restart is offered only after the protection job has completed.
 Home fits four app tiles per page. Swipe left or right or tap a page arrow to see the other apps. Audio and Settings appear on every page.
 
 Settings uses two columns of rectangular category bars: Plugins, Appearance,
-Audio & EQ, OBD Gauges, Startup and System. Child lists use the shared horizontal
+Audio & EQ, About, Startup and System. Child lists use the shared horizontal
 color wash with inset values or Off/On controls. Appearance contains background
 color, clock visibility and global Picture controls; individual plugin pages contain their enable switch and plugin options
 (such as the CarPlay adapter icon and the OBD adapter); Startup contains the default app selector.

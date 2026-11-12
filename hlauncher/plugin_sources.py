@@ -119,7 +119,8 @@ def usb_packages():
                     for index, item in enumerate(entries):
                         if index >= 4096 or len(packages) >= 32:
                             break
-                        if (item.name.lower().endswith('.hlp') and len(item.name) <= 120
+                        if (not item.name.startswith('.') and item.name.lower().endswith('.hlp')
+                                and len(item.name) <= 120
                                 and item.name.isprintable() and item.is_file(follow_symlinks=False)):
                             packages.append((item.name, device, Path(item.path).relative_to(root)))
     return sorted(packages, key=lambda package: package[0].casefold())

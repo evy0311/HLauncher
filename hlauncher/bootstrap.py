@@ -108,11 +108,15 @@ class BootstrapLauncher:
         from .catalog import discover
         from .config import Preferences
         from .ui.home import Entry,render
+        from .ui.home_edit import SETTINGS, layout
         prefs=Preferences(self.state.folder/'settings.json')
         manifests=sorted(discover(self.event).values(),key=lambda m:(m.id!='carplay',m.name.casefold()))
-        entries=[Entry(m.name,m.id,lambda:None) for m in manifests if prefs.enabled(m)]
-        entries += [Entry('Audio','audio',lambda:None),Entry('Settings','settings',lambda:None)]
-        render(entries,theme=prefs.data['tile_color'],show_clock=prefs.data['show_clock'])
+        entries = {m.id: Entry(m.name, m.id, lambda: None) for m in manifests if prefs.enabled(m)}
+        pages = layout(entries, prefs.data['home_pages'])
+        # entries[AUDIO] = Entry('Audio', 'audio', lambda: None)
+        entries[SETTINGS] = Entry('Settings', 'settings', lambda: None)
+        render([[entries.get(pid) for pid in page] for page in pages],
+               theme=prefs.data['tile_color'],show_clock=prefs.data['show_clock'])
 
     def show_pairing(self):
         with self.display_lock:

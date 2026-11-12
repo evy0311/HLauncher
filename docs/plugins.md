@@ -4,7 +4,7 @@ CarPlay, Android Auto, and OBD Gauges come with HLauncher. User-installed plugin
 
 ## Install on the radio
 
-- **USB.** Copy the `.hlp` file to the root of a FAT32 or exFAT USB drive, or to a folder named `HLauncher` at its root. Connect it to the Pi and open **Settings → Plugins → Add plugin → Scan USB drive**. Select the package and review its source, version, and permissions. Install it, then enable it and approve any camera or network access it needs. The drive can be removed after installation. This works offline.
+- **USB.** Copy the `.hlp` file to the root of a FAT32 or exFAT USB drive, or to a folder named `HLauncher` at its root. Connect it to the Pi and open **Settings → Plugins → Add plugin → Scan USB drive**. Select the package and review its source, version, and permissions. Install it, then enable it and choose any camera or TCP endpoint it asks you to configure. The drive can be removed after installation. This works offline.
 - **GitHub.** In **Add plugin → Add GitHub repository**, enter `owner/repo`. The repository needs a public stable GitHub Release with one or more `.hlp` assets. Select a package and review it before installing. Use **Check GitHub for update** in the plugin’s settings to check the same repository again. For a private repo, package a local checkout and use USB or SSH.
 - **SSH.** Copy a package or source directory to the Pi and use the commands below. Installed and enabled plugins appear on the radio without a launcher restart.
 
@@ -25,11 +25,11 @@ sudo python3 -m hlauncher plugins enable hello
 
 A normal HLauncher software update or application rollback preserves external packages and data under `/var/lib/hlauncher/plugin-manager`. The update confirmation warns that compatibility can change and lists known API mismatches when an online release declares its plugin API. An installed plugin whose API is unsupported is listed in Settings with the reason. Reflashing the SD card from a fresh image replaces the persistent partition, so back it up first.
 
-Use `plugins update SOURCE` to install a higher plugin version. Use `plugins rollback ID` or **Restore previous version** in the plugin settings to switch versions while retaining data. Use `plugins disable ID` to hide the tile or `plugins remove ID` to uninstall the code and retain its data for a future reinstall. Updates requesting additional permissions require the user to enable the plugin and approve the new access. Plugin authors are responsible for keeping their data readable across their own updates and rollbacks.
+Use `plugins update SOURCE` to install a higher plugin version. Use `plugins rollback ID` or **Restore previous version** in the plugin settings to switch versions while retaining data. Use `plugins disable ID` to hide the tile or `plugins remove ID` to uninstall the code and retain its data for a future reinstall. Updates requesting additional device or endpoint settings require the user to configure them before enabling the plugin. Plugin authors are responsible for keeping their data readable across their own updates and rollbacks.
 
-On first launch, existing source installs from `/var/lib/hlauncher/plugins` are archived under `/var/lib/hlauncher/plugin-manager/legacy` so a rollback cannot discover them through the old root runner. Files and launcher preferences are preserved. Use `plugins list` to locate a legacy source and reinstall it after review. Old plugin-specific files remain in the archived folder. Reconfigure device or network access when enabling it in the new manager.
+On first launch, existing source installs from `/var/lib/hlauncher/plugins` are archived under `/var/lib/hlauncher/plugin-manager/legacy` so a rollback does not automatically launch them. Files and launcher preferences are preserved. Use `plugins list` to locate a legacy source and reinstall it after review. Old plugin-specific files remain in the archived folder. Reconfigure device or network access when enabling it in the new manager.
 
-Fresh images include the Linux worker sandbox. On a Pi upgraded from an older image, install `bubblewrap` once using `sudo apt install bubblewrap` with SD card protection off. For a USB camera plugin that uses FFmpeg, install `ffmpeg` as well. The bundled plugins use their existing runtime.
+Fresh images include FFmpeg. If a camera plugin uses FFmpeg on an older image, install `ffmpeg` with SD card protection off.
 
 ## Author and package a plugin
 
@@ -63,7 +63,7 @@ Preview runs your worker as your local user and captures its first frame. Use it
 
 A `.hlp` is a ZIP containing regular files at its root, including `plugin.json`. The installer limits packages to 64 MiB and 4,096 files, rejects links and paths outside the package, and reserves the bundled IDs. The package digest identifies the exact installed revision. To supply tile art, set `"icon": "icon.png"` in the manifest and include a static PNG up to 256 × 256 and 64 KiB.
 
-External plugins can request `display`, `touch`, `session`, `audio.playback`, and `media.publish`. Each worker has read-only package and SDK files, its own writable `HLAUNCHER_DATA_DIR`, and a launcher-owned **Home** button. `camera` permission exposes one approved V4L2 device through `HLAUNCHER_CAMERA_DEVICE`. `network` permission enables Python SDK `Client.connect()` to the approved numeric IP and TCP port. The method returns a connected socket. It does not provide DNS, UDP, or arbitrary outbound connections. Radio controls, raw Bluetooth and USB interfaces, and microphone capture are reserved.
+External plugins can request `display`, `touch`, `session`, `audio.playback`, and `media.publish`. Each worker has its own `HLAUNCHER_DATA_DIR`. The manifest’s `camera` option enables a USB capture picker and provides the chosen device through `HLAUNCHER_CAMERA_DEVICE`. Camera workers receive the viewport below the standard launcher header and Back button. The `network` option configures the endpoint used by Python SDK `Client.connect()`. Plugins can also use the system’s ordinary network and device APIs directly.
 
 ## API 1
 
@@ -105,7 +105,7 @@ CarPlay uses node-CarPlay's `SendMultiTouch` for both one- and two-finger input.
 
 `audio.status` exposes current support. `audio.capture` is opt-in, only allowed for the foreground plugin, and ends on deactivation. Capture sends `audio.format` followed by signed 16-bit little-endian PCM packets. Queues are bounded; PCM may be dropped if the plugin cannot keep up. The radio can produce digital silence outside hands-free voice mode. Call simulation is not part of this API, and CarPlay does not consume microphone PCM yet. Plugins with `audio.playback` can use `Client.playback(pcm, rate, channels, stream)` for signed 16-bit little-endian output. The core owns PCM mixing/resampling and HDMI playback. Submission is nonblocking and can drop PCM under backpressure. Keep-alive plugins can continue audio on the launcher; stopping the plugin releases playback. Capture still stops on deactivation.
 
-The external runtime uses Linux namespaces, an unprivileged worker, and per-worker CPU, memory, and process limits. Bundle authors with direct hardware requirements should discuss them separately from external package permissions.
+External plugins run as separate processes under the HLauncher service account with full access to launcher code, installed packages, and the system. Install and run only code you trust. Manifest options configure launcher features and do not enforce system access restrictions.
 
 ## Now-playing reports
 

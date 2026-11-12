@@ -100,13 +100,9 @@ class Architecture(unittest.TestCase):
         )
         try:
             self.assertEqual(ui.mode, "home")
-            self.assertEqual(len(ui.actions), 3)
+            self.assertEqual(len(ui.actions), 2)
             carplay_box, _ = ui.actions[0]
-            _, audio_callback = ui.actions[1]
-            audio_callback()
-            self.assertEqual(ui.mode, 'audio_settings')
-            ui.home()
-            settings_box, callback = ui.actions[2]
+            settings_box, callback = ui.actions[1]
             self.assertGreater(settings_box[0], carplay_box[0])
             callback()
             self.assertEqual(ui.mode, "settings")
@@ -115,7 +111,7 @@ class Architecture(unittest.TestCase):
             ui.toggle_plugin("carplay")
             self.assertIsNone(prefs.data["default_plugin"])
             ui.home()
-            self.assertEqual(len(ui.actions), 2)
+            self.assertEqual(len(ui.actions), 1)
             ui.toggle_plugin("carplay")
             prefs.set_default("carplay")
             prefs.data['setup_complete'] = True
@@ -131,15 +127,15 @@ class Architecture(unittest.TestCase):
         finally:
             ui.close()
 
-    def test_home_pagination_keeps_audio_settings_and_plugin_callbacks(self):
+    def test_home_pagination_keeps_settings_and_plugin_callbacks(self):
         from dataclasses import replace
-        manifests={f'app{i}':replace(self.carplay,id=f'app{i}',name=f'App {i}') for i in range(5)}
+        manifests={f'app{i}':replace(self.carplay,id=f'app{i}',name=f'App {i}') for i in range(7)}
         display=Display()
         ui=Launcher(framebuffer=display,preferences=self.preferences(),manifests=manifests)
         try:
             with patch.object(ui,'open_plugin') as opened:
                 ui.draw()
-                self.assertEqual(len(ui.actions),8)  # four apps, Audio, Settings, paging
+                self.assertEqual(len(ui.actions),8)  # six apps and paging
                 for index,(a,_) in enumerate(ui.actions):
                     for b,_ in ui.actions[index+1:]:
                         self.assertFalse(a[0]<b[2] and b[0]<a[2] and a[1]<b[3] and b[1]<a[3])
@@ -147,16 +143,16 @@ class Architecture(unittest.TestCase):
                 opened.assert_called_with('app0')
                 ui.actions[-1][1]()
                 self.assertEqual(ui.page,1)
-                self.assertEqual(len(ui.actions),5)
+                self.assertEqual(len(ui.actions),4)
                 ui.actions[0][1]()
-                opened.assert_called_with('app4')
+                opened.assert_called_with('app6')
                 ui.actions[1][1]()
-                self.assertEqual(ui.mode,'audio_settings')
+                self.assertEqual(ui.mode,'settings')
                 ui.home();ui.change_page(-1)
                 self.assertEqual(ui.page,0)
             for size in ((640,480),(800,480)):
                 from hlauncher.ui.home import Entry,render
-                frame=render([Entry('Audio','audio',lambda:None),Entry('Settings','settings',lambda:None)],size=size)
+                frame=render([[Entry('Settings','settings',lambda:None)]],size=size)
                 self.assertEqual(frame.image.size,size)
                 for (x,y,right,bottom),_ in frame.actions:
                     self.assertTrue(0<=x<right<size[0] and 0<=y<bottom<size[1])
@@ -304,8 +300,8 @@ class Architecture(unittest.TestCase):
         ui=Launcher(framebuffer=Display(),preferences=self.preferences(),manifests={'carplay':self.carplay})
         try:
             ui.settings()
-            self.assertEqual(len(ui.actions),8)
-            ui.actions[5][1]()
+            self.assertEqual(len(ui.actions),6)
+            ui.actions[4][1]()
             self.assertEqual(ui.mode,'startup_settings')
             ui.actions[1][1]()
             self.assertEqual(ui.prefs.data['default_plugin'],'carplay')
@@ -316,17 +312,15 @@ class Architecture(unittest.TestCase):
             self.assertEqual(ui.mode,'tile_colors')
             ui.actions[0][1]()
             self.assertEqual(ui.mode,'appearance_settings')
-            ui.settings();ui.actions[3][1]()
-            self.assertEqual(ui.mode,'audio_settings')
             ui.settings();ui.actions[1][1]()
             self.assertEqual(ui.mode,'plugins_settings')
-            ui.settings();ui.actions[6][1]()
+            ui.settings();ui.actions[5][1]()
             self.assertEqual(ui.mode,'system_settings')
             ui.settings()
             saved = ui.prefs.path.read_bytes()
-            about_box, open_about = ui.actions[-1]
-            self.assertLessEqual(about_box[3], ui.fb.h)
-            self.assertGreaterEqual(about_box[1], max(box[3] for box, _ in ui.actions[:-1]))
+            about_box, open_about = ui.actions[3]
+            self.assertEqual(about_box, (24,232,352,308))
+            self.assertFalse(any(action == ui.obd_settings for _, action in ui.actions))
             open_about()
             self.assertEqual(ui.mode, 'about_settings')
             ui.actions[1][1]()

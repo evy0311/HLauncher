@@ -70,6 +70,27 @@ class RadioUI(unittest.TestCase):
             self.assertTrue(any(action==ui.home for _,action in ui.actions))
         ui.host.active=None
 
+    def test_home_launch_error_requires_ok_before_tiles_are_available(self):
+        ui = self.ui
+        ui.open_plugin('missing-plugin')
+        self.assertEqual(ui.mode, 'home')
+        self.assertEqual(ui.banner, 'Plugin unavailable')
+        self.assertEqual([callback for _, callback in ui.actions], [ui.dismiss_home_notice])
+        ui.actions[0][1]()
+        self.assertEqual(ui.banner, '')
+        self.assertIn(ui.settings, [callback for _, callback in ui.actions])
+
+    def test_camera_frame_sits_below_standard_header(self):
+        from hlauncher.display import encode
+        from hlauncher.ui.chrome import render
+
+        ui = self.ui
+        pixels = bytes([0x1f, 0]) * (720 * 428)
+        ui.camera_frame = pixels
+        ui.draw_camera()
+        header = encode(render('Red', child=True).crop((0, 0, 720, 52)))
+        self.assertEqual(ui.fb.frame, header + pixels)
+
     def test_volume_page_routes_both_buttons_to_head_unit_bridge(self):
         ui=self.ui;ui.debug_tools('volume')
         with patch.object(ui.inputs,'request_volume') as request:

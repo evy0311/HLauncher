@@ -5,7 +5,8 @@ from pathlib import Path
 import tempfile
 import threading
 
-from .. import plugin_sandbox, plugin_sources
+from .. import plugin_sources
+from ..cameras import usb_cameras
 from ..plugin_packages import unpack
 from ..plugins import validate_external
 from ..updater import sha256
@@ -96,13 +97,14 @@ class Manager:
         self.lookup()
 
     def show_packages(self, rows, source):
+        self.package_source = source
         if source == 'usb':
             self.rows = [Row(item[0], lambda item=item: self.prepare(
                 lambda path: plugin_sources.copy_usb(item, path))) for item in rows]
         else:
             self.rows = [Row(item['name'], lambda item=item: self.prepare(
                 lambda path: plugin_sources.fetch_asset(item, path)), value=item['tag']) for item in rows]
-        self.notice = '' if rows else 'No .hlp packages found. Check the drive and scan again.'
+        self.notice = '' if rows or source == 'usb' else 'No .hlp packages found.'
         self.ui.list_offsets = getattr(self.ui, 'list_offsets', {})
         self.ui.list_offsets['plugin-packages'] = 0
         self.go('packages')
@@ -157,7 +159,6 @@ class Manager:
 
     def change(self, plugin_id, operation, **options):
         def done(_result):
-            self.ui.host.failures.pop(plugin_id, None)
             self.ui.refresh_plugins()
             if operation == 'remove':
                 self.ui.plugin_settings()
@@ -183,8 +184,13 @@ class Manager:
         self.target = plugin_id
         self.pending_camera = None
         self.notice = ''
-        self.rows = [Row(device, lambda device=device: self.choose_camera(device))
-                     for device in plugin_sandbox.cameras()]
+        self.rows = []
+        self.go('camera')
+        self.start('Scanning USB cameras…', usb_cameras, self.show_cameras)
+
+    def show_cameras(self, cameras):
+        self.rows = [Row(name, lambda device=device: self.choose_camera(device))
+                     for device, name in cameras.items()]
         self.go('camera')
 
     def choose_camera(self, device):
@@ -219,8 +225,8 @@ class Manager:
     def draw(self):
         ui = self.ui
         title = {'sources': 'Add plugin', 'github': 'GitHub repository', 'packages': 'Plugin packages',
-                 'review': 'Review plugin', 'camera': 'Allow USB camera',
-                 'endpoint': 'Allow TCP connection', 'remove': 'Uninstall plugin', 'change': 'Plugin settings'}[self.view]
+                 'review': 'Review plugin', 'camera': 'Select USB camera',
+                 'endpoint': 'Set TCP endpoint', 'remove': 'Uninstall plugin', 'change': 'Plugin settings'}[self.view]
         back = {
             'sources': ui.plugin_settings,
             'packages': self.add,
@@ -239,6 +245,9 @@ class Manager:
             if self.view == 'camera' and not self.rows:
                 page.text((24, 132), 'Connect the USB camera, then scan again.', 20)
                 page.button((24, 212, 696, 264), 'Scan again', lambda: self.camera_page(self.target))
+            elif self.view == 'packages' and self.package_source == 'usb' and not self.rows:
+                page.text((24, 132), 'No .hlp packages found. Check the USB drive.', 20)
+                page.button((24, 212, 696, 264), 'Scan again', lambda: self.sources('usb'))
             else:
                 draw_rows(ui, page, self.rows, bottom=415, key='plugin-' + self.view, size=23)
         elif self.view == 'review':
@@ -246,10 +255,10 @@ class Manager:
             installed = ui.manifests.get(manifest.id)
             page.label((24, 116), f'{manifest.name}  {manifest.version}', 28)
             page.text((24, 158), origin[:82], 18)
-            page.text((24, 196), 'Requests ' + (', '.join(sorted(manifest.permissions | manifest.capabilities)) or 'no permissions'), 18)
+            page.text((24, 196), 'Requests ' + (', '.join(sorted(manifest.permissions | manifest.capabilities)) or 'no launcher features'), 18)
             if installed:
                 page.text((24, 236), f'Currently installed {installed.version} · {installed.origin[:55]}', 18)
-            page.text((24, 276), 'Install only packages from a source you trust.', 18)
+            page.text((24, 276), 'Plugins run with full system access. Install only trusted code.', 18)
             page.text((24, 311), 'SHA-256  ' + digest[:24] + '…', 17)
             page.button((24, 360, 696, 414), 'Install update' if installed else 'Install plugin', self.install)
         elif self.view == 'remove':

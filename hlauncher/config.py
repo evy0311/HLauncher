@@ -44,7 +44,8 @@ class Preferences:
         self.path = Path(path) if path else STATE_DIR / "settings.json"
         self.data = {"enabled": {}, "background": {}, "default_plugin": None, "tile_color": "Red", "custom_color": "#198B96",
                      "setup_complete": False, "setup_step": 0, "safety_notice_version": 0,
-                     "debug_mode": False, "show_clock": False, "ssh_enabled": True}
+                     "debug_mode": False, "show_clock": False, "ssh_enabled": True,
+                     "home_pages": []}
         try:
             loaded = json.loads(self.path.read_text())
             if not isinstance(loaded, dict) or not isinstance(
@@ -59,6 +60,10 @@ class Preferences:
             self.data['debug_mode'] = loaded.get('debug_mode', False) is True
             self.data['show_clock'] = loaded.get('show_clock', False) is True
             self.data['ssh_enabled'] = loaded.get('ssh_enabled', True) is True
+            pages = loaded.get('home_pages')
+            if isinstance(pages, list) and all(isinstance(page, list) and len(page) == 6 for page in pages):
+                self.data['home_pages'] = [[item if isinstance(item, str) else None for item in page]
+                                           for page in pages]
             step = loaded.get('setup_step', 0)
             self.data['setup_step'] = step if type(step) is int and 0 <= step <= 5 else 0
             self.data["enabled"] = {
@@ -194,4 +199,13 @@ class Preferences:
             self.save()
         except OSError:
             self.data["default_plugin"] = before
+            raise
+
+    def set_home_pages(self, pages):
+        previous = self.data['home_pages']
+        self.data['home_pages'] = copy.deepcopy(pages)
+        try:
+            self.save()
+        except OSError:
+            self.data['home_pages'] = previous
             raise

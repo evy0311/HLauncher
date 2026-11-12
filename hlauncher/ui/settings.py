@@ -19,7 +19,7 @@ class Row:
 
 
 def render(rows, back, *, theme='Red', size=(720,480), clock=None,
-           pressed=None, banner='', version='', show_clock=False, footer=None):
+           pressed=None, banner='', version='', show_clock=False):
     back_box=scale_bounds(BACK_BOUNDS,size)
     image=render_chrome(theme,child=True,clock=clock,pressed=pressed==back_box,show_clock=show_clock)
     d=ImageDraw.Draw(image)
@@ -30,8 +30,6 @@ def render(rows, back, *, theme='Red', size=(720,480), clock=None,
     for i,row in enumerate(rows):
         x=24+(i%2)*344;y=144+(i//2)*88
         tiles.append((row, (x,y,x+328,y+76), 29))
-    if footer is not None:
-        tiles.append((footer, (24,408,696,446), 23))
     for row, box, font_size in tiles:
         x, y, right, bottom = box
         width, height = right-x, bottom-y
@@ -55,14 +53,14 @@ def render(rows, back, *, theme='Red', size=(720,480), clock=None,
 def draw_launcher(launcher):
     rows=[Row('Plugins','',launcher.plugin_settings),
           Row('Appearance','',launcher.appearance_settings),
-          Row('Audio & EQ','',launcher.audio_page),
-          Row('OBD Gauges','',launcher.obd_settings),
+          # Row('Audio & EQ','',launcher.audio_page),
+          Row('About','',launcher.about_settings),
           Row('Startup','',launcher.startup_settings),
           Row('System','',launcher.system_settings)]
     frame=render(rows,launcher.home,theme=launcher.prefs.data['tile_color'],
                  size=(launcher.fb.w,launcher.fb.h),banner=launcher.banner,version=__version__,
                  pressed=launcher.pressed_box if launcher.press is not None else None,
-                 show_clock=launcher.prefs.data['show_clock'],footer=Row('About','',launcher.about_settings))
+                 show_clock=launcher.prefs.data['show_clock'])
     launcher.actions=frame.actions
     launcher.home_clock=datetime.now().strftime('%Y-%m-%d %H:%M')
     launcher.fb.image(dither_rgb565(frame.image))

@@ -30,9 +30,6 @@ def channel():
 
 class Worker:
     def __init__(self, manifest, width, height, event, playback=None, log_dir=None):
-        from . import plugin_sandbox
-        restricted = not manifest.bundled
-        sandbox_command = plugin_sandbox.command(manifest) if restricted else None
         self.network = None
         self.lease=ProjectionLease() if manifest.bundled and manifest.id in PROJECTIONS else None
         self.manifest = manifest
@@ -42,10 +39,11 @@ class Worker:
         self.socket, child = channel()
         self.socket.setblocking(False)
         # TemporaryFile is anonymous after opening on Linux and closes with the worker.
+        sealed = not manifest.bundled and hasattr(os, "memfd_create")
         self.file = (os.fdopen(os.memfd_create('hlauncher-frames', os.MFD_ALLOW_SEALING), 'r+b')
-                     if restricted else tempfile.TemporaryFile())
+                     if sealed else tempfile.TemporaryFile())
         self.file.truncate(self.frame_bytes * SLOTS)
-        if restricted:
+        if sealed:
             self.file.flush()
             fcntl.fcntl(self.file, fcntl.F_ADD_SEALS,
                         fcntl.F_SEAL_SHRINK | fcntl.F_SEAL_GROW | fcntl.F_SEAL_SEAL)
@@ -77,9 +75,13 @@ class Worker:
             HLAUNCHER_HEIGHT=str(height),
             HLAUNCHER_LOG_DIR=str(logs),
             HLAUNCHER_STATE_DIR=str(STATE_DIR),
-            PYTHONPATH=str(ROOT / "sdk"),
+            PYTHONPATH=os.pathsep.join(filter(None, (str(ROOT / "sdk"), str(ROOT), env.get("PYTHONPATH")))),
         )
         env.pop("HLAUNCHER_RADIO_ADDRESS", None)
+        if not manifest.bundled and manifest.data_path is not None:
+            env['HLAUNCHER_DATA_DIR'] = str(manifest.data_path)
+        if manifest.camera:
+            env['HLAUNCHER_CAMERA_DEVICE'] = manifest.camera
         if self.lease:env["HLAUNCHER_PROJECTION_FD"]=str(self.lease.fd)
         command = [
             sys.executable if manifest.entrypoint[0] == "python3" else "/usr/bin/node",
@@ -88,17 +90,18 @@ class Worker:
         audio_socket = playback.open_plugin(manifest) if playback and hasattr(playback,'open_plugin') else None
         if audio_socket:env['HLAUNCHER_PLAYBACK_FD']=str(audio_socket.fileno())
         try:
-            if restricted and manifest.endpoint:
-                self.network = plugin_sandbox.Network(manifest.endpoint)
+            if not manifest.bundled and manifest.endpoint:
+                from .plugin_network import Network
+                self.network = Network(manifest.endpoint)
                 env['HLAUNCHER_NETWORK_FD'] = str(self.network.child.fileno())
             descriptors = [child.fileno(), self.file.fileno()]
             if audio_socket: descriptors.append(audio_socket.fileno())
             if self.lease: descriptors.append(self.lease.fd)
             if self.network: descriptors.append(self.network.child.fileno())
             self.proc = subprocess.Popen(
-                sandbox_command if restricted else command,
+                command,
                 cwd=manifest.path,
-                env=plugin_sandbox.environment(env, manifest) if restricted else env,
+                env=env,
                 pass_fds=tuple(descriptors),
                 stdin=subprocess.DEVNULL,
                 stdout=subprocess.PIPE,
@@ -286,7 +289,6 @@ class PluginHost:
         self.audio = audio
         self.background_allowed = background_allowed or (lambda m: m.keep_alive)
         self.workers = {}
-        self.failures = {}
         self.active = None
         self.projection_request=None
         self.projection_deadline=0
@@ -307,7 +309,12 @@ class PluginHost:
     def _start(self,plugin_id,foreground):
         worker=self.workers.get(plugin_id)
         if worker is None:
-            worker=Worker(self.manifests[plugin_id],self.width,self.height,self.event,
+            manifest = self.manifests[plugin_id]
+            height = self.height
+            if not manifest.bundled and 'camera' in manifest.permissions:
+                from .ui.plugin_overlay import camera_top
+                height -= camera_top(self.height)
+            worker=Worker(manifest,self.width,height,self.event,
                           playback=getattr(self.audio,'playback',None))
             self.workers[plugin_id]=worker
         worker.active=foreground
@@ -420,6 +427,13 @@ class PluginHost:
     def touch(self, touch):
         if worker := self.workers.get(self.active):
             if "touch" in worker.manifest.capabilities:
+                if not worker.manifest.bundled and 'camera' in worker.manifest.permissions:
+                    top = self.height - worker.height
+                    touch = dict(touch, height=worker.height, contacts=[
+                        dict(contact, y_px=max(0, contact['y_px'] - top),
+                             y=max(0, contact['y_px'] - top) / max(1, worker.height - 1))
+                        if contact['y_px'] is not None else contact for contact in touch['contacts']
+                    ])
                 if not worker.send(type="touch", **touch):
                     self.failed(worker.manifest.id, "Input queue full")
 
@@ -496,20 +510,12 @@ class PluginHost:
         if message.get('final', True) is not False:
             self.button_pending.pop(sequence, None)
 
-    def suspended(self, plugin_id):
-        return self.failures.get(plugin_id, 0) >= 2
-
     def failed(self, plugin_id, error):
-        manifest = self.manifests.get(plugin_id)
-        if manifest and manifest.revision:
-            self.failures[plugin_id] = self.failures.get(plugin_id, 0) + 1
         foreground = self.active == plugin_id
         self.event(state="plugin_failed", plugin=plugin_id, error=str(error))
         self.stop(plugin_id)
         if foreground:
-            message = ('Plugin paused after repeated failures. Open Plugin Settings.'
-                       if self.suspended(plugin_id) else str(error)[:120])
-            self.home(message)
+            self.home(str(error)[:120])
 
     def tick(self):
         self._projection_tick()

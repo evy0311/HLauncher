@@ -48,8 +48,8 @@ class AudioSettingsTests(unittest.TestCase):
             ui = Launcher(framebuffer=Display(), preferences=Preferences(Path(folder)/'settings.json'), manifests={})
             try:
                 ui.settings()
-                action = next(action for _,action in ui.actions if action == ui.audio_page)
-                action()
+                self.assertNotIn(ui.audio_page, [action for _, action in ui.actions])
+                ui.audio_page()
                 self.assertEqual(ui.mode, 'audio_settings')
                 ui.adjust_eq('bass', 1)
                 self.assertEqual(AudioSettings(Path(folder)/'audio.json').values['bass'], 1)

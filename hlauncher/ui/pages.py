@@ -160,7 +160,10 @@ def plugin_detail(ui):
         rows = [Row('Enabled', lambda: manager.toggle(manifest), toggle=ui.prefs.enabled(manifest)),
                 Row('Version', None, value=manifest.version)]
         if 'camera' in manifest.permissions:
-            rows.append(Row('USB camera', lambda: manager.camera_page(manifest.id), value=manifest.camera))
+            from ..cameras import usb_cameras
+            camera = usb_cameras().get(manifest.camera) if manifest.camera else None
+            rows.append(Row('USB camera', lambda: manager.camera_page(manifest.id),
+                            value=camera or ('Unavailable' if manifest.camera else 'Select')))
         if 'network' in manifest.permissions:
             rows.append(Row('TCP endpoint', lambda: manager.endpoint_page(manifest.id), value=manifest.endpoint))
         if manifest.origin.startswith('GitHub '):
@@ -168,8 +171,7 @@ def plugin_detail(ui):
         if ui.plugin_store.has_previous(manifest.id):
             rows.append(Row('Restore previous version', lambda: manager.change(manifest.id, 'rollback')))
         rows.append(Row('Uninstall', lambda: manager.confirm_remove(manifest.id)))
-        message = ui.banner or manifest.blocked or ('Paused after repeated failures. Disable and enable to retry.'
-                                                   if ui.host.suspended(manifest.id) else manifest.origin)
+        message = ui.banner or manifest.blocked or manifest.origin
         draw_rows(ui, p, rows, bottom=422, key='plugin:'+manifest.id, size=25)
         p.notice(message)
         present(ui, p)

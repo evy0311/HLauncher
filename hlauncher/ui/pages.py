@@ -177,6 +177,7 @@ def plugin_detail(ui):
         present(ui, p)
         return
     if manifest.id=='carplay':
+        rows.append(Row('Frame rate', ui.toggle_carplay_fps, value=f'{ui.prefs.carplay_fps} FPS'))
         rows.append(Row('Adapter icon',ui.adapter_branding_page))
     elif manifest.id=='obd':rows.append(Row('OBD adapter',ui.obd_settings))
     elif manifest.keep_alive and manifest.id!='android-auto':

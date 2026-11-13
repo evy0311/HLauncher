@@ -37,6 +37,7 @@ def serial_number():
 
 
 SAFETY_NOTICE_VERSION = 2
+CARPLAY_FRAME_RATES = (30, 60)
 
 
 class Preferences:
@@ -45,7 +46,7 @@ class Preferences:
         self.data = {"enabled": {}, "background": {}, "default_plugin": None, "tile_color": "Red", "custom_color": "#198B96",
                      "setup_complete": False, "setup_step": 0, "safety_notice_version": 0,
                      "debug_mode": False, "show_clock": False, "ssh_enabled": True,
-                     "home_pages": []}
+                     "home_pages": [], "carplay_fps": CARPLAY_FRAME_RATES[0]}
         try:
             loaded = json.loads(self.path.read_text())
             if not isinstance(loaded, dict) or not isinstance(
@@ -60,6 +61,9 @@ class Preferences:
             self.data['debug_mode'] = loaded.get('debug_mode', False) is True
             self.data['show_clock'] = loaded.get('show_clock', False) is True
             self.data['ssh_enabled'] = loaded.get('ssh_enabled', True) is True
+            fps = loaded.get('carplay_fps')
+            if type(fps) is int and fps in CARPLAY_FRAME_RATES:
+                self.data['carplay_fps'] = fps
             pages = loaded.get('home_pages')
             if isinstance(pages, list) and all(isinstance(page, list) and len(page) == 6 for page in pages):
                 self.data['home_pages'] = [[item if isinstance(item, str) else None for item in page]
@@ -199,6 +203,22 @@ class Preferences:
             self.save()
         except OSError:
             self.data["default_plugin"] = before
+            raise
+
+    @property
+    def carplay_fps(self):
+        fps = self.data['carplay_fps']
+        return fps if type(fps) is int and fps in CARPLAY_FRAME_RATES else CARPLAY_FRAME_RATES[0]
+
+    def set_carplay_fps(self, fps):
+        if type(fps) is not int or fps not in CARPLAY_FRAME_RATES:
+            raise ValueError('CarPlay frame rate must be 30 or 60 FPS')
+        previous = self.data['carplay_fps']
+        self.data['carplay_fps'] = fps
+        try:
+            self.save(force=('carplay_fps',))
+        except OSError:
+            self.data['carplay_fps'] = previous
             raise
 
     def set_home_pages(self, pages):

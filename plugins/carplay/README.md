@@ -56,7 +56,11 @@ For testing, enable Debug and use the HondaLink Calls/mic diagnostics described
 in [recording a drive test](../../docs/setup.md#record-a-hondalink-drive-test).
 [Radio controls](../../docs/radio-buttons.md) documents button forwarding.
 
-## Picture controls
+## Frame rate and picture controls
+
+Open **Settings → Plugins → CarPlay → Frame rate** to switch between 30 and 60 FPS.
+The setting is saved and an active CarPlay connection briefly reconnects to request
+the new frame rate from the dongle. The default is 30 FPS.
 
 
 Open **Settings → Appearance → Picture** for saturation, contrast and brightness sliders.

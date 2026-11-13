@@ -209,6 +209,25 @@ class RadioUI(unittest.TestCase):
         ui.actions[1][1]()
         self.assertEqual(ui.mode,'tile_colors')
 
+    def test_carplay_frame_rate_is_saved_and_used_by_the_next_worker(self):
+        ui = self.ui
+        ui.plugin_detail('carplay')
+        self.assertEqual(ui.prefs.carplay_fps, 30)
+        toggle = next(action for _, action in ui.actions if action == ui.toggle_carplay_fps)
+        with patch.object(ui.host, 'stop') as stop:
+            toggle()
+            stop.assert_called_once_with('carplay')
+        self.assertEqual(Preferences(ui.prefs.path).carplay_fps, 60)
+        with patch('hlauncher.plugin_host.Worker') as start:
+            start.return_value.manifest = ui.manifests['carplay']
+            try:
+                ui.host.ensure_background_carplay()
+                self.assertEqual(start.call_args.kwargs['carplay_fps'], 60)
+            finally:
+                ui.host.stop('carplay')
+        toggle()
+        self.assertEqual(Preferences(ui.prefs.path).carplay_fps, 30)
+
     def test_audio_returns_to_the_page_that_opened_it(self):
         ui=self.ui;ui.settings();ui.audio_page();ui.actions[0][1]()
         self.assertEqual(ui.mode,'settings')

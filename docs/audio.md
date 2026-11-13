@@ -42,7 +42,7 @@ HDMI sink.
 The UI, frame rendering and Bluetooth control loop do not carry playback PCM.
 The CarPlay USB bridge sends PCM and voice controls over a dedicated socket.
 Voice controls apply in wire order before the next PCM packet. A separate
-pipe carries 30 fps H.264 video. If that pipe backs up, the bridge sheds video
+pipe carries H.264 video at the requested CarPlay frame rate (30 FPS by default). If that pipe backs up, the bridge sheds video
 until it can resume at an IDR with the stream's parameter sets. The screen can
 briefly hold its last picture while playback continues. The Pi gives the audio
 process higher CPU scheduling priority when permitted and runs the CarPlay

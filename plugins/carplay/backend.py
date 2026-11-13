@@ -477,7 +477,7 @@ class CarplayHDMI:
                 stack.enter_context(pcm_reader)
                 stack.enter_context(pcm_writer)
                 pcm = stack.enter_context(pcm_reader.makefile('rb', buffering=0))
-                env = dict(os.environ, CIVIC_CARPLAY_FPS="30", CIVIC_CARPLAY_RESET="0",
+                env = dict(os.environ, CIVIC_CARPLAY_RESET="0",
                            HLAUNCHER_CARPLAY_PCM_FD=str(pcm_writer.fileno()))
                 proc = subprocess.Popen(
                     ["/usr/bin/node", str(RUNTIME / "bridge.mjs")],

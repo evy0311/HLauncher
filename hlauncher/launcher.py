@@ -492,6 +492,20 @@ class Launcher:
         self.banner=''
         self.draw()
 
+    def toggle_carplay_fps(self):
+        fps = 60 if self.prefs.carplay_fps == 30 else 30
+        try:
+            self.prefs.set_carplay_fps(fps)
+        except OSError as exc:
+            self.banner = 'Could not save CarPlay frame rate'
+            self.event(state='settings_save_failed', error=str(exc))
+        else:
+            reconnecting = 'carplay' in self.host.workers
+            self.host.stop('carplay')
+            self.projection_checked = 0
+            self.banner = 'CarPlay will reconnect' if reconnecting else 'Saved'
+        self.draw()
+
     def apply_adapter_branding(self):
         manifest=self.manifests.get('carplay')
         if not manifest or not self.prefs.enabled(manifest):

@@ -380,8 +380,8 @@ driver.on('message',message=>{
     lastStats=now;lastStatsVideo=videoPackets;maxVideoGap=0;maxAudioGap=0;
   }
 });
-const fps=Number(process.env.CIVIC_CARPLAY_FPS || 15);
-const config={...DEFAULT_CONFIG,width:800,height:480,fps:Number.isFinite(fps)?Math.max(5,Math.min(60,fps)):15,
+const fps=process.env.CIVIC_CARPLAY_FPS === '60' ? 60 : 30;
+const config={...DEFAULT_CONFIG,width:800,height:480,fps,
   boxName:'HLauncher',micType:'os',audioTransferMode:false};
 await driver.initialise(device);
 initialBrandingOK=await brandAdapter();

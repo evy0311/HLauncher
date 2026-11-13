@@ -13,7 +13,7 @@ import sys
 import tempfile
 import threading
 import time
-from .config import ROOT, LOG_DIR, STATE_DIR
+from .config import ROOT, LOG_DIR, STATE_DIR, Preferences
 from .projection import PROJECTIONS, ProjectionLease, ProjectionBusy
 from sdk.hlauncher_sdk.buttons import BUTTONS, ACTIONS
 
@@ -29,7 +29,7 @@ def channel():
 
 
 class Worker:
-    def __init__(self, manifest, width, height, event, playback=None, log_dir=None):
+    def __init__(self, manifest, width, height, event, playback=None, log_dir=None, *, carplay_fps=None):
         self.network = None
         self.lease=ProjectionLease() if manifest.bundled and manifest.id in PROJECTIONS else None
         self.manifest = manifest
@@ -78,6 +78,8 @@ class Worker:
             PYTHONPATH=os.pathsep.join(filter(None, (str(ROOT / "sdk"), str(ROOT), env.get("PYTHONPATH")))),
         )
         env.pop("HLAUNCHER_RADIO_ADDRESS", None)
+        if carplay_fps is not None:
+            env['CIVIC_CARPLAY_FPS'] = str(carplay_fps)
         if not manifest.bundled and manifest.data_path is not None:
             env['HLAUNCHER_DATA_DIR'] = str(manifest.data_path)
         if manifest.camera:
@@ -295,7 +297,8 @@ class PluginHost:
         self.projection_retry=0
         self.projection_notice=''
         from .adapter_branding import BrandingRequests
-        self.branding=BrandingRequests((Path(state_dir) if state_dir else STATE_DIR)/'adapter-branding.json')
+        self.state_dir = Path(state_dir) if state_dir else STATE_DIR
+        self.branding=BrandingRequests(self.state_dir/'adapter-branding.json')
         self.branding_sent=None
         self.session = {"connected": False, "authenticated": False}
         self.button_results = {}
@@ -314,8 +317,11 @@ class PluginHost:
             if not manifest.bundled and 'camera' in manifest.permissions:
                 from .ui.plugin_overlay import camera_top
                 height -= camera_top(self.height)
+            options = {}
+            if manifest.bundled and plugin_id == 'carplay':
+                options['carplay_fps'] = Preferences(self.state_dir/'settings.json').carplay_fps
             worker=Worker(manifest,self.width,height,self.event,
-                          playback=getattr(self.audio,'playback',None))
+                          playback=getattr(self.audio,'playback',None), **options)
             self.workers[plugin_id]=worker
         worker.active=foreground
         worker.background_enabled=self.background_allowed(worker.manifest)

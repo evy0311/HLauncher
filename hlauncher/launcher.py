@@ -81,6 +81,7 @@ class Launcher:
         self.diagnostics = Diagnostics()
         from .protocol_diagnostics import ProtocolDiagnostics
         self.protocols = protocol_diagnostics or ProtocolDiagnostics(self.prefs.path.parent/'protocol-captures')
+        self.host.projection_night_mode = self.projection_night_mode
         self.protocol_page = 0
         self.vehicle_data_tab = 0
         self.vehicle_signal_id = 44
@@ -280,6 +281,30 @@ class Launcher:
         self.mode='recovery_settings'
         self.press=None
         self.banner=''
+        self.draw()
+
+    def wifi_power_page(self):
+        self.host.deactivate()
+        self.mode = 'wifi_power_settings'
+        self.press = None
+        self.banner = ''
+        self.draw()
+
+    def set_wifi_power(self, mode):
+        self.request_wifi_setting('wifi_power', mode=mode)
+
+    def set_wifi_boot(self, enabled):
+        self.request_wifi_setting('wifi_boot', enabled=enabled)
+
+    def request_wifi_setting(self, operation, **values):
+        from .recovery import request_job
+        try:
+            request_job(operation, **values)
+            self.banner = ''
+        except FileExistsError:
+            self.banner = 'A setup operation is already queued'
+        except (OSError, ValueError):
+            self.banner = 'Could not request the Wi-Fi setting'
         self.draw()
 
     def ssh_settings(self):
@@ -505,6 +530,21 @@ class Launcher:
             self.projection_checked = 0
             self.banner = 'CarPlay will reconnect' if reconnecting else 'Saved'
         self.draw()
+
+    def toggle_auto_night(self, plugin_id):
+        enabled = not self.prefs.auto_night(plugin_id)
+        try:
+            self.prefs.set_auto_night(plugin_id, enabled)
+        except OSError as exc:
+            self.banner = 'Could not save display setting'
+            self.event(state='settings_save_failed', error=str(exc))
+        else:
+            self.host.sync_projection_appearance(plugin_id)
+            self.banner = 'Night mode follows the lights' if enabled else 'Day mode'
+        self.draw()
+
+    def projection_night_mode(self, plugin_id):
+        return self.prefs.auto_night(plugin_id) and self.protocols.illumination_night_mode()
 
     def apply_adapter_branding(self):
         manifest=self.manifests.get('carplay')
@@ -1131,7 +1171,7 @@ class Launcher:
                 from .storage import status
                 self.storage_info = status()
             threading.Thread(target=inspect_storage,daemon=True).start()
-        if self.mode in ('onboarding','system_settings','recovery_settings','hotspot_settings','storage_confirm','updates','update_notes','adapter_branding','ssh_settings'):
+        if self.mode in ('onboarding','system_settings','recovery_settings','hotspot_settings','wifi_power_settings','storage_confirm','updates','update_notes','adapter_branding','ssh_settings'):
             if time.monotonic()-getattr(self,'setup_redraw',0)>1:
                 self.setup_redraw=time.monotonic()
                 if self.mode=='updates' and self.banner=='Requested':self.banner=''
@@ -1149,6 +1189,9 @@ class Launcher:
             if self.audio_settings.refresh():self.draw()
         self.tone_test.tick()
         self.host.tick()
+        if now - getattr(self, 'projection_appearance_checked', 0) >= .1:
+            self.projection_appearance_checked = now
+            self.host.sync_projection_appearance()
         if self.host.active=='obd' and time.monotonic()-getattr(self,'vehicle_gauge_sent',0)>=1/30:
             self.vehicle_gauge_sent=time.monotonic()
             self.host.vehicle_gauges(self.protocols.gauge_snapshot())

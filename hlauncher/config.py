@@ -38,6 +38,7 @@ def serial_number():
 
 SAFETY_NOTICE_VERSION = 2
 CARPLAY_FRAME_RATES = (30, 60)
+WIFI_POWER_MODES = ('on', 'off', 'sleep')
 
 
 class Preferences:
@@ -45,8 +46,10 @@ class Preferences:
         self.path = Path(path) if path else STATE_DIR / "settings.json"
         self.data = {"enabled": {}, "background": {}, "default_plugin": None, "tile_color": "Red", "custom_color": "#198B96",
                      "setup_complete": False, "setup_step": 0, "safety_notice_version": 0,
-                     "debug_mode": False, "show_clock": False, "ssh_enabled": True,
-                     "home_pages": [], "carplay_fps": CARPLAY_FRAME_RATES[0]}
+                     "debug_mode": False, "show_clock": False, "ssh_enabled": True, "wifi_power": "on",
+                     "wifi_delay_boot": False,
+                     "home_pages": [], "carplay_fps": CARPLAY_FRAME_RATES[0],
+                     "carplay_auto_night": True, "android_auto_auto_night": True}
         try:
             loaded = json.loads(self.path.read_text())
             if not isinstance(loaded, dict) or not isinstance(
@@ -61,9 +64,15 @@ class Preferences:
             self.data['debug_mode'] = loaded.get('debug_mode', False) is True
             self.data['show_clock'] = loaded.get('show_clock', False) is True
             self.data['ssh_enabled'] = loaded.get('ssh_enabled', True) is True
+            if loaded.get('wifi_power') in WIFI_POWER_MODES:
+                self.data['wifi_power'] = loaded['wifi_power']
+            self.data['wifi_delay_boot'] = loaded.get('wifi_delay_boot') is True
             fps = loaded.get('carplay_fps')
             if type(fps) is int and fps in CARPLAY_FRAME_RATES:
                 self.data['carplay_fps'] = fps
+            for key in ('carplay_auto_night', 'android_auto_auto_night'):
+                if type(loaded.get(key)) is bool:
+                    self.data[key] = loaded[key]
             pages = loaded.get('home_pages')
             if isinstance(pages, list) and all(isinstance(page, list) and len(page) == 6 for page in pages):
                 self.data['home_pages'] = [[item if isinstance(item, str) else None for item in page]
@@ -219,6 +228,30 @@ class Preferences:
             self.save(force=('carplay_fps',))
         except OSError:
             self.data['carplay_fps'] = previous
+            raise
+
+    def auto_night(self, plugin_id):
+        return self.data.get(plugin_id.replace('-', '_') + '_auto_night') is True
+
+    def set_auto_night(self, plugin_id, enabled):
+        key = plugin_id.replace('-', '_') + '_auto_night'
+        previous = self.data[key]
+        self.data[key] = bool(enabled)
+        try:
+            self.save(force=(key,))
+        except OSError:
+            self.data[key] = previous
+            raise
+
+    def set_wifi_power(self, mode):
+        if mode not in WIFI_POWER_MODES:
+            raise ValueError('Unknown Wi-Fi mode')
+        previous = self.data['wifi_power']
+        self.data['wifi_power'] = mode
+        try:
+            self.save(force=('wifi_power',))
+        except OSError:
+            self.data['wifi_power'] = previous
             raise
 
     def set_home_pages(self, pages):

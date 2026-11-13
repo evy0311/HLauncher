@@ -2,6 +2,7 @@
 import hashlib
 import time
 from .protocol.vehicle_signals import SignalCache, ALIASES
+from .protocol.vehicle_can import ILLUMINATION_ID
 
 
 def radio_status(payload):
@@ -56,7 +57,11 @@ class VehicleTraffic:
                                                'transaction','transport_status','phase','can_classes','interval_seconds','api_count','settings_count')})
             if state == 'honda_can_subscription_queued':
                 if event.get('part',1)==1:
+                    illumination = self.signals.records.get(ILLUMINATION_ID)
                     self.signals.clear();self.readings.clear();self.can_records.clear()
+                    if (illumination and illumination['session'] == event.get('session')
+                            and ILLUMINATION_ID in event.get('can_ids', ())):
+                        self.signals.records[ILLUMINATION_ID] = illumination
                 self.subscription['scope']=event.get('scope','diagnostics')
                 self.subscription['status'] = 'Awaiting transport ACK'
             elif state == 'honda_can_subscription_transport_ack' and event.get('status')=='pending':

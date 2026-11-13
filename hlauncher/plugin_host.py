@@ -296,6 +296,7 @@ class PluginHost:
         self.projection_deadline=0
         self.projection_retry=0
         self.projection_notice=''
+        self.projection_night_mode = lambda plugin_id: False
         from .adapter_branding import BrandingRequests
         self.state_dir = Path(state_dir) if state_dir else STATE_DIR
         self.branding=BrandingRequests(self.state_dir/'adapter-branding.json')
@@ -331,6 +332,8 @@ class PluginHost:
             if hasattr(getattr(self.audio,'playback',None),'enable'):self.audio.playback.enable(plugin_id,True)
         if not getattr(worker.manifest, 'revision', '') or 'session' in worker.manifest.capabilities:
             worker.send(type='radio.session',**self.session)
+        if plugin_id in PROJECTIONS:
+            self.sync_projection_appearance(plugin_id)
         worker.send(type='host.activate' if foreground else 'host.start',visible=foreground)
         self.event(state='plugin_activated' if foreground else 'plugin_background_started',plugin=plugin_id)
         return worker
@@ -449,6 +452,16 @@ class PluginHost:
         if self.active=='obd' and worker is not None and worker.manifest.bundled:
             return worker.send(type='vehicle.gauges',snapshot=snapshot)
         return False
+
+    def sync_projection_appearance(self, plugin_id=None):
+        for ident in (plugin_id,) if plugin_id else PROJECTIONS:
+            worker = self.workers.get(ident)
+            if worker is None or not getattr(getattr(worker, 'manifest', None), 'bundled', False):
+                continue
+            night_mode = self.projection_night_mode(ident)
+            if getattr(worker, 'night_mode', None) != night_mode:
+                if worker.send(type='projection.appearance', night_mode=night_mode):
+                    worker.night_mode = night_mode
 
     def button(self, message):
         # Routing is independent of projection command encodings. Plugins opt in.

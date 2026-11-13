@@ -51,13 +51,14 @@ def main():
         write_recovery_card(credentials, boot)
         atomic_json(marker, {'initialized':True, 'schema':1})
     country = os.environ.get('HLAUNCHER_WIFI_COUNTRY','')
-    if re.fullmatch('[A-Z]{2}', country):
+    from .config import Preferences
+    prefs = Preferences(state.folder/'settings.json')
+    if re.fullmatch('[A-Z]{2}', country) and not prefs.data['wifi_delay_boot'] and prefs.data['wifi_power'] != 'off':
         # Network setup does not hold up the Bluetooth enrollment service.
         subprocess.run(['rfkill','unblock','wifi'],check=False,timeout=5)
     from .ssh_access import MANAGED,apply
     if MANAGED.exists():
-        from .config import Preferences
-        apply(Preferences(state.folder/'settings.json').data.get('ssh_enabled',True),state.folder,boot=True)
+        apply(prefs.data['ssh_enabled'],state.folder,boot=True)
     from .storage import finish_transition
     finish_transition()
 

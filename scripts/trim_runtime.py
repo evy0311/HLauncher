@@ -10,7 +10,7 @@ import subprocess
 RUNTIME = '''python3 python3-pil python3-numpy python3-dbus python3-gi python3-bleak
 bluez bluez-alsa-utils libasound2-plugin-bluez alsa-utils openssl pipewire pipewire-bin
 libspa-0.2-modules libsamplerate0 libsoxr0 nodejs libusb-1.0-0 libdrm2 libavcodec59
-libavutil57 libswscale6 fonts-dejavu-core fbset usbutils network-manager iw rfkill
+libavutil57 libswscale6 fonts-dejavu-core fbset usbutils network-manager iproute2 iw rfkill
 raspi-config initramfs-tools overlayroot openssh-server cloud-guest-utils fdisk e2fsprogs util-linux'''.split()
 TOOLS = set('build-essential cmake cmake-data make git git-man autoconf automake autotools-dev libtool libtool-bin pkg-config pkgconf pkgconf-bin m4 dpkg-dev fakeroot patch npm node-gyp protobuf-compiler mkvtoolnix ffmpeg'.split())
 

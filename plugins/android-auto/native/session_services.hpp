@@ -29,6 +29,8 @@ class SessionSensors:public oa::service::IService,
     boost::asio::io_service::strand strand;
     std::shared_ptr<aasdk::channel::sensorsource::SensorSourceService> channel;
     bool stopped=false;
+    bool nightMode;
+    bool nightModeSubscribed=false;
 public:
     // Bench build: the owner explicitly requested a fixed parked state.
     static int drivingPolicy(){return 0;}
@@ -48,16 +50,24 @@ private:
             batch.add_driving_status_data()->set_status(drivingPolicy());
             std::cerr<<"[HLauncher] Driving status: hard-coded parked bench mode\n";
         }else if(type==Type::SENSOR_NIGHT_MODE){
-            batch.add_night_mode_data()->set_night_mode(false);
-            std::cerr<<"[HLauncher] Display appearance: day mode\n";
+            batch.add_night_mode_data()->set_night_mode(nightMode);
+            std::cerr<<"[HLauncher] Display appearance: "<<(nightMode?"night":"day")<<" mode\n";
         }else{return;}
         channel->sendSensorEventIndication(batch,promise());
     }
 public:
-    SessionSensors(boost::asio::io_service& io,aasdk::messenger::IMessenger::Pointer messenger):
-        strand(io),channel(std::make_shared<aasdk::channel::sensorsource::SensorSourceService>(strand,std::move(messenger))){}
+    SessionSensors(boost::asio::io_service& io,aasdk::messenger::IMessenger::Pointer messenger,bool initialNightMode):
+        strand(io),channel(std::make_shared<aasdk::channel::sensorsource::SensorSourceService>(strand,std::move(messenger))),
+        nightMode(initialNightMode){}
+    void setNightMode(bool enabled){
+        boost::asio::post(strand,[self=shared_from_this(),enabled]{
+            if(self->nightMode==enabled)return;
+            self->nightMode=enabled;
+            if(self->nightModeSubscribed)self->sendValue(Type::SENSOR_NIGHT_MODE);
+        });
+    }
     void start()override{stopped=false;receive();}
-    void stop()override{stopped=true;}
+    void stop()override{stopped=true;nightModeSubscribed=false;}
     void pause()override{} void resume()override{}
     void fillFeatures(aap_protobuf::service::control::message::ServiceDiscoveryResponse& response)override{
         auto* entry=response.add_channels();entry->set_id(static_cast<uint32_t>(channel->getId()));
@@ -78,7 +88,11 @@ public:
         aap_protobuf::service::sensorsource::message::SensorStartResponseMessage response;
         response.set_status(supported?Status::STATUS_SUCCESS:Status::STATUS_INVALID_SENSOR);
         auto p=aasdk::channel::SendPromise::defer(strand);
-        p->then([self=shared_from_this(),supported,type](){if(supported)self->sendValue(type);},
+        p->then([self=shared_from_this(),supported,type](){
+                    if(!supported || self->stopped)return;
+                    if(type==Type::SENSOR_NIGHT_MODE)self->nightModeSubscribed=true;
+                    self->sendValue(type);
+                },
                 [self=shared_from_this()](const auto& error){self->onChannelError(error);});
         channel->sendSensorStartResponse(response,p);receive();
     }

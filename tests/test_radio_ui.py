@@ -6,7 +6,7 @@ import tempfile
 import time
 from types import SimpleNamespace
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 from PIL import ImageChops
 from hlauncher.launcher import Launcher
 from hlauncher.config import Preferences,ROOT
@@ -227,6 +227,40 @@ class RadioUI(unittest.TestCase):
                 ui.host.stop('carplay')
         toggle()
         self.assertEqual(Preferences(ui.prefs.path).carplay_fps, 30)
+
+    def test_projection_headlight_settings_default_on_and_are_independent(self):
+        ui = self.ui
+        ui.prefs.path.write_text('{"setup_complete": true}')
+        ui.prefs = Preferences(ui.prefs.path)
+        self.assertTrue(ui.prefs.auto_night('carplay'))
+        self.assertTrue(ui.prefs.auto_night('android-auto'))
+        ui.plugin_detail('carplay')
+        carplay = SimpleNamespace(manifest=ui.manifests['carplay'], send=Mock(return_value=True))
+        with patch.object(ui.host, 'workers', {'carplay': carplay}), \
+                patch.object(ui.protocols, 'illumination_night_mode', return_value=True):
+            ui.host.sync_projection_appearance()
+            ui.host.sync_projection_appearance()
+            carplay.send.assert_called_once_with(type='projection.appearance', night_mode=True)
+            next(action for box, action in ui.actions if box[:2] == (24, 320))()
+            carplay.send.assert_called_with(type='projection.appearance', night_mode=False)
+            self.assertTrue(ui.projection_night_mode('android-auto'))
+        ui.plugin_detail('android-auto')
+        next(action for box, action in ui.actions if box[:2] == (24, 192))()
+        saved = Preferences(ui.prefs.path)
+        self.assertFalse(saved.auto_night('android-auto'))
+        self.assertFalse(saved.auto_night('carplay'))
+
+    def test_wifi_power_page_queues_power_and_boot_settings(self):
+        ui = self.ui
+        ui.system_settings()
+        next(action for _, action in ui.actions if action == ui.wifi_power_page)()
+        self.assertEqual(ui.mode, 'wifi_power_settings')
+        with patch('hlauncher.recovery.request_job') as request:
+            next(action for box, action in ui.actions if box[:2] == (336, 158))()
+            request.assert_called_once_with('wifi_power', mode='sleep')
+            request.reset_mock()
+            next(action for box, action in ui.actions if box[:2] == (600, 282))()
+            request.assert_called_once_with('wifi_boot', enabled=True)
 
     def test_audio_returns_to_the_page_that_opened_it(self):
         ui=self.ui;ui.settings();ui.audio_page();ui.actions[0][1]()

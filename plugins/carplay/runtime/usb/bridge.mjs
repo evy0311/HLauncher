@@ -9,7 +9,8 @@ import readline from 'node:readline';
 import {applyBranding} from './branding.mjs';
 import { format } from 'node:util';
 import { DongleDriver, DEFAULT_CONFIG, VideoData, AudioData, Plugged, Unplugged,
-         SendTouch, SendMultiTouch, SendCommand, SendAudio, Command, MediaData, SoftwareVersion, ManufacturerInfo, BoxInfo, Opened } from './vendor/node-carplay/dist/modules/index.js';
+         SendTouch, SendMultiTouch, SendCommand, SendAudio, Command, MediaData, SoftwareVersion, ManufacturerInfo, BoxInfo, Opened,
+         MessageType, SendableMessageWithPayload } from './vendor/node-carplay/dist/modules/index.js';
 const write = process.stdout.write.bind(process.stdout);
 const realtime = process.env.HLAUNCHER_CARPLAY_PCM_FD
   ? new Socket({fd:Number(process.env.HLAUNCHER_CARPLAY_PCM_FD),readable:false,writable:true})
@@ -18,6 +19,31 @@ for (const name of ['log','debug','info','warn','error']) {
   console[name] = (...args) => process.stderr.write(format(...args)+'\n');
 }
 let shutting = false, driver = null, connected = false, down = false, multiDown = false;
+let nightMode = process.env.HLAUNCHER_NIGHT_MODE === '1';
+let appliedNightMode, nightModeWrite = Promise.resolve();
+class SendNightMode extends SendableMessageWithPayload {
+  type = MessageType.Command;
+  constructor(enabled) {
+    super();
+    this.enabled = enabled;
+  }
+  getPayload() {
+    const payload = Buffer.alloc(4);
+    // Carlinkit host commands StartNightMode (16) and StopNightMode (17).
+    payload.writeUInt32LE(this.enabled ? 16 : 17);
+    return payload;
+  }
+}
+function syncNightMode() {
+  nightModeWrite = nightModeWrite.then(async () => {
+    if (!connected || shutting || appliedNightMode === nightMode) return;
+    const requested = nightMode;
+    const sent = await driver.send(new SendNightMode(requested));
+    if (sent === true) appliedNightMode = requested;
+    console.error(JSON.stringify({state:'carplay_night_mode', night_mode:requested, sent:sent === true}));
+  }).catch(error => console.error('CarPlay night mode:', String(error)));
+  return nightModeWrite;
+}
 let videoPackets = 0, audioPackets = 0, lastStats = 0, lastSize = '', lastStatsVideo = 0, lastVideoAt = 0, maxVideoGap = 0;
 function packet(type, payload) {
   if (shutting) return;
@@ -166,6 +192,9 @@ if (!process.argv.includes('--self-test')) readline.createInterface({input:proce
   if (line.length>1024) return;
   try { const m=JSON.parse(line);if(m.type==='adapter.branding') {
     requestBranding(m.request_id);
+  }else if(m.type==='projection.appearance' && typeof m.night_mode==='boolean') {
+    nightMode=m.night_mode;
+    void syncNightMode();
   }else if(m.type==='microphone')microphone(m);else touch(m); } catch(e) { console.error('Bridge input:',String(e)); }
 });
 async function stop() {
@@ -277,6 +306,18 @@ if (process.argv.includes('--self-test')) {
   const pendingBrand=brandingPending;brandingPending=null;
   await brandAdapter(pendingBrand);
   if(brandFiles.length!==6 || !testStatuses.some(s=>s.state==='adapter_branding' && s.request_id==='queued-fixture' && s.result==='transferred' && s.verified===false))throw Error('Queued branding was not transferred after readiness');
+  const appearance = [];
+  driver = {send: async message => { appearance.push(message.serialise()); return true; }};
+  nightMode = true;
+  await syncNightMode();
+  await syncNightMode();
+  nightMode = false;
+  await syncNightMode();
+  if (appearance.length !== 2 || appearance.some((bytes, index) =>
+      bytes.readUInt32LE(4) !== 4 || bytes.readUInt32LE(8) !== MessageType.Command ||
+      bytes.readUInt32LE(16) !== 16 + index)) {
+    throw Error('CarPlay night mode did not send the expected USB commands');
+  }
   status('self_test_ok',{touch_messages:sent.length});
   if (realtime !== process.stdout) {
     packet(3,Buffer.from('pcm fixture'));
@@ -345,7 +386,11 @@ driver.on('message',message=>{
     console.error(JSON.stringify({state:'dongle_opened',width:message.width,height:message.height,fps:message.fps,iBox:message.iBox,phoneMode:message.phoneMode}));
   }
   else if(message instanceof MediaData) { handleMedia(message); }
-  else if(message instanceof Plugged) { video.reset();lastPCM.clear();status('phone_connected',{phone_type:message.phoneType}); }
+  else if(message instanceof Plugged) {
+    video.reset();lastPCM.clear();status('phone_connected',{phone_type:message.phoneType});
+    appliedNightMode = undefined;
+    void syncNightMode();
+  }
   else if(message instanceof Unplugged) { lastPCM.clear();voiceChange({call_audio:false,siri:false,recording:false});status('phone_disconnected'); }
   else if(message instanceof VideoData && message.data?.length) {
     videoPackets++;
@@ -382,13 +427,18 @@ driver.on('message',message=>{
 });
 const fps=process.env.CIVIC_CARPLAY_FPS === '60' ? 60 : 30;
 const config={...DEFAULT_CONFIG,width:800,height:480,fps,
-  boxName:'HLauncher',micType:'os',audioTransferMode:false};
+  boxName:'HLauncher',micType:'os',audioTransferMode:false,nightMode};
 await driver.initialise(device);
 initialBrandingOK=await brandAdapter();
+appliedNightMode=config.nightMode;
 await driver.start(config);connected=true;
+void syncNightMode();
 if(adapterOpened && brandingPending!==null){const pending=brandingPending;brandingPending=null;void brandAdapter(pending);}
 status('metadata_requested',{DashboardInfo:1});
 status('dongle_ready',{width:800,height:480,fps:config.fps,audio_forwarding:'launcher_hdmi'});
-const keyframe=setInterval(()=>driver.send(new SendCommand('frame')),5000);
+const keyframe=setInterval(()=>{
+  void driver.send(new SendCommand('frame'));
+  if (appliedNightMode !== nightMode) void syncNightMode();
+},5000);
 setTimeout(()=>driver.send(new SendCommand('wifiPair')),15000).unref();
 process.on('exit',()=>clearInterval(keyframe));

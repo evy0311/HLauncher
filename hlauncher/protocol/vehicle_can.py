@@ -8,17 +8,36 @@ from .aes import decrypt as decrypt_body
 HONDALINK = 'jp.co.honda.rd.dispaudio.app.hondalink'
 GENERAL = 'jp.co.honda.rd.dispaudio.app.generals'
 
+ILLUMINATION_ID = 0x12F85450
+ILLUMINATION_API_IDS = (5, 6)
+ILLUMINATION_SUBSCRIPTION = next(row for row in SUBSCRIPTIONS if row['message_id'] == ILLUMINATION_ID)
+SCOPES = ('off', 'gauges', 'illumination', 'gauges_illumination', 'diagnostics')
+
+
+def subscription_rows(scope):
+    if scope == 'illumination':
+        return (ILLUMINATION_SUBSCRIPTION,)
+    if scope == 'gauges_illumination':
+        return (*gauge_subscriptions(), ILLUMINATION_SUBSCRIPTION)
+    if scope == 'gauges':
+        return gauge_subscriptions()
+    if scope == 'off':
+        return ()
+    return SUBSCRIPTIONS
+
 
 def subscription_payloads(scope='diagnostics'):
     if scope=='off':return (bytes.fromhex('0200000a0100'),)
-    rows=gauge_subscriptions() if scope=='gauges' else SUBSCRIPTIONS
+    rows=subscription_rows(scope)
     # Original ALL group, features=9. Tenths of seconds; 0 means cyclic.
     normal = bytearray((0, len(rows)))
     for row in rows:
         normal.extend(row['message_id'].to_bytes(4, 'big'))
         normal.extend((row['can_type'], row['length']))
         normal.extend(bytes.fromhex(row['mask']))
-    if scope=='gauges':return (bytes.fromhex('020000010101')+normal,)
+    if scope != 'diagnostics':
+        ticks = 1 if scope.startswith('gauges') else 10
+        return (bytes((2, 0, 0, ticks, 1, 1)) + normal,)
     header = bytes.fromhex('0200000a0104')
     # Three diagnostic receive presets, never clear-DTC or maintenance resets.
     return (header+normal, header+bytes.fromhex('010000000002000000000300000000'))
@@ -94,18 +113,25 @@ class VehicleSubscription:
         previous=self.requests.get(sid)
         if sid not in self.keys or (previous and (previous['scope']==scope or at-previous['at']<.35)):return
         if scope=='off' and previous is None:return
-        rows=gauge_subscriptions() if scope=='gauges' else SUBSCRIPTIONS if scope=='diagnostics' else ()
-        api_ids=GAUGE_API_IDS if scope=='gauges' else None if scope=='diagnostics' else ()
+        rows = subscription_rows(scope)
+        api_ids = {
+            'diagnostics': None,
+            'gauges': GAUGE_API_IDS,
+            'illumination': ILLUMINATION_API_IDS,
+            'gauges_illumination': (*GAUGE_API_IDS, *ILLUMINATION_API_IDS),
+            'off': (),
+        }[scope]
+        cycle = 1 if scope.startswith('gauges') else 10
         payloads=subscription_payloads(scope)
         request = self.requests[sid] = dict(at=at,scope=scope,api_ids=api_ids,
             previous_api_ids=previous['api_ids'] if previous else None,can_ids={r['message_id'] for r in rows},
             status='pending', protocol=protocol, transport_status='pending', transactions=[], acks={})
         for index, payload in enumerate(payloads):
             send(sid, 0xc2, payload, events, replies, 'honda_can_subscription_queued')
-            events[-1].update(can_ids=[r['message_id'] for r in rows], cycle=1 if scope=='gauges' else 10,
-                interval_seconds=.1 if scope=='gauges' else 1,scope=scope,api_ids=api_ids,
-                can_classes=sorted({r['can_type'] for r in rows}),api_count=len(GAUGE_API_IDS) if scope=='gauges' else 168 if scope=='diagnostics' else 0,
-                settings_count=4 if scope=='diagnostics' else 1 if scope=='gauges' else 0,
+            events[-1].update(can_ids=[r['message_id'] for r in rows], cycle=cycle,
+                interval_seconds=cycle/10,scope=scope,api_ids=api_ids,
+                can_classes=sorted({r['can_type'] for r in rows}),api_count=168 if api_ids is None else len(api_ids),
+                settings_count=4 if scope=='diagnostics' else int(bool(rows)),
                 part=index+1, parts=len(payloads), receive_only=True, status='pending', protocol=protocol,
                 authorization_session=sid, transport_status='pending')
             request['transactions'].append(events[-1]['transaction'])
@@ -143,7 +169,7 @@ class VehicleSubscription:
                 allowed=request['api_ids']
                 if request['scope']=='diagnostics' and request['status']=='pending':allowed=request['previous_api_ids']
                 records = decode_records(payload, self.keys[sid], allowed)
-                if request['scope']=='gauges':
+                if request['scope'] != 'diagnostics':
                     records=[r for r in records if r['data_type']==0 and r['can_id'] in request['can_ids']]
             except ValueError as exc:
                 events.append(dict(state='honda_can_data_invalid', session=sid,

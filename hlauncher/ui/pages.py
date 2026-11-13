@@ -34,6 +34,7 @@ def system(ui):
     p=page_for(ui,'System',ui.settings)
     info=ui.storage_info
     rows=[('Wi-Fi & pairing','',ui.recovery_page),
+          ('Wi-Fi power','',ui.wifi_power_page),
           ('Setup wizard','',lambda:ui.setup_page(True)),
           ('Software updates','',ui.updates_page),
           ('Debug mode','On' if ui.prefs.data['debug_mode'] else 'Off',ui.toggle_debug),
@@ -66,6 +67,31 @@ def network(ui):
     p.text((24,420),'Use the page to connect Wi-Fi, pair a radio or install an update',16)
     p.notice(ui.banner)
     present(ui,p)
+
+
+def wifi_power(ui):
+    from ..config import Preferences
+    prefs = Preferences(ui.prefs.path).data
+    mode = prefs['wifi_power']
+    delay = prefs['wifi_delay_boot']
+    p = page_for(ui, 'Wi-Fi power', ui.system_settings)
+    status = network_status(ui.prefs.path.parent).get('wifi_state')
+    p.text((24, 121), {'on':'Wi-Fi is on', 'off':'Wi-Fi is off', 'asleep':'Wi-Fi is asleep',
+                        'unavailable':'Wi-Fi status unavailable'}.get(status, 'Wi-Fi status pending'), 20)
+    for left, right, label, value in ((24, 168, 'On', 'on'), (180, 324, 'Off', 'off'),
+                                      (336, 696, 'Sleep after 3 minutes', 'sleep')):
+        p.button((left, 158, right, 214), label, lambda value=value: ui.set_wifi_power(value),
+                 selected=mode == value, size=22)
+    p.text((24, 230), 'Tap Sleep again to wake Wi-Fi for another idle period.', 17)
+    p.bar((24, 282, 696, 338), 'Delay Wi-Fi at boot', lambda: ui.set_wifi_boot(not delay),
+          toggle=delay, size=27)
+    p.text((24, 357), 'Wait for HLauncher to start before enabling Wi-Fi.', 17)
+    result = job_status(ui.prefs.path.parent)
+    if (ui.prefs.path.parent/'maintenance-request.json').exists() or result.get('status') == 'Working':
+        p.notice('Applying Wi-Fi setting…')
+    else:
+        p.notice(ui.banner or (result.get('message', '') if result.get('status') == 'Failed' else ''))
+    present(ui, p)
 
 
 def hotspot(ui):
@@ -182,6 +208,9 @@ def plugin_detail(ui):
     elif manifest.id=='obd':rows.append(Row('OBD adapter',ui.obd_settings))
     elif manifest.keep_alive and manifest.id!='android-auto':
         rows.append(Row('Run in background',lambda:ui.toggle_background(manifest.id),toggle=ui.prefs.background_enabled(manifest)))
+    if manifest.id in ('carplay', 'android-auto'):
+        rows.append(Row('Follow headlights', lambda: ui.toggle_auto_night(manifest.id),
+                        toggle=ui.prefs.auto_night(manifest.id)))
     draw_rows(ui,p,rows,key='plugin:'+manifest.id)
     p.notice(ui.banner)
     present(ui,p)
@@ -321,6 +350,6 @@ def waiting(ui):
     present(ui,p)
 
 
-PAGES={'ssh_settings':ssh,'adapter_branding':adapter_branding,'appearance_settings':appearance,'startup_settings':startup,'system_settings':system,'recovery_settings':network,'hotspot_settings':hotspot,'storage_confirm':storage,
+PAGES={'ssh_settings':ssh,'adapter_branding':adapter_branding,'appearance_settings':appearance,'startup_settings':startup,'system_settings':system,'recovery_settings':network,'hotspot_settings':hotspot,'wifi_power_settings':wifi_power,'storage_confirm':storage,
        'plugins_settings':plugins,'plugin_detail':plugin_detail,'tile_colors':themes,'colors':picture,'hdmi_test':hdmi,
        'shutdown_confirm':shutdown,'shutdown_pending':shutdown,'about_settings':about,'legal_info':legal_info}

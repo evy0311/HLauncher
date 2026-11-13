@@ -107,6 +107,13 @@ Settings is built into the launcher. **Settings → Plugins** lists installed pl
 and lets you enable or disable each one. **Settings → Startup → Start with** cycles
 between Launcher and the enabled plugins. Changes are saved in `/var/lib/hlauncher/settings.json`. Disabling the default plugin resets the default to Launcher. Returning with CarPlay's Honda icon always goes to the launcher, even when CarPlay is the default.
 
+**Settings → System → Wi-Fi power** offers **On**, **Off**, and **Sleep after 3
+minutes**. Sleep turns off the Pi's Wi-Fi radio after three minutes of inactivity
+and waits for you to select Sleep or On again, start the setup hotspot, or reboot.
+Active Wi-Fi TCP connections and HLauncher updates postpone sleep. **Delay Wi-Fi
+at boot** holds Wi-Fi off until the launcher service is ready, with a startup
+timeout for recovery access. On is the default, with the boot delay disabled.
+
 CarPlay, Android Auto and OBD Gauges are included; the setup wizard chooses which to enable. OBD Gauges supports compatible BLE ELM327 adapters. Android Auto requires the separately built OpenAuto engine: run `sudo bash scripts/install_android_auto.sh`, then connect an Android phone directly to the Pi USB port. It is confirmed working on the project setup; microphone/call integration remains unavailable. See [plugins](plugins.md) for installing an external plugin or writing one.
 
 CarPlay media audio uses HDMI. Its voice/call path requests the radio microphone

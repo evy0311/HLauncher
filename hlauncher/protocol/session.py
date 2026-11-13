@@ -6,7 +6,7 @@ import time
 from pathlib import Path
 from hlauncher.config import serial_number
 from .auth import AccessoryProof
-from .vehicle_can import VehicleSubscription, HONDALINK, GENERAL
+from .vehicle_can import VehicleSubscription, HONDALINK, GENERAL, SCOPES
 
 
 def packet(payload):
@@ -888,7 +888,7 @@ class StartProbe:
         if not self.authenticated or self.active_app is None:
             return
         scope=self.vehicle_scope()
-        if scope not in ('off','gauges','diagnostics'):scope='off'
+        if scope not in SCOPES:scope='off'
         # Firmware C80C4 checks the specific app connection, not a global flag.
         # One owner per app connection; a bootstrap channel cannot borrow auth.
         for sid, auth in self.vehicle_auth_sessions.items():

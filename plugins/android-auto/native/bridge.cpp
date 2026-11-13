@@ -164,8 +164,15 @@ public:
 };
 class Factory:public oa::service::IServiceFactory {
     boost::asio::io_service& io;Output& out;std::shared_ptr<Input> input;
+    bool nightMode;
+    std::weak_ptr<SessionSensors> sensors;
 public:
-    Factory(boost::asio::io_service& i,Output& o,std::shared_ptr<Input> in):io(i),out(o),input(in){}
+    Factory(boost::asio::io_service& i,Output& o,std::shared_ptr<Input> in,bool initialNightMode=false):
+      io(i),out(o),input(in),nightMode(initialNightMode){}
+    void setNightMode(bool enabled){
+      nightMode=enabled;
+      if(auto session=sensors.lock())session->setNightMode(enabled);
+    }
     oa::service::ServiceList create(aasdk::messenger::IMessenger::Pointer messenger)override{
       oa::service::ServiceList services;
       services.emplace_back(std::make_shared<ProjectionVideo>(io,messenger,out));
@@ -173,7 +180,9 @@ public:
       services.emplace_back(std::make_shared<oa::service::mediasink::GuidanceAudioService>(io,messenger,std::make_shared<Audio>(out,16000,1,1)));
       services.emplace_back(std::make_shared<oa::service::mediasink::SystemAudioService>(io,messenger,std::make_shared<Audio>(out,16000,1,1)));
       services.emplace_back(std::make_shared<oa::service::mediasource::MicrophoneMediaSourceService>(io,messenger,std::make_shared<UnavailableMicrophone>()));
-      services.emplace_back(std::make_shared<SessionSensors>(io,messenger));
+      auto sessionSensors=std::make_shared<SessionSensors>(io,messenger,nightMode);
+      sensors=sessionSensors;
+      services.emplace_back(std::move(sessionSensors));
       services.emplace_back(std::make_shared<oa::service::inputsource::InputSourceService>(io,messenger,input));
       services.emplace_back(std::make_shared<DiscoveryCompatibility>());
       return services;
@@ -259,7 +268,8 @@ int main(int argc,char** argv){
     aasdk::usb::AccessoryModeQueryFactory query(usb,io);
     aasdk::usb::AccessoryModeQueryChainFactory chains(usb,io,query);
     auto config=std::make_shared<oa::configuration::Configuration>();
-    auto input=std::make_shared<Input>();Factory services(io,out,input);
+    auto input=std::make_shared<Input>();
+    Factory services(io,out,input,qgetenv("HLAUNCHER_NIGHT_MODE")=="1");
     oa::service::AndroidAutoEntityFactory entities(io,config,services);
     auto hub=std::make_shared<aasdk::usb::USBHub>(usb,io,chains);
     auto enumerator=std::make_shared<aasdk::usb::ConnectedAccessoriesEnumerator>(usb,io,chains);
@@ -274,6 +284,10 @@ int main(int argc,char** argv){
         auto raw=QJsonDocument(ack).toJson(QJsonDocument::Compact);out.send(2,reinterpret_cast<const uint8_t*>(raw.constData()),raw.size());
       });
       if(obj["type"].toString()=="touch")io.post([input,obj]{input->touch(obj);});
+      if(obj["type"].toString()=="projection.appearance" && obj["night_mode"].isBool()){
+        const bool enabled=obj["night_mode"].toBool();
+        io.post([&services,enabled]{services.setNightMode(enabled);});
+      }
     }
     // All state belongs to this isolated process. Avoid blocking the launcher
     // during libusb teardown; kernel closes descriptors when the process exits.

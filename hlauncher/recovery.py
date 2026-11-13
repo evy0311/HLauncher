@@ -9,16 +9,17 @@ import tempfile
 import threading
 import time
 from urllib.parse import urlsplit
-from .config import STATE_DIR, Preferences
+from .config import STATE_DIR, WIFI_POWER_MODES, Preferences
 from .setup_state import SetupState, atomic_json, address
 from .storage import configure, execute, status as storage_status
 from .ssh_access import status as ssh_status
+from .wifi_power import BOOT_HOLD, WifiPower
 
 UPDATER_CONFIG=Path('/etc/hlauncher-updater/config.json')
 
 
 def request_job(operation, **values):
-    if operation not in ('protect','unprotect','pair','hotspot','wifi','reboot','ssh'):
+    if operation not in ('protect','unprotect','pair','hotspot','wifi','wifi_power','wifi_boot','reboot','ssh'):
         raise ValueError('Unknown setup operation')
     # No shell commands are accepted. The daemon owns one fixed request queue.
     STATE_DIR.mkdir(parents=True, exist_ok=True)
@@ -74,6 +75,7 @@ class Maintenance:
     def __init__(self, state=None, run=execute, portal=None):
         self.state = state or SetupState(); self.run = run; self.portal = portal
         self.lock = threading.Lock(); self.ap = False; self.ap_automatic = False
+        self.wifi_power = WifiPower(run)
 
     def perform(self, item):
         op = item.get('operation')
@@ -89,7 +91,33 @@ class Maintenance:
         if op == 'hotspot':
             self.hotspot()
             self.ap_automatic = item.get('automatic') is True
+            self.wifi_power.hotspot_started()
             return 'Setup hotspot is ready'
+        if op == 'wifi_power':
+            mode = item.get('mode')
+            if mode not in WIFI_POWER_MODES:
+                raise ValueError('Unknown Wi-Fi mode')
+            enabled = mode != 'off'
+            prefs = Preferences(self.state.folder/'settings.json')
+            self.wifi_power.set_radio(enabled)
+            try:
+                prefs.set_wifi_power(mode)
+            except OSError:
+                self.wifi_power.select(prefs.data['wifi_power'])
+                raise
+            self.wifi_power.select(mode)
+            self.wifi_power.state = 'on' if enabled else 'off'
+            if not enabled:
+                self.ap = self.ap_automatic = False
+            return 'Wi-Fi setting saved'
+        if op == 'wifi_boot':
+            enabled = item.get('enabled')
+            if type(enabled) is not bool:
+                raise ValueError('Choose whether to delay Wi-Fi at boot')
+            prefs = Preferences(self.state.folder/'settings.json')
+            prefs.data['wifi_delay_boot'] = enabled
+            prefs.save(force=('wifi_delay_boot',))
+            return 'Applies at the next boot'
         if op == 'ssh':
             from .ssh_access import apply
             enabled=item.get('enabled')
@@ -124,8 +152,14 @@ class Maintenance:
             finally:
                 if os.path.exists(name): os.unlink(name)
             self.run(['nmcli','connection','load',str(path)],timeout=10)
+            self.wifi_power.set_radio(True)
             self.run(['nmcli','--wait','20','connection','up','HLauncher Wi-Fi'],timeout=25)
             self.ap = False
+            prefs = Preferences(self.state.folder/'settings.json')
+            if prefs.data['wifi_power'] == 'off':
+                prefs.set_wifi_power('on')
+            self.wifi_power.select(prefs.data['wifi_power'])
+            self.wifi_power.state = 'on'
             return 'Wi-Fi connected; reconnect your phone to your normal network'
         raise ValueError('Unknown setup operation')
 
@@ -354,32 +388,78 @@ class RecoveryServer(ThreadingHTTPServer):
 
 def main():
     from .captive_portal import Portal
+    from .update_client import status as update_status
     portal=Portal(RecoveryServer)
     state = SetupState(); state.credentials(); maintenance = Maintenance(state,portal=portal)
     def worker():
         seen = None; hotspot_attempted = False
+        boot_deadline = time.monotonic() + 45
+        manager_ready = False
         while True:
             try:portal.start()
             except OSError:pass
+            try:
+                if not manager_ready:
+                    manager = maintenance.run(['systemctl', 'show', '-p', 'ActiveState', '--value',
+                                               'NetworkManager.service'], timeout=3).stdout.strip()
+                    if manager != 'active':
+                        time.sleep(2)
+                        continue
+                    manager_ready = True
+                released_boot_hold = False
+                if BOOT_HOLD.exists():
+                    if time.monotonic() < boot_deadline:
+                        launcher = maintenance.run(['systemctl', 'show', '-p', 'ActiveState', '--value',
+                                                    'hlauncher.service'], timeout=3).stdout.strip()
+                        if launcher != 'active':
+                            time.sleep(2)
+                            continue
+                    BOOT_HOLD.unlink(missing_ok=True)
+                    released_boot_hold = True
+            except (OSError, subprocess.SubprocessError):
+                time.sleep(2)
+                continue
             path = STATE_DIR/'maintenance-request.json'
             try:
                 item = json.loads(path.read_text())
                 if item.get('id') != seen and not maintenance.lock.locked():
                     seen = item.get('id'); path.unlink(missing_ok=True); maintenance.process(item)
             except (OSError,ValueError,TypeError): pass
+            prefs = Preferences(state.folder/'settings.json')
             if not hotspot_attempted and not state.peer:
                 hotspot_attempted = True
                 try:
                     connected = maintenance.run(['nmcli','-g','GENERAL.STATE','device','show','wlan0'],timeout=5).stdout.startswith('100')
                 except (OSError,subprocess.SubprocessError): connected = False
-                if not connected: maintenance.process({'operation':'hotspot','automatic':True})
-            try: maintenance.finish_initial_hotspot(Preferences().data['setup_complete'])
-            except subprocess.SubprocessError: pass
+                if not connected and released_boot_hold and prefs.data['wifi_power'] != 'off':
+                    try:
+                        maintenance.wifi_power.set_radio(True)
+                        maintenance.run(['nmcli','--wait','12','device','connect','wlan0'], timeout=15)
+                        connected = True
+                    except (OSError,subprocess.SubprocessError):
+                        connected = False
+                if not connected and prefs.data['wifi_power'] != 'off':
+                    maintenance.process({'operation':'hotspot','automatic':True})
+            try: maintenance.finish_initial_hotspot(prefs.data['setup_complete'])
+            except (OSError, subprocess.SubprocessError): pass
             try:
                 from .ssh_access import refresh
                 refresh(state.folder)
             except OSError:pass
-            try:atomic_json(state.folder/'network-status.json',sample_network(maintenance.run))
+            wifi_mode = prefs.data['wifi_power']
+            try:
+                wifi_state = maintenance.wifi_power.tick(
+                    wifi_mode, setup_hotspot=maintenance.ap and maintenance.ap_automatic,
+                    updating=update_status(state.folder).get('phase') in ('checking','downloading','installing'))
+                if wifi_state in ('off', 'asleep'):
+                    maintenance.ap = maintenance.ap_automatic = False
+            except (OSError, subprocess.SubprocessError):
+                wifi_state = 'unavailable'
+            try:
+                network = sample_network(maintenance.run)
+                atomic_json(state.folder/'network-status.json',
+                            dict(network, wifi_mode=wifi_mode, wifi_state=wifi_state,
+                                 wifi_delay_boot=prefs.data['wifi_delay_boot']))
             except OSError:pass
             time.sleep(2)
     threading.Thread(target=worker,daemon=True).start()

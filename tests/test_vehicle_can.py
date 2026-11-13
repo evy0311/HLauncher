@@ -9,7 +9,7 @@ import unittest
 from unittest.mock import patch
 from hlauncher.protocol.frames import frame
 from hlauncher.protocol.session import StartProbe, packet, pi_honda_identity
-from hlauncher.protocol.vehicle_can import GENERAL, HONDALINK, decode_records, subscription_payloads, session_key
+from hlauncher.protocol.vehicle_can import GENERAL, HONDALINK, ILLUMINATION_ID, decode_records, subscription_payloads, session_key
 from hlauncher.protocol.vehicle_signals import SIGNALS, SUBSCRIPTIONS, SignalCache
 from hlauncher.protocol_diagnostics import ProtocolDiagnostics
 
@@ -32,6 +32,34 @@ def can_data(records, kind=0, key=None):
 
 
 class VehicleCAN(unittest.TestCase):
+    def test_illumination_subscription_follows_lights_regardless_of_dimmer(self):
+        probe = self.probe()
+        probe.vehicle_scope = lambda: 'illumination'
+        events, _ = self.authenticate(probe)
+        queued = next(event for event in events if event['state'] == 'honda_can_subscription_queued')
+        self.assertEqual(queued['payload'], '0200000a0101000112f854500008c000000000000000')
+        diagnostics = ProtocolDiagnostics()
+        key = probe.vehicle_subscription.keys[257]
+        for raw, expected in ((b'\x00', False), (b'\x40', True), (b'\xc0', True), (b'\x80', False),
+                              (bytes.fromhex('d6b68000500a0000'), True),
+                              (bytes.fromhex('d6368000b0160000'), True), (b'\x40', True)):
+            events, _ = probe.feed(incoming(257, 0xc1, can_data([(ILLUMINATION_ID, raw)], key=key)))
+            event = next(event for event in events if event['state'] == 'honda_can_data')
+            diagnostics.observe(event)
+            self.assertEqual(diagnostics.illumination_night_mode(), expected)
+
+        probe.vehicle_subscription.requests[257]['at'] -= 1
+        probe.vehicle_scope = lambda: 'gauges_illumination'
+        events, _ = probe.sync_vehicle_scope()
+        queued = next(event for event in events if event['state'] == 'honda_can_subscription_queued')
+        self.assertIn(ILLUMINATION_ID, queued['can_ids'])
+        self.assertIn(0x324, queued['can_ids'])
+        diagnostics.observe(queued)
+        self.assertTrue(diagnostics.illumination_night_mode())
+        self.assertFalse(diagnostics.illumination_night_mode(now=10**12))
+        diagnostics.observe(dict(state='iap_data_session_closed', session=257))
+        self.assertFalse(diagnostics.illumination_night_mode())
+
     def test_consumer_scopes_request_only_gauge_bits_and_stop_when_unused(self):
         scope=['off'];p=self.probe();p.vehicle_scope=lambda:scope[0]
         events,_=self.authenticate(p,flags=26)

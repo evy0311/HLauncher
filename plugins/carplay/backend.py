@@ -151,6 +151,7 @@ class CarplayHDMI:
         self.adapter_branding_request_id=None
         self.adapter_branding_error=""
         self.pending_branding=None
+        self.night_mode = False
 
     def notify(self, state, **extra):
         self.event(state=state, **extra)
@@ -271,13 +272,22 @@ class CarplayHDMI:
             self.cond.notify()
         return True
 
-    def send_inputs(self, proc):
+    def set_night_mode(self, night_mode):
+        with self.cond:
+            self.night_mode = night_mode
+            self.cond.notify()
+
+    def send_inputs(self, proc, sent_night_mode=False):
         while not self.stop_event.is_set() and proc.poll() is None:
             with self.cond:
-                if not self.queue and not self.mic_queue:
+                if self.night_mode != sent_night_mode:
+                    sent_night_mode = self.night_mode
+                    item = dict(type='projection.appearance', night_mode=sent_night_mode)
+                elif self.queue or self.mic_queue:
+                    item = dict(self.queue.popleft() if self.queue else self.mic_queue.popleft())
+                else:
                     self.cond.wait(0.1)
                     continue
-                item = dict(self.queue.popleft() if self.queue else self.mic_queue.popleft())
                 item.pop("_motion", None)
                 queued = item.pop("queued_at", None)
                 if queued is not None and time.monotonic()-queued > 1:
@@ -477,7 +487,9 @@ class CarplayHDMI:
                 stack.enter_context(pcm_reader)
                 stack.enter_context(pcm_writer)
                 pcm = stack.enter_context(pcm_reader.makefile('rb', buffering=0))
+                initial_night_mode = self.night_mode
                 env = dict(os.environ, CIVIC_CARPLAY_RESET="0",
+                           HLAUNCHER_NIGHT_MODE='1' if initial_night_mode else '0',
                            HLAUNCHER_CARPLAY_PCM_FD=str(pcm_writer.fileno()))
                 proc = subprocess.Popen(
                     ["/usr/bin/node", str(RUNTIME / "bridge.mjs")],
@@ -493,7 +505,7 @@ class CarplayHDMI:
                 self.proc = proc
                 self.notify("carplay_hdmi_bridge_started", pid=proc.pid)
                 threading.Thread(
-                    target=self.send_inputs, args=(proc,), daemon=True
+                    target=self.send_inputs, args=(proc, initial_night_mode), daemon=True
                 ).start()
                 packets = BridgePackets(pcm, reader_stop, self.forward_audio, self.receive_state,
                                         video=proc.stdout)

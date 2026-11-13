@@ -14,7 +14,7 @@ apt-get update
 apt-get install -y python3 python3-pil python3-numpy python3-dbus python3-gi python3-bleak \
   bluez bluez-alsa-utils libasound2-plugin-bluez alsa-utils openssl pipewire pipewire-bin libspa-0.2-modules libsamplerate0 libsoxr0 \
   nodejs npm patch libudev-dev libusb-1.0-0 libdrm2 libavcodec59 libavutil57 libswscale6 \
-  fonts-dejavu-core fbset usbutils build-essential pkg-config libpipewire-0.3-dev network-manager iw rfkill raspi-config initramfs-tools overlayroot openssh-server avahi-daemon
+  fonts-dejavu-core fbset usbutils build-essential pkg-config libpipewire-0.3-dev network-manager iproute2 iw rfkill raspi-config initramfs-tools overlayroot openssh-server avahi-daemon
 bash scripts/install_button_audio.sh
 root=/opt/hlauncher
 if [[ $(pwd -P) == "$root" ]]; then

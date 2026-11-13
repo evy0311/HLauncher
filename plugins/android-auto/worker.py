@@ -36,8 +36,9 @@ def read_packet(stream):
 
 
 class Engine:
-    def __init__(self,client):
+    def __init__(self,client,night_mode=False):
         self.client=client;self.lock=threading.Lock();self.lifecycle_lock=threading.Lock();self.proc=None
+        self.night_mode = night_mode
         self.visible=threading.Event();self.done=threading.Event()
         self.inputs=queue.Queue(128);self.router=TouchRouter();self.button_pending={}
         self.frame=None;self.sequence=0;self.status='Starting Android Auto';self.home=False
@@ -54,9 +55,11 @@ class Engine:
             with self.lifecycle_lock:
                 if self.done.is_set():return
                 from hlauncher_sdk.projection import inherited_fds
-                self.proc=subprocess.Popen([str(ENGINE)],stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.PIPE,bufsize=0,pass_fds=inherited_fds())
+                initial_night_mode = self.night_mode
+                env = dict(os.environ, HLAUNCHER_NIGHT_MODE='1' if initial_night_mode else '0')
+                self.proc=subprocess.Popen([str(ENGINE)],stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.PIPE,bufsize=0,pass_fds=inherited_fds(),env=env)
             threading.Thread(target=self.capture_logs,daemon=True).start()
-            threading.Thread(target=self.send_inputs,daemon=True).start()
+            threading.Thread(target=self.send_inputs,args=(initial_night_mode,),daemon=True).start()
             decoder=H264StreamDecoder(self.client.width,self.client.height)
             picture=PictureSettings();decoder.decoder.picture=dict(picture.values)
             picture_check=0;last_visible=False
@@ -123,10 +126,16 @@ class Engine:
         finally:
             if handler:handler.close()
 
-    def send_inputs(self):
+    def send_inputs(self, sent_night_mode=False):
         while not self.done.is_set():
-            try:item=self.inputs.get(timeout=.1)
-            except queue.Empty:continue
+            with self.lock:
+                night_mode = self.night_mode
+            if night_mode != sent_night_mode:
+                sent_night_mode = night_mode
+                item = dict(type='projection.appearance', night_mode=night_mode)
+            else:
+                try:item=self.inputs.get(timeout=.1)
+                except queue.Empty:continue
             queued=item.pop('queued_at',None)
             if queued is not None and time.monotonic()-queued > 1: continue
             try:
@@ -179,11 +188,14 @@ def main():
                     last_frame=-1
                     if not started or engine.done.is_set():
                         if started:
-                            engine=Engine(client)
+                            engine=Engine(client, night_mode=engine.night_mode)
                             if active:engine.visible.set()
                         engine.start();started=True
                 elif kind=='host.deactivate':
                     active=False;engine.visible.clear();engine.touch({'contacts':[]})
+                elif kind=='projection.appearance':
+                    with engine.lock:
+                        engine.night_mode = message.get('night_mode') is True
                 elif kind=='radio.button':
                     result=engine.button(message)
                     client.send(type='radio.button.result',button=message.get('button'),sequence=message.get('sequence'),result=result)

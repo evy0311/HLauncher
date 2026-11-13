@@ -57,8 +57,14 @@ class BootstrapLauncher:
     def vehicle_scope(self):
         if self.ui is None:return 'off'
         if self.ui.mode=='protocol_tests' and self.ui.protocol_page==1:return 'diagnostics'
-        if self.ui.mode=='plugin' and self.ui.host.active=='obd':return 'gauges'
-        return 'off'
+        from .projection import PROJECTIONS
+        host = self.ui.host
+        illumination = any(ident in PROJECTIONS and worker.manifest.bundled and
+                           self.ui.prefs.auto_night(ident)
+                           for ident, worker in getattr(host, 'workers', {}).copy().items())
+        if self.ui.mode == 'plugin' and host.active == 'obd':
+            return 'gauges_illumination' if illumination else 'gauges'
+        return 'illumination' if illumination else 'off'
 
     def session_changed(self, **values):
         self.session.update(values)

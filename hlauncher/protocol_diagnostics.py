@@ -132,6 +132,13 @@ class ProtocolDiagnostics:
                 for row in rows if row['received']}
             return dict(connected=self.connected,monotonic=now,readings=readings)
 
+    def illumination_night_mode(self, now=None):
+        now = time.monotonic() if now is None else now
+        with self.lock:
+            # HondaLink API 6 (C_ACILL) follows the parking lights or headlights.
+            lights, = self.vehicle.signals.snapshot(now, {6})
+            return lights['received'] and not lights['stale'] and lights['value'] is True
+
     def _write(self):
         output=None;written=0;part=0;last_flush=time.monotonic()
         def finish():

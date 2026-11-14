@@ -197,6 +197,12 @@ precision rather than picture saturation or brightness. They are reported for
 diagnostics; HLauncher does not change them automatically.
 
 Picture sliders live at **Settings → Appearance → Picture**. Projection video
+defaults to 110% saturation, 100% contrast, and −10 brightness, as do built-in
+screens. From the Civic driver's seat, this made the pale green map areas and
+blue location marker easier to see. **Reset** restores those defaults. Saved
+picture settings take precedence on reboot.
+
+Projection video
 uses controls in its existing native FFmpeg conversion; there is no additional
 per-frame picture filter. Built-in UI previews use native Pillow operations on
 redraw. Third-party raw plugin frames remain unchanged. The former software

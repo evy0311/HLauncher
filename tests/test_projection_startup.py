@@ -111,3 +111,37 @@ class LauncherStandby(unittest.TestCase):
         ui=self.ui;ui.prefs.data['setup_complete']=True;ui.prefs.set_enabled(ui.manifests['carplay'],False)
         with patch('hlauncher.projection.carplay_adapter_present',return_value=True),patch.object(ui.host,'ensure_background_carplay') as start:
             ui.tick();start.assert_not_called()
+
+    def test_paired_boot_projection_survives_hondalink_open_and_close(self):
+        from hlauncher.bootstrap import BootstrapLauncher
+        from hlauncher.setup_state import SetupState, atomic_json
+        from hlauncher import config
+
+        ui = self.ui
+        ui.prefs.data.update(setup_complete=True, default_plugin='carplay')
+        state = SetupState(ui.prefs.path.parent)
+        atomic_json(state.path, {'address': '02:00:00:00:00:11', 'verified': True})
+        bootstrap = BootstrapLauncher(ui.event, ui.protocols, state, lambda *a, **kw: ui)
+        worker = SimpleNamespace(
+            manifest=ui.manifests['carplay'], ready=False, video_available=False,
+            status='Waiting for phone', send=lambda **kw: True, close=lambda: None,
+        )
+        app_id = 'com.honda.hondalink.connect'
+        with patch.multiple(config, RADIO_ADDRESS=config.RADIO_ADDRESS,
+                            RADIO_PATH=config.RADIO_PATH, RFCOMM_PATH=config.RFCOMM_PATH), \
+                patch.object(bootstrap, 'show_pairing'), patch.object(bootstrap, 'prewarm_home'), \
+                patch('hlauncher.plugin_host.Worker', return_value=worker) as create, \
+                patch.object(ui.host, 'tick'), patch.object(ui.host, 'frame', return_value=None):
+            bootstrap.prepare()
+            bootstrap.preparing.join()
+            bootstrap.tick()
+            self.assertEqual(bootstrap.session, {})
+            self.assertEqual(ui.host.active, 'carplay')
+            for connected in (True, False, True):
+                bootstrap.session_changed(connected=connected, authenticated=connected)
+                if connected:
+                    self.assertTrue(bootstrap.launch(app_id))
+                bootstrap.tick()
+                self.assertEqual(ui.mode, 'plugin')
+                self.assertIs(ui.host.workers['carplay'], worker)
+            create.assert_called_once()

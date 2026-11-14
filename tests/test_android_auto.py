@@ -1,4 +1,5 @@
 """Android contact ordering and native bridge framing, without a USB phone."""
+import base64
 import importlib.util
 import io
 from pathlib import Path
@@ -16,6 +17,37 @@ def contact(slot,x=10000,y=20000,action='down'):
 
 
 class AndroidAuto(unittest.TestCase):
+    def test_worker_uses_radio_buttons_and_the_requested_microphone_format(self):
+        from types import SimpleNamespace
+        from unittest.mock import patch
+        with patch.dict(sys.modules, input=inputs):
+            spec = importlib.util.spec_from_file_location('aa_controls_worker', ROOT/'plugins/android-auto/worker.py')
+            worker = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(worker)
+        engine = worker.Engine(SimpleNamespace())
+        engine.proc = SimpleNamespace(poll=lambda: None)
+        button = dict(button='next', action='down', sequence=19, source='avrcp')
+        self.assertEqual(engine.button(button), 'Queued to Android Auto')
+        key = engine.inputs.get_nowait()
+        self.assertEqual((key['code'], key['sequence']), (87, 19))
+        # The radio can start another voice session after Android Auto ends
+        # the first one without receiving a BVRA=0 from the radio.
+        voice = dict(button='voice_assistant', action='activate', source='hfp-command')
+        with patch.object(engine.button_gate, 'clock', side_effect=[1, 1.05, 2]):
+            self.assertEqual(engine.button(dict(voice, sequence=20)), 'Queued to Android Auto')
+            self.assertEqual(engine.button(dict(voice, sequence=21)), 'Ignored release / duplicate')
+            self.assertEqual(engine.button(dict(voice, sequence=22)), 'Queued to Android Auto')
+        self.assertEqual([engine.inputs.get_nowait()['code'] for _ in range(2)], [84, 84])
+        pcm = b'\x01\x00' * 160
+        engine.microphone(pcm)
+        self.assertTrue(engine.inputs.empty())
+        engine.mic_requested = True
+        engine.mic_format = (16000, 1)
+        engine.microphone(pcm)
+        mic = engine.inputs.get_nowait()
+        self.assertEqual(mic['type'], 'microphone.pcm')
+        self.assertEqual(base64.b64decode(mic['pcm']), pcm)
+
     def test_simultaneous_pinch_and_release_preserve_contact_ids(self):
         router=inputs.TouchRouter()
         events=router.feed({'contacts':[contact(0),contact(1,20000)]})

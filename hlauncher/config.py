@@ -49,7 +49,8 @@ class Preferences:
                      "debug_mode": False, "show_clock": False, "ssh_enabled": True, "wifi_power": "on",
                      "wifi_delay_boot": False,
                      "home_pages": [], "carplay_fps": CARPLAY_FRAME_RATES[0],
-                     "carplay_auto_night": True, "android_auto_auto_night": True}
+                     "carplay_auto_night": True, "android_auto_auto_night": True,
+                     "carplay_car_gps": False, "android_auto_car_gps": False}
         try:
             loaded = json.loads(self.path.read_text())
             if not isinstance(loaded, dict) or not isinstance(
@@ -70,7 +71,8 @@ class Preferences:
             fps = loaded.get('carplay_fps')
             if type(fps) is int and fps in CARPLAY_FRAME_RATES:
                 self.data['carplay_fps'] = fps
-            for key in ('carplay_auto_night', 'android_auto_auto_night'):
+            for key in ('carplay_auto_night', 'android_auto_auto_night',
+                        'carplay_car_gps', 'android_auto_car_gps'):
                 if type(loaded.get(key)) is bool:
                     self.data[key] = loaded[key]
             pages = loaded.get('home_pages')
@@ -235,6 +237,19 @@ class Preferences:
 
     def set_auto_night(self, plugin_id, enabled):
         key = plugin_id.replace('-', '_') + '_auto_night'
+        previous = self.data[key]
+        self.data[key] = bool(enabled)
+        try:
+            self.save(force=(key,))
+        except OSError:
+            self.data[key] = previous
+            raise
+
+    def car_gps(self, plugin_id):
+        return self.data.get(plugin_id.replace('-', '_') + '_car_gps') is True
+
+    def set_car_gps(self, plugin_id, enabled):
+        key = plugin_id.replace('-', '_') + '_car_gps'
         previous = self.data[key]
         self.data[key] = bool(enabled)
         try:

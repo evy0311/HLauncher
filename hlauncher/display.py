@@ -3,7 +3,7 @@
 import os, fcntl, struct
 from array import array
 from PIL import ImageEnhance
-from sdk.hlauncher_sdk.picture import DEFAULTS, validate
+from sdk.hlauncher_sdk.picture import DEFAULTS, NEUTRAL, validate
 try:
     import numpy as np
 except ImportError:
@@ -138,7 +138,7 @@ class Framebuffer:
 
 
 def adjust_image(image, values):
-    if values == DEFAULTS:
+    if values == NEUTRAL:
         return image
     image = ImageEnhance.Color(image).enhance(values['saturation'] / 100)
     contrast = values['contrast'] / 100

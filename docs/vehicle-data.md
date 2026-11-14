@@ -14,9 +14,14 @@ Vehicle data. Hardware tests → HondaLink vehicle data opens the same page.
   short session and stop it after testing. The existing capture storage limit
   still applies. `scripts/protocol_capture.py` summarizes recorded API values.
 
-While this diagnostics page is open, the app requests the original ALL group at
-a one-second interval: 54 message
-IDs containing F-CAN, B-CAN and radio-generated data. It also subscribes to the
+While this diagnostics page is open, the app requests the original 54 ALL
+message IDs plus an experimental raw B-CAN subscription for the i-MID audio
+switch (`0x12F95757`, eight bytes), at a one-second interval. **Raw / status**
+shows that frame's latest bytes and counts if the radio forwards it.
+For a capture, hold wheel VOL− and VOL+ separately for about two seconds,
+with idle time between them, then compare with the front-panel buttons.
+Short taps can fall between samples. The firmware identifies the frame,
+but the button values and live forwarding are still unverified. It also subscribes to the
 original diagnostic receive presets. Diagnostic snapshots are logged separately
 and never replace normal live readings. This feature sends subscription settings
 and diagnostic receipt acknowledgments only. Entries named Reset, Request or

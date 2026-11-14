@@ -37,16 +37,25 @@ mode keeps the session and audio running while avoiding RGB conversion when
 hidden. Background mode is always enabled for CarPlay and Android Auto; there is no user toggle. Selection as
 the startup/default plugin also uses the existing launcher settings.
 
-This version does not implement wireless pairing, microphone capture, phone-call
-routing or live vehicle sensor data. Its microphone transport is advertised and
-can open, but capture requests explicitly fail as unavailable. The session sensor
-endpoint currently reports a fixed parked bench policy and a default day display
-appearance. It does not synthesize parking, GPS or
-speed information.
-Those require separate integration and testing. CarPlay and Android Auto share
-an exclusive projection lease. Selecting the other plugin stops the previous
-session and waits for USB release; automatic CarPlay startup does not take over
-a running Android Auto session.
+Honda radio buttons, music, guidance, call audio and microphone audio use the
+same HLauncher paths as CarPlay. The phone supplies track metadata, which the
+shared Bluetooth AVRCP target can show on the radio. The wired phone still owns
+the call and navigation; the Pi bridges the audio and controls.
+
+Auto day/night mode uses HLauncher's HondaLink illumination signal. Android Auto
+also gets speed and the parking brake state when the radio reports them. Driving
+restrictions stay on unless the brake is set and fresh speed reads zero.
+Enable **Use car built-in GPS** on the Android Auto plugin page to advertise
+location and send fresh HondaLink coordinates when the phone subscribes.
+The phone still decides how to use those coordinates. Wireless Android Auto
+is outside this integration.
+The default discovery profile uses the original seven channels for phone
+compatibility. The optional extended telephony, media status and driving sensor
+profile is available for testing with `HLAUNCHER_AA_EXTENDED_SERVICES=1`.
+
+CarPlay and Android Auto share an exclusive projection lease. Selecting the other
+plugin stops the previous session and waits for USB release; automatic CarPlay
+startup does not take over a running Android Auto session.
 
 ## Logs and checks
 
@@ -72,8 +81,7 @@ in the initial integration. The correction was prompted by an Android 11 phone
 reporting Communication error 2 after completing TLS and receiving service
 discovery; the phone must be retested to confirm acceptance. The full outbound
 service description is logged so subsequent rejection can be traced instead of
-inferred from a generic phone error. Microphone and vehicle sensor integration
-remain separate work; this correction does not fabricate either data source.
+inferred from a generic phone error.
 
 `/opt/hlauncher-deps/bin/hlauncher-android-auto --check-discovery` checks that
 legacy identity fields are explicitly populated. It is an offline descriptor
@@ -87,13 +95,5 @@ unique channels total). It does not start an HFP call or reconfigure Bluetooth.
 and verifies unique IDs, microphone format, sensor types, video/audio and touch
 geometry. The owner subsequently confirmed Android Auto working on the project setup.
 
-## Bench parking state
-
-This bench build hard-codes Android Auto driving status to `0` (unrestricted)
-in `SessionSensors::drivingPolicy()`, at the owner's request. It has no timer,
-configuration flag or setup command and persists across restarts and reboots.
-This is a fixed bench value, not a measurement of the vehicle's parking state.
-The sensor log identifies it as `hard-coded parked bench mode`.
-
-`/opt/hlauncher-deps/bin/hlauncher-android-auto --check-driving-policy` reports
-the compiled-in value. Actual vehicle-state integration is future work.
+Use `--check-driving-policy` to verify the parked, moving, and unknown cases
+without a radio or phone.

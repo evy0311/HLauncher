@@ -9,7 +9,8 @@ import unittest
 from unittest.mock import patch
 from hlauncher.protocol.frames import frame
 from hlauncher.protocol.session import StartProbe, packet, pi_honda_identity
-from hlauncher.protocol.vehicle_can import GENERAL, HONDALINK, ILLUMINATION_ID, decode_records, subscription_payloads, session_key
+from hlauncher.protocol.vehicle_can import (GENERAL, GPS_IDS, HONDALINK, ILLUMINATION_ID, IMID_AUDIO_SWITCH_ID, decode_records,
+                                            subscription_payloads, session_key)
 from hlauncher.protocol.vehicle_signals import SIGNALS, SUBSCRIPTIONS, SignalCache
 from hlauncher.protocol_diagnostics import ProtocolDiagnostics
 
@@ -32,6 +33,60 @@ def can_data(records, kind=0, key=None):
 
 
 class VehicleCAN(unittest.TestCase):
+    def test_display_probe_requires_session_auth_and_matches_receipt_to_session_and_sequence(self):
+        probe = self.probe()
+        probe.vehicle_scope = lambda: 'off'
+        self.assertFalse(probe.request_display_test('show')[1])
+        self.authenticate(probe, flags=0x12)
+        events, replies = probe.request_display_test('show')
+        self.assertEqual(len(replies), 1)
+        self.assertEqual(events[0]['session'], 257)
+        payload = bytes.fromhex(events[0]['payload'])
+        self.assertEqual(payload, bytes.fromhex('00000104001e') + b'com.honda.hondalink.connect://')
+        probe.sessions[258] = (2, HONDALINK)
+        for sid, sequence in ((258, 1), (257, 2)):
+            events, _ = probe.feed(incoming(sid, 0xC1, bytes((1, sequence, 1))))
+            self.assertFalse(any(e['state'] == 'honda_display_test_result' for e in events))
+        events, _ = probe.feed(incoming(257, 0xC1, bytes((1, 1, 1))))
+        self.assertEqual(next(e['status'] for e in events if e['state'] == 'honda_display_test_result'),
+                         'Application receipt')
+        events, _ = probe.feed(incoming(257, 0x11, b'\x05'))
+        self.assertFalse(any(e['state'] == 'honda_display_status_sent' for e in events))
+        probe.feed(incoming(257, 0x53, b'\x01' + payload[6:]))
+        events, _ = probe.feed(incoming(257, 0x11, b'\x05'))
+        reports = [e['payload'] for e in events if e['state'] == 'honda_display_status_sent']
+        self.assertEqual(reports, ['10200000000000', '10600000000000'])
+        events, replies = probe.request_display_test('exit')
+        self.assertEqual(len(replies), 1)
+        self.assertEqual((events[0]['message'], events[0]['payload']), (0xC2, '00010000'))
+        events, _ = probe.feed(incoming(257, 0xC1, bytes.fromhex('010001')))
+        self.assertFalse(any(e['state'] == 'honda_display_status_sent' for e in events))
+
+    def test_live_gps_requires_a_fresh_complete_pair(self):
+        lat, lon = GPS_IDS
+        self.assertEqual(subscription_payloads('gps')[0].hex(),
+                         '0200000a0101000299f000030204ffffffff99f000040204ffffffff')
+        with tempfile.TemporaryDirectory() as folder:
+            monitor = ProtocolDiagnostics(folder)
+            monitor.observe(dict(state='connected', uuid='test-cafe'))
+            def receive(*records):
+                raw = [(ident, value.to_bytes(4, 'big', signed=True)) for ident, value in records]
+                monitor.observe(dict(state='honda_can_data', session=257, data_type=0,
+                                     records=decode_records(can_data(raw))))
+            receive((lat, 144000000), (lon, -270000000))
+            fix = monitor.projection_gps()
+            self.assertEqual((fix['latitude'], fix['longitude']), (40.0, -75.0))
+            self.assertTrue(monitor.vehicle.snapshot_gps(fix['at'] + 4)['stale'])
+            receive((lat, 144000000))
+            receive((lon, -270000000))
+            self.assertIsNone(monitor.projection_gps())
+            receive((lat, -2147483648), (lon, -270000000))
+            self.assertIsNone(monitor.projection_gps())
+            receive((lat, 144000000), (lon, -270000000))
+            monitor.observe(dict(state='iap_data_session_closed', session=257))
+            self.assertIsNone(monitor.projection_gps())
+            monitor.close()
+
     def test_illumination_subscription_follows_lights_regardless_of_dimmer(self):
         probe = self.probe()
         probe.vehicle_scope = lambda: 'illumination'
@@ -107,9 +162,13 @@ class VehicleCAN(unittest.TestCase):
         return a+c,b+d
 
     def test_full_request_matches_original_arm_serializer_golden(self):
-        self.assertEqual([hashlib.sha256(x).hexdigest() for x in subscription_payloads()],
+        normal, diagnostic = subscription_payloads()
+        self.assertEqual(normal[7],55)
+        self.assertEqual(normal[-14:],bytes.fromhex('12f957570008ffffffffffffffff'))
+        original=normal[:7]+bytes([54])+normal[8:-14]
+        self.assertEqual([hashlib.sha256(x).hexdigest() for x in (original,diagnostic)],
                          FIXTURE['payload_sha256'])
-        self.assertEqual([len(x) for x in subscription_payloads()],[685,21])
+        self.assertEqual([len(x) for x in (normal,diagnostic)],[699,21])
         self.assertEqual(len(SUBSCRIPTIONS),54)
         self.assertEqual([x['api_id'] for x in SIGNALS],list(range(1,169)))
         self.assertEqual(pi_honda_identity(DEVICE)[-6:],bytes.fromhex('0000000000ff'))
@@ -117,6 +176,7 @@ class VehicleCAN(unittest.TestCase):
         queued=[e for e in events if e['state']=='honda_can_subscription_queued']
         self.assertEqual(len(queued),2)
         self.assertTrue(all(e['receive_only'] and e['api_count']==168 for e in queued))
+        self.assertIn(IMID_AUDIO_SWITCH_ID,queued[0]['can_ids'])
         self.assertEqual([e['part']for e in queued],[1,2])
         self.assertFalse(any(e['state']=='honda_can_subscription_queued'for e in self.authenticate(p)[0]))
 
@@ -227,14 +287,19 @@ class VehicleCAN(unittest.TestCase):
         with tempfile.TemporaryDirectory() as folder:
             monitor=ProtocolDiagnostics(folder,min_free=0);monitor.start()
             for e in events:monitor.observe(e)
-            wire=incoming(257,0xc1,can_data([(0x324,bytes.fromhex('823c000000000000'))],key=p.vehicle_subscription.keys[257]))
+            switch_data=bytes.fromhex('0102030405060708')  # Synthetic; no button mapping.
+            wire=incoming(257,0xc1,can_data([(0x324,bytes.fromhex('823c000000000000')),
+                                            (IMID_AUDIO_SWITCH_ID,switch_data)],key=p.vehicle_subscription.keys[257]))
             for _ in range(3):
                 for e in p.feed(wire)[0]:monitor.observe(e)
             row=monitor.snapshot()['vehicle_signals'][39]
             self.assertEqual((row['value'],row['samples'],row['changes']),(90,3,0))
             monitor.close()
             saved=[json.loads(l)for f in Path(folder).glob('*.jsonl')for l in f.read_text().splitlines()]
-            self.assertEqual(next(e for e in saved if e['state']=='honda_can_data')['records'][0]['signals']['40'],90)
+            records=next(e for e in saved if e['state']=='honda_can_data')['records']
+            self.assertEqual(records[0]['signals']['40'],90)
+            self.assertEqual((records[1]['name'],records[1]['can_class'],records[1]['data'],records[1]['signals']),
+                             ('IMID_AUDIOSW',0,switch_data.hex(),{}))
             self.assertFalse(any('keys' in e for e in saved))
 
 

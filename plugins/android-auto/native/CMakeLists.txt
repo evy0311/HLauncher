@@ -15,6 +15,7 @@ add_executable(hlauncher-android-auto bridge.cpp
  ${S}/Service/AndroidAutoEntity.cpp ${S}/Service/AndroidAutoEntityFactory.cpp ${S}/Service/Pinger.cpp
  ${S}/Service/MediaSink/AudioMediaSinkService.cpp ${S}/Service/MediaSink/MediaAudioService.cpp
  ${S}/Service/MediaSink/GuidanceAudioService.cpp ${S}/Service/MediaSink/SystemAudioService.cpp
+ ${S}/Service/MediaSink/TelephonyAudioService.cpp
  ${S}/Service/MediaSink/VideoMediaSinkService.cpp ${S}/Service/MediaSink/VideoService.cpp
  ${S}/Service/InputSource/InputSourceService.cpp
  ${S}/Service/MediaSource/MediaSourceService.cpp ${S}/Service/MediaSource/MicrophoneMediaSourceService.cpp)

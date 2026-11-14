@@ -2,7 +2,7 @@
 import hashlib
 import time
 from .protocol.vehicle_signals import SignalCache, ALIASES
-from .protocol.vehicle_can import ILLUMINATION_ID
+from .protocol.vehicle_can import GPS_IDS, ILLUMINATION_ID, decode_gps_pair
 
 
 def radio_status(payload):
@@ -28,9 +28,12 @@ class VehicleTraffic:
         self.subscription = {}
         self.can_records = {}
         self.signals = SignalCache()
+        self.gps = {}
 
     def clear(self, session=None):
         self.signals.clear(session)
+        if session is None or self.gps.get('session') == session:
+            self.gps = {}
         if session is None:
             self.previous.clear()
             self.status = {}
@@ -57,6 +60,8 @@ class VehicleTraffic:
                                                'transaction','transport_status','phase','can_classes','interval_seconds','api_count','settings_count')})
             if state == 'honda_can_subscription_queued':
                 if event.get('part',1)==1:
+                    if not set(GPS_IDS).issubset(event.get('can_ids', ())):
+                        self.gps = {}
                     illumination = self.signals.records.get(ILLUMINATION_ID)
                     self.signals.clear();self.readings.clear();self.can_records.clear()
                     if (illumination and illumination['session'] == event.get('session')
@@ -78,6 +83,10 @@ class VehicleTraffic:
             if normal:
                 self.subscription.update(status='Receiving',last_error='')
                 self.signals.update(event['records'],event.get('monotonic',time.monotonic()),event['session'])
+                if any(record['can_id'] in GPS_IDS for record in event['records']):
+                    fix = decode_gps_pair(event['records'])
+                    self.gps = dict(session=event['session'], fix=fix,
+                                    at=event.get('monotonic', time.monotonic()))
             for record in event['records']:
                 can_class = record.get('can_class', event.get('can_class', 1))
                 data_type = record.get('data_type', event.get('data_type',0))
@@ -100,6 +109,13 @@ class VehicleTraffic:
                             mapping='legacy_hondalink_native_sdk')
         elif state in ('honda_can_data_invalid','honda_can_auth_invalid'):
             self.subscription['last_error'] = event.get('error','Unknown CAN error')
+
+    def snapshot_gps(self, now=None):
+        if not self.gps:
+            return {}
+        now = time.monotonic() if now is None else now
+        age = max(0, now - self.gps['at'])
+        return dict(self.gps, age_seconds=age, stale=age > 3)
 
     def snapshot_signals(self, now=None):
         return self.signals.snapshot(time.monotonic() if now is None else now)

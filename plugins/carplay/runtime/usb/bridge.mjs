@@ -7,6 +7,7 @@ import {Socket} from 'node:net';
 import {VideoOutput} from './video_output.mjs';
 import readline from 'node:readline';
 import {applyBranding} from './branding.mjs';
+import {SendGpsReporting, SendVehicleGps} from './vehicle_gps.mjs';
 import { format } from 'node:util';
 import { DongleDriver, DEFAULT_CONFIG, VideoData, AudioData, Plugged, Unplugged,
          SendTouch, SendMultiTouch, SendCommand, SendAudio, Command, MediaData, SoftwareVersion, ManufacturerInfo, BoxInfo, Opened,
@@ -20,6 +21,18 @@ for (const name of ['log','debug','info','warn','error']) {
 }
 let shutting = false, driver = null, connected = false, down = false, multiDown = false;
 let nightMode = process.env.HLAUNCHER_NIGHT_MODE === '1';
+const carGps = process.env.HLAUNCHER_CAR_GPS === '1';
+let gpsPhoneConnected = false, gpsWritePending = false;
+function sendGps(fix) {
+  if (!carGps || !gpsPhoneConnected || gpsWritePending || !fix ||
+      !Number.isFinite(fix.latitude) || Math.abs(fix.latitude) > 90 ||
+      !Number.isFinite(fix.longitude) || Math.abs(fix.longitude) > 180 ||
+      !Number.isSafeInteger(fix.utc_ms) || Math.abs(Date.now() - fix.utc_ms) > 3000) return;
+  gpsWritePending = true;
+  void driver.send(new SendVehicleGps(fix)).catch(() => {
+    console.error('CarPlay vehicle GPS USB transfer failed');
+  }).finally(() => { gpsWritePending = false; });
+}
 let appliedNightMode, nightModeWrite = Promise.resolve();
 class SendNightMode extends SendableMessageWithPayload {
   type = MessageType.Command;
@@ -195,6 +208,8 @@ if (!process.argv.includes('--self-test')) readline.createInterface({input:proce
   }else if(m.type==='projection.appearance' && typeof m.night_mode==='boolean') {
     nightMode=m.night_mode;
     void syncNightMode();
+  }else if(m.type==='projection.gps') {
+    sendGps(m.fix);
   }else if(m.type==='microphone')microphone(m);else touch(m); } catch(e) { console.error('Bridge input:',String(e)); }
 });
 async function stop() {
@@ -318,6 +333,15 @@ if (process.argv.includes('--self-test')) {
       bytes.readUInt32LE(16) !== 16 + index)) {
     throw Error('CarPlay night mode did not send the expected USB commands');
   }
+  const gps = new SendVehicleGps({
+    latitude: -33.5, longitude: 151.25, utc_ms: Date.UTC(2026, 0, 2, 3, 4, 5),
+  }).serialise();
+  const nmea = '$GPGGA,030405.000,3330.000000,S,15115.000000,E,1,,,,,,,,*5F\r\n' +
+    '$GPRMC,030405.000,A,3330.000000,S,15115.000000,E,,,020126,,,A*74\r\n';
+  if (gps.readUInt32LE(8) !== 0x29 || gps.readUInt32LE(16) !== nmea.length ||
+      gps.subarray(20).toString('ascii') !== nmea) {
+    throw Error('CarPlay vehicle GPS USB framing failed');
+  }
   status('self_test_ok',{touch_messages:sent.length});
   if (realtime !== process.stdout) {
     packet(3,Buffer.from('pcm fixture'));
@@ -390,8 +414,10 @@ driver.on('message',message=>{
     video.reset();lastPCM.clear();status('phone_connected',{phone_type:message.phoneType});
     appliedNightMode = undefined;
     void syncNightMode();
+    gpsPhoneConnected = true;
+    void driver.send(new SendGpsReporting(carGps)).catch(() => {});
   }
-  else if(message instanceof Unplugged) { lastPCM.clear();voiceChange({call_audio:false,siri:false,recording:false});status('phone_disconnected'); }
+  else if(message instanceof Unplugged) { gpsPhoneConnected=false;lastPCM.clear();voiceChange({call_audio:false,siri:false,recording:false});status('phone_disconnected'); }
   else if(message instanceof VideoData && message.data?.length) {
     videoPackets++;
     const receivedAt=Date.now();
@@ -427,7 +453,7 @@ driver.on('message',message=>{
 });
 const fps=process.env.CIVIC_CARPLAY_FPS === '60' ? 60 : 30;
 const config={...DEFAULT_CONFIG,width:800,height:480,fps,
-  boxName:'HLauncher',micType:'os',audioTransferMode:false,nightMode};
+  boxName:'HLauncher',micType:'os',audioTransferMode:false,nightMode,carGps};
 await driver.initialise(device);
 initialBrandingOK=await brandAdapter();
 appliedNightMode=config.nightMode;

@@ -58,6 +58,11 @@ in [recording a drive test](../../docs/setup.md#record-a-hondalink-drive-test).
 
 ## Frame rate and picture controls
 
+**Use car built-in GPS** on the CarPlay plugin page enables GPS reporting on
+the adapter and forwards live HondaLink coordinates as NMEA. The adapter must
+support the host GPS capability. The iPhone decides how it uses the coordinates.
+Changing the switch reconnects an active projection.
+
 Open **Settings → Plugins → CarPlay → Frame rate** to switch between 30 and 60 FPS.
 The setting is saved and an active CarPlay connection briefly reconnects to request
 the new frame rate from the dongle. The default is 30 FPS.
@@ -65,7 +70,7 @@ the new frame rate from the dongle. The default is 30 FPS.
 
 Open **Settings → Appearance → Picture** for saturation, contrast and brightness sliders.
 Changes apply live to built-in HLauncher screens, CarPlay and Android Auto,
-and save automatically. **Reset** restores saturation 100%, contrast 100%, brightness 0.
+and save automatically. **Reset** restores saturation 110%, contrast 100%, and brightness −10.
 **Preview** returns to CarPlay with the new values. HDMI range remains a separate setting.
 The former software 16–235 picture inset is no longer applied.
 
@@ -129,11 +134,11 @@ python3 scripts/now_playing.py
 Press Ctrl+C to stop the viewer; playback continues. For one snapshot or streaming
 JSON, use `python3 -m hlauncher now-playing` or
 `python3 -m hlauncher now-playing --watch --json`. Missing reports show a waiting
-message, never invented song data. Track reports remain local. Bluetooth AVRCP
-exposes only the selected source title (`Carplay` or `Android Auto`) and artist
-`HLauncher`. Returning to Settings or a non-audio plugin retains a background
-audio source; stopping that source clears the radio metadata. Display availability
-depends on the radio screen and its AVRCP connection.
+message until the phone reports a track. Bluetooth AVRCP sends the active
+projection's title, artist and album when available. With no track it shows the
+source name. Returning to Settings or a non-audio plugin retains a background
+audio source; stopping that source clears its radio metadata. What appears on the
+radio depends on the selected radio screen and its AVRCP connection.
 
 ## Troubleshooting
 

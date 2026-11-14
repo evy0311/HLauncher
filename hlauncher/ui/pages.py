@@ -211,6 +211,8 @@ def plugin_detail(ui):
     if manifest.id in ('carplay', 'android-auto'):
         rows.append(Row('Follow headlights', lambda: ui.toggle_auto_night(manifest.id),
                         toggle=ui.prefs.auto_night(manifest.id)))
+        rows.append(Row('Use car built-in GPS', lambda: ui.toggle_car_gps(manifest.id),
+                        toggle=ui.prefs.car_gps(manifest.id)))
     draw_rows(ui,p,rows,key='plugin:'+manifest.id)
     p.notice(ui.banner)
     present(ui,p)

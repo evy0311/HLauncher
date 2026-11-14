@@ -70,14 +70,25 @@
        }
      } else {
        console.info(`Unexpected media type: ${type}`)
+--- a/src/modules/DongleDriver.ts
++++ b/src/modules/DongleDriver.ts
+@@ -33,3 +33,4 @@
+ export type DongleConfig = {
+   androidWorkMode?: boolean
++  carGps?: boolean
+   width: number
 --- a/src/modules/messages/sendable.ts
 +++ b/src/modules/messages/sendable.ts
-@@ -273,6 +273,8 @@
+@@ -273,6 +273,12 @@
      return Buffer.from(
        JSON.stringify({
          mediaDelay: this.config.mediaDelay,
 +        // Request media/dashboard reporting during session identification.
 +        DashboardInfo: 1,
++        ...(typeof this.config.carGps === 'boolean' ? {
++          gps: Number(this.config.carGps),
++          GNSSCapability: this.config.carGps ? 3 : 0,
++        } : {}),
          syncTime: this.syncTime ?? getCurrentTimeInMs(),
          androidAutoSizeW: this.config.width,
          androidAutoSizeH: this.config.height,

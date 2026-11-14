@@ -117,7 +117,10 @@ def metadata():
         doc=json.loads(path.read_text());pid=doc.get('launcher_pid')
         if not isinstance(pid,int):return {}
         os.kill(pid,0)
-        return radio_metadata(doc.get('source_plugin'))
+        source = doc.get('source_plugin')
+        tracks = doc.get('sources')
+        track = tracks.get(source) if isinstance(tracks, dict) and isinstance(source, str) else None
+        return radio_metadata(source, track)
     except (OSError,ValueError,TypeError):return {}
 
 def serve_avrcp(sock):
@@ -149,7 +152,10 @@ def serve_avrcp(sock):
                 emit(observation=avrcp_observation(raw,reply),recognized=bool(event))
                 if reply:
                     if sock.send(reply)!=len(reply):raise OSError('Short control packet write')
-                    emit(state='protocol_packet',source='avrcp',direction='tx',hex=reply.hex())
+                    # ElementAttributes (and continuations) can contain song titles.
+                    private = (len(raw) >= 10 and raw[9] in (0x20, 0x40))
+                    emit(state='protocol_packet', source='avrcp', direction='tx',
+                         **({'summary': 'Media attributes reply'} if private else {'hex': reply.hex()}))
                 if event:
                     # Some controllers resend held-key presses. Treat a press as one action.
                     name,action=event
@@ -207,10 +213,11 @@ def serve_hfp():
                             s.sendall(('\r\n'+response+'\r\n').encode())
                             if response.startswith('+CLCC:'):
                                 emit(state='projection_hfp_tx', summary='+CLCC: active call')
-                        if event:emit(button=event[0],action=event[1],source='hfp-command')
+                        if event := mirror.radio_button(event):
+                            emit(button=event[0],action=event[1],source='hfp-command')
                     changes=mirror.update(voice)
                     for response in changes:
-                        s.send(('\r\n'+response+'\r\n').encode())
+                        s.sendall(('\r\n'+response+'\r\n').encode())
                         emit(state='projection_hfp_tx',summary=response)
                     if changes:emit(state='projection_hfp_state',call_audio=mirror.previous[0],siri=mirror.previous[1])
             except Exception as exc:

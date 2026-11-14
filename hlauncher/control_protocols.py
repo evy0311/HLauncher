@@ -16,8 +16,20 @@ class HfpProjection:
     def __init__(self):
         self.previous=None
         self.call_started = None
+        self.call_setup = 0
+        self.call_held = 0
+        self.voice_requested_at = None
 
-    def update(self, fields):
+    def radio_button(self, event, now=None):
+        """Ignore a radio activation immediately following our own BVRA request."""
+        if event != ('voice_assistant', 'activate') or self.voice_requested_at is None:
+            return event
+        now = time.monotonic() if now is None else now
+        if 0 <= now - self.voice_requested_at < .5:
+            return None
+        return event
+
+    def update(self, fields, now=None):
         current=(fields.get('call_audio') is True,fields.get('siri') is True)
         if not current[0]:
             self.call_started = None
@@ -30,6 +42,20 @@ class HfpProjection:
                 # BVRA request while the dongle is starting Siri.
                 if i==0 or current[i]:messages.append(prefix+str(int(current[i])))
             elif current[i]!=self.previous[i]:messages.append(prefix+str(int(current[i])))
+        call = normalize_call(fields.get('call'))
+        setup = int(call.get('phase') == 'incoming')
+        held = 2 if call.get('phase') == 'held' else 0
+        if setup != self.call_setup:
+            messages.append('+CIEV:3,' + str(setup))
+            if setup:
+                messages.append('RING')
+        if held != self.call_held:
+            messages.append('+CIEV:4,' + str(held))
+        self.call_setup, self.call_held = setup, held
+        if not current[1]:
+            self.voice_requested_at = None
+        elif fields.get('plugin') == 'android-auto' and '+BVRA:1' in messages:
+            self.voice_requested_at = time.monotonic() if now is None else now
         self.previous=current
         return messages
 
@@ -79,9 +105,11 @@ def hfp_request(raw, voice=None):
     if cmd.startswith('D'): return ('ERROR',), ('dial','trigger')
     if cmd=='+BLDN': return ('ERROR',), ('redial','trigger')
     if cmd == '+CLCC':
-        if not voice or voice.get('call_audio') is not True:
-            return ('OK',), None
+        voice = voice or {}
         details = normalize_call(voice.get('call'))
+        phase = details.get('phase')
+        if voice.get('call_audio') is not True and phase != 'incoming':
+            return ('OK',), None
         number = details.get('number', '')
         label = details.get('name')
         if not label and not number:
@@ -90,7 +118,8 @@ def hfp_request(raw, voice=None):
         # the adapter reports only call audio, with no incoming call event.
         direction = int(details.get('incoming', False))
         number_type = 145 if number.startswith('+') else 129
-        listing = f'+CLCC: 1,{direction},0,0,0,"{number}",{number_type}'
+        call_status = {'incoming': 4, 'held': 1}.get(phase, 0)
+        listing = f'+CLCC: 1,{direction},{call_status},0,0,"{number}",{number_type}'
         if label:
             listing += f',"{label}"'
         return (listing, 'OK'), None

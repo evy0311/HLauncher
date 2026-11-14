@@ -5,7 +5,7 @@ import unittest
 from unittest.mock import Mock, patch
 from PIL import Image
 from hlauncher.display import Framebuffer, adjust_image, encode
-from sdk.hlauncher_sdk.picture import DEFAULTS
+from sdk.hlauncher_sdk.picture import DEFAULTS, NEUTRAL
 
 
 class DisplayPicture(unittest.TestCase):
@@ -23,7 +23,7 @@ class DisplayPicture(unittest.TestCase):
         self.assertIs(fb.kms.present.call_args.args[0],raw)
         transform.assert_not_called()
 
-    def test_ui_preview_uses_native_operations_only_on_redraw_and_reset_is_exact(self):
+    def test_ui_preview_applies_defaults_and_neutral_preserves_pixels(self):
         fb=self.framebuffer()
         im=Image.new('RGB',(3,1));im.putdata([(0,0,0),(255,255,255),(255,0,0)])
         original=encode(im);values=dict(DEFAULTS,saturation=0)
@@ -32,6 +32,9 @@ class DisplayPicture(unittest.TestCase):
         self.assertNotEqual(expected,original)
         self.assertEqual(fb.kms.present.call_args.args[0],expected)
         fb.set_picture(DEFAULTS);fb.image(im)
+        self.assertEqual(fb.kms.present.call_args.args[0],encode(adjust_image(im,DEFAULTS)))
+        self.assertNotEqual(fb.kms.present.call_args.args[0],original)
+        fb.set_picture(NEUTRAL);fb.image(im)
         self.assertEqual(fb.kms.present.call_args.args[0],original)
 
     def test_exact_frames_and_calibration_bypass(self):

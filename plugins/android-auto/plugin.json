@@ -11,6 +11,9 @@
     "touch",
     "session",
     "audio.status",
+    "audio.capture",
+    "projection.voice",
+    "media.publish",
     "audio.playback",
     "input.buttons"
   ],

@@ -8,6 +8,8 @@ from hlauncher.config import serial_number
 from .auth import AccessoryProof
 from .vehicle_can import VehicleSubscription, HONDALINK, GENERAL, SCOPES
 
+DISPLAY_URL = b'com.honda.hondalink.connect://'
+
 
 def packet(payload):
     n = len(payload)
@@ -76,6 +78,8 @@ class StartProbe:
         self.vehicle_auth_sessions = {}
         self.vehicle_session = None
         self.vehicle_identities = {}
+        self.display_sequence = 0
+        self.display_test = None
 
     def feed(self, data):
         self.buffer.extend(data)
@@ -145,6 +149,9 @@ class StartProbe:
                                                action='down' if mask & bit else 'up'))
                     # ContextButtonStatus has no iAP reply. Do not fabricate an ACK.
             elif len(p) == 4 and p[:2] == b"\0\x38":
+                if self.display_test:
+                    self.display_result(events, 'Session reset')
+                    self.display_test = None
                 self.vehicle_subscription.clear()
                 self.vehicle_auth_sessions.clear()
                 self.vehicle_identities.clear()
@@ -466,6 +473,13 @@ class StartProbe:
                 txn = int.from_bytes(p[2:4], "big")
                 status, command = p[4:6]
                 events.extend(self.vehicle_subscription.transport_ack(txn, status, command))
+                test = self.display_test
+                if command == 0x43 and test and test['transaction'] == txn:
+                    self.display_result(events, 'Transport rejected' if status else 'Transport acknowledged',
+                                        code=status)
+                    test['acknowledged'] = not status
+                    if status:
+                        self.display_test = None
                 if txn in self.session_pending and command == 0x3F:
                     sid, index, name = self.session_pending.pop(txn)
                     if status == 0:
@@ -522,6 +536,27 @@ class StartProbe:
                         if inner.get("state") == "honda_frame":
                             mid = inner["message"]
                             body = bytes.fromhex(inner["payload"])
+                            test = self.display_test
+                            if (mid == 0xC1 and len(body) == 3 and body[0] == 1 and test
+                                    and sid == test['session'] and body[1] == test['sequence']):
+                                status = 'Application receipt' if body[2] == 1 else 'Application rejected'
+                                self.display_result(events, status, code=body[2])
+                                if body[2] != 1 or test['action'] == 'exit':
+                                    # Detaching the screen here leaves the radio on a black
+                                    # HondaLink input and can prevent a same-session relaunch.
+                                    self.display_test = None
+                                else:
+                                    test['receipt'] = True
+                            if test and sid == test['session'] and test.get('receipt'):
+                                if mid == 0x53 and body == b"\x01" + DISPLAY_URL:
+                                    test['own_url'] = True
+                                elif mid == 0x11 and body == b"\x05" and test.get('own_url'):
+                                    # Connect rebinds its external screen on the
+                                    # radio's second-screen refresh notification.
+                                    self.send_display_status(sid, 0x20, events, replies)
+                                    self.send_display_status(sid, 0x60, events, replies)
+                                    self.display_result(events, 'External screen refresh reported')
+                                    self.display_test = None
                             if self.sessions[sid][1] in (GENERAL, HONDALINK):
                                 self.vehicle_subscription.observe(sid, mid, body, events, self.send_honda, replies)
                             # Stock Communication.exe: b9970 ->12bf44 ->1651c4.
@@ -740,6 +775,9 @@ class StartProbe:
                                 # Honda app disconnect is distinct from iAP EndDataSession40.
                                 # Retain underlying transports, invalidate application handshake on retry.
                                 self.app_restart_needed = True
+                                if self.display_test:
+                                    self.display_result(events, 'Session closed')
+                                    self.display_test = None
                                 self.vehicle_subscription.clear()
                                 self.vehicle_auth_sessions.clear()
                                 self.vehicle_identities.clear()
@@ -915,7 +953,60 @@ class StartProbe:
         return events,replies
 
     def tick(self):
-        return self.vehicle_subscription.tick()
+        events = self.vehicle_subscription.tick()
+        test = self.display_test
+        if test and (test['session'] not in self.vehicle_auth_sessions
+                     or time.monotonic() - test['sent'] >= 5):
+            if test['session'] not in self.vehicle_auth_sessions:
+                status = 'Session closed'
+            elif test.get('receipt'):
+                status = 'No matching screen refresh received'
+            elif test.get('acknowledged'):
+                status = 'No application receipt'
+            else:
+                status = 'No transport acknowledgment'
+            self.display_result(events, status)
+            self.display_test = None
+        return events
+
+    def display_result(self, events, status, **fields):
+        test = self.display_test
+        events.append(dict(state='honda_display_test_result', status=status,
+                           action=test['action'], session=test['session'], **fields))
+
+    def send_display_status(self, sid, flags, events, replies):
+        # Connect's sendStatusNotification packs appForeground (0x20)
+        # and externalScreen (0x40) into General 63/10.
+        self.send_honda(sid, 0x63, bytes((0x10, flags)) + bytes(5), events, replies,
+                        'honda_display_status_sent')
+
+    def request_display_test(self, action):
+        events, replies = [], []
+        sessions = [sid for sid in self.vehicle_auth_sessions
+                    if self.sessions.get(sid, (None, None))[1] in (GENERAL, HONDALINK)
+                    and self.honda_stage.get(sid) == 'session_start_notified']
+        if not self.authenticated or not self.active_app or not sessions:
+            return [dict(state='honda_display_test_result', action=action,
+                         status='Waiting for authenticated HondaLink app session')], replies
+        if self.display_test:
+            return [dict(state='honda_display_test_result', action=action,
+                         status='Previous command still awaiting a reply')], replies
+        sid = self.vehicle_session if self.vehicle_session in sessions else sessions[0]
+        sequence = 0
+        if action == 'exit':
+            # The app-level display-off command uses the same handler as Show.
+            payload = bytes.fromhex('00010000')
+        elif action == 'show':
+            self.display_sequence = (self.display_sequence + 1) % 256
+            sequence = self.display_sequence
+            payload = bytes((0, 0, sequence, 4)) + len(DISPLAY_URL).to_bytes(2, 'big') + DISPLAY_URL
+        else:
+            raise ValueError('Unknown display test')
+        self.send_honda(sid, 0xC2, payload, events, replies, 'honda_display_test_sent')
+        self.display_test = dict(action=action, session=sid, sequence=sequence,
+                                 transaction=events[-1]['transaction'], sent=time.monotonic())
+        self.display_result(events, 'Sent')
+        return events, replies
 
     def start_local_app(self, sid, events, replies):
         if sid in self.app_started_sessions:

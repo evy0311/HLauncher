@@ -100,7 +100,7 @@ class Capture:
                         and str(v.get("Transport", "")) == "HFP-AG"
                         and str(v.get("Mode", "")) == "source"
                     ):
-                        return dict(v)
+                        return path, dict(v)
 
             v = find()
             if not v:
@@ -121,9 +121,24 @@ class Capture:
                 return
             if not v:
                 raise RuntimeError("Hands-free microphone unavailable. Tap Retry.")
-            rate = int(v["Sampling"])
-            channels = int(v["Channels"])
-            codec = str(v["Codec"])
+            pcm_path, pcm = v
+            if int(pcm.get("Sampling", 0)) <= 0:
+                # AG-initiated capture can arrive before codec selection.
+                # BlueALSA refuses PCM Open until a codec has been negotiated.
+                pcm_interface = dbus.Interface(
+                    bus.get_object("org.bluealsa", pcm_path, introspect=False),
+                    "org.bluealsa.PCM1",
+                )
+                pcm_interface.SelectCodec("CVSD", dbus.Dictionary({}, signature="sv"), timeout=3)
+                if self.cancel.is_set():
+                    return
+                selected = find()
+                if not selected:
+                    raise RuntimeError("Hands-free microphone disconnected during codec selection")
+                _, pcm = selected
+            rate = int(pcm.get("Sampling", 0))
+            channels = int(pcm["Channels"])
+            codec = str(pcm.get("Codec", ""))
             if rate <= 0 or channels != 1:
                 raise RuntimeError("Unsupported microphone PCM configuration")
             self.update(
@@ -157,7 +172,7 @@ class Capture:
                 bufsize=0,
             )
             self.proc = p
-            self.event(state='audio_capture_open',rate=rate,channels=channels,codec=str(v.get('Codec','')),
+            self.event(state='audio_capture_open',rate=rate,channels=channels,codec=codec,
                        output_rate=self.output_rate or rate)
             if self.output_rate and rate != self.output_rate:
                 from .resample import Resampler

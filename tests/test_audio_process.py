@@ -4,15 +4,45 @@ from pathlib import Path
 import select
 import socket
 import struct
+import sys
 import tempfile
 import time
 from types import SimpleNamespace
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
+from hlauncher.audio import Capture, PATH
 from hlauncher.audio_process import AudioProcess
 from hlauncher.playback import Playback, BLOCK
 
 class AudioIsolation(unittest.TestCase):
+    def test_radio_mic_negotiates_codec_before_opening_sco(self):
+        pcm_path = '/org/bluealsa/radio/pcm'
+        unconfigured = dict(Device=PATH, Transport='HFP-AG', Mode='source', Sampling=0)
+        configured = dict(unconfigured, Sampling=8000, Channels=1, Codec='CVSD')
+        manager = Mock()
+        manager.GetManagedObjects.side_effect = [
+            {pcm_path: {'org.bluealsa.PCM1': pcm}} for pcm in (unconfigured, configured)
+        ]
+        codec = Mock()
+        bus = Mock()
+        dbus = SimpleNamespace(SystemBus=Mock(return_value=bus), Dictionary=lambda value, **_: value,
+                               Interface=Mock(side_effect=[manager, codec]))
+        capture = Capture()
+
+        def open_capture(args, **kwargs):
+            codec.SelectCodec.assert_called_once_with('CVSD', {}, timeout=3)
+            self.assertIn('8000', args)
+            self.assertTrue(any('PROFILE=sco' in arg for arg in args))
+            raise RuntimeError('capture reached')
+
+        with (
+            patch.dict(sys.modules, {'dbus': dbus, 'dbus.mainloop': SimpleNamespace(NULL_MAIN_LOOP=None)}),
+            patch('hlauncher.audio.subprocess.Popen', side_effect=open_capture) as launch,
+        ):
+            capture.run()
+        launch.assert_called_once()
+        self.assertEqual(capture.snapshot()['status'], 'capture reached')
+
     def test_partial_packets_are_preserved_instead_of_zero_padded(self):
         import numpy as np
         p=Playback(lambda **v:None,start_worker=False)

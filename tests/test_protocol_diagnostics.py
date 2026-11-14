@@ -15,6 +15,7 @@ from unittest.mock import patch
 from hlauncher.protocol_diagnostics import ProtocolDiagnostics
 from hlauncher.projection_voice import ProjectionVoice,read_voice
 from hlauncher.control_protocols import HfpProjection
+from hlauncher.control_protocols import hfp_request
 from hlauncher.protocol.session import StartProbe,packet
 from hlauncher.config import Preferences
 from hlauncher.launcher import Launcher
@@ -24,6 +25,25 @@ ROOT=Path(__file__).resolve().parents[1]
 
 
 class ProtocolCapture(unittest.TestCase):
+    def test_projection_restricts_when_vehicle_speed_expires_or_radio_disconnects(self):
+        with tempfile.TemporaryDirectory() as folder:
+            monitor = ProtocolDiagnostics(folder, min_free=0)
+            try:
+                monitor.observe(dict(state='connected', uuid='test-cafe'))
+                monitor.vehicle.status['parking_brake_engaged'] = True
+                with patch.object(monitor.vehicle.signals, 'snapshot',
+                                  side_effect=lambda now, ids: [
+                                      dict(received=True, value=0, age_seconds=now - 10)]):
+                    self.assertEqual(monitor.projection_vehicle_state(11),
+                                     dict(speed_kph=0, parking_brake=True))
+                    self.assertEqual(monitor.projection_vehicle_state(13),
+                                     dict(speed_kph=None, parking_brake=True))
+                monitor.observe(dict(state='closed', uuid='test-cafe'))
+                self.assertEqual(monitor.projection_vehicle_state(13),
+                                 dict(speed_kph=None, parking_brake=None))
+            finally:
+                monitor.close()
+
     def test_packets_markers_and_meters_persist_without_microphone_audio(self):
         with tempfile.TemporaryDirectory() as folder:
             monitor=ProtocolDiagnostics(folder,min_free=0)
@@ -81,6 +101,24 @@ class ProtocolCapture(unittest.TestCase):
 
 
 class ProjectionVoiceTests(unittest.TestCase):
+    def test_android_auto_ringing_is_visible_before_call_audio(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / 'voice.json'
+            voice = ProjectionVoice(path=path)
+            model = HfpProjection()
+            model.update({})
+            call = dict(phase='incoming', incoming=True, name='Test Caller')
+            voice.update('android-auto', dict(call_audio=False, siri=False, recording=False, call=call))
+            voice.tick('android-auto')
+            ringing = read_voice(path)
+            self.assertEqual(model.update(ringing), ['+CIEV:3,1', 'RING'])
+            reply, _ = hfp_request(b'AT+CLCC', ringing)
+            self.assertTrue(reply[0].startswith('+CLCC: 1,1,4'))
+            call['phase'] = 'active'
+            voice.update('android-auto', dict(call_audio=True, siri=False, recording=True, call=call))
+            voice.tick('android-auto')
+            self.assertEqual(model.update(read_voice(path)), ['+CIEV:2,1', '+CIEV:3,0'])
+
     def test_real_audio_leases_expire_and_dead_launchers_are_ignored(self):
         with tempfile.TemporaryDirectory() as folder:
             path=Path(folder)/'voice.json';events=[]
@@ -104,6 +142,16 @@ class ProjectionVoiceTests(unittest.TestCase):
         self.assertEqual(model.update(dict(call_audio=True,siri=False)),['+BVRA:0'])
         self.assertEqual(model.update({}),['+CIEV:2,0'])
         self.assertEqual(model.update({}),[])
+
+    def test_android_auto_mic_requests_radio_voice_and_filters_immediate_echo(self):
+        model = HfpProjection()
+        activate = ('voice_assistant', 'activate')
+        self.assertEqual(model.radio_button(activate, now=9), activate)
+        self.assertIn('+BVRA:1', model.update(dict(plugin='android-auto', siri=True), now=10))
+        self.assertIsNone(model.radio_button(activate, now=10.1))
+        self.assertEqual(model.radio_button(activate, now=11), activate)
+        self.assertIn('+BVRA:0', model.update(dict(plugin='android-auto', siri=False), now=12))
+        self.assertEqual(model.radio_button(activate, now=12), activate)
 
     def test_caller_metadata_follows_lease_without_appearing_in_events(self):
         with tempfile.TemporaryDirectory() as folder:

@@ -26,6 +26,8 @@ def normalize_call(details):
         number = re.sub(r'[ ().-]', '', number)
         if re.fullmatch(r'\+?[0-9]{1,32}', number):
             call['number'] = number
+    if details.get('phase') in ('incoming', 'active', 'held'):
+        call['phase'] = details['phase']
     if type(details.get('incoming')) is bool:
         call['incoming'] = details['incoming']
     return call
@@ -41,7 +43,8 @@ def read_voice(path=None):
         os.kill(doc['launcher_pid'],0)
         if any(type(doc.get(k)) is not bool for k in VOICE_FLAGS):return {}
         if 'call' in doc:
-            doc['call'] = normalize_call(doc['call']) if doc['call_audio'] else {}
+            call = normalize_call(doc['call'])
+            doc['call'] = call if doc['call_audio'] or call.get('phase') == 'incoming' else {}
         return doc
     except (OSError,ValueError,KeyError,TypeError):return {}
 
@@ -56,7 +59,9 @@ class ProjectionVoice:
                 or any(type(fields.get(key)) is not bool for key in VOICE_FLAGS)):
             raise ValueError('Invalid projection voice state')
         flags = {key: fields[key] for key in VOICE_FLAGS}
-        call = normalize_call(fields.get('call')) if flags['call_audio'] else {}
+        call = normalize_call(fields.get('call'))
+        if not flags['call_audio'] and call.get('phase') != 'incoming':
+            call = {}
         old=self.sources.get(plugin,{}).get('fields')
         self.sources[plugin]=dict(fields=flags,call=call,at=time.monotonic())
         if old!=flags:self.event(state='projection_voice_state',plugin=plugin,**flags)

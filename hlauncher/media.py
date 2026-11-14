@@ -1,4 +1,4 @@
-"""Plugin-neutral local track state and source-only radio display labels."""
+"""Plugin-neutral track state and radio metadata for the selected audio source."""
 
 import argparse
 import json
@@ -12,13 +12,24 @@ RUNTIME = Path(os.environ.get('HLAUNCHER_RUNTIME_DIR', '/run/hlauncher'))
 TEXT = ('title', 'artist', 'album', 'app')
 TIMES = ('position_ms', 'duration_ms')
 STATES = ('unknown', 'playing', 'paused', 'stopped')
-RADIO_SOURCES = {'carplay': 'Carplay', 'android-auto': 'Android Auto'}
+RADIO_SOURCES = {'carplay': 'CarPlay', 'android-auto': 'Android Auto'}
 
 
-def radio_metadata(plugin):
-    """Only the selected source label is exported, never song or phone details."""
-    title = RADIO_SOURCES.get(plugin) if isinstance(plugin, str) else None
-    return dict(title=title, artist='HLauncher') if title else {}
+def radio_metadata(plugin, track=None):
+    label = RADIO_SOURCES.get(plugin) if isinstance(plugin, str) else None
+    if not label:
+        return {}
+    fallback = dict(title=label, artist='HLauncher')
+    if not isinstance(track, dict) or track.get('available') is not True or track.get('plugin') != plugin:
+        return fallback
+    try:
+        fields = validate({key: track[key] for key in ('title', 'artist', 'album', *TIMES, 'playback_state')
+                           if key in track})
+    except ValueError:
+        return fallback
+    if not fields.get('title') or fields.get('playback_state') == 'stopped':
+        return fallback
+    return {key: value for key, value in fields.items() if value is not None}
 
 
 def validate(fields):
@@ -65,6 +76,12 @@ class NowPlaying:
             current = {key: None for key in TEXT + TIMES}
             current['playback_state'] = 'unknown'
             current['field_updated_unix'] = {}
+            if new_track and not clear:
+                for key in ('app', 'playback_state'):
+                    if key in old:
+                        current[key] = old[key]
+                    if key in old.get('field_updated_unix', {}):
+                        current['field_updated_unix'][key] = old['field_updated_unix'][key]
         else:
             current = dict(old)
             current['field_updated_unix'] = dict(old.get('field_updated_unix', {}))
@@ -98,8 +115,8 @@ class NowPlaying:
         return dict(schema=1, revision=self.revision, launcher_pid=os.getpid(),
                     selected_plugin=self.selected, now_playing=self.sources.get(self.selected),
                     sources=self.sources, source_plugin=self.source_plugin,
-                    radio_metadata=radio_metadata(self.source_plugin),
-                    radio_forwarding=True, radio_forwarding_mode='source_only')
+                    radio_metadata=radio_metadata(self.source_plugin, self.sources.get(self.source_plugin)),
+                    radio_forwarding=True, radio_forwarding_mode='selected_track')
 
     def flush(self, force=False):
         if not self.dirty or (not force and time.monotonic()-self.last_write < .2):

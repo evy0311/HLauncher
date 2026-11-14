@@ -152,6 +152,7 @@ class CarplayHDMI:
         self.adapter_branding_error=""
         self.pending_branding=None
         self.night_mode = False
+        self.gps = None
 
     def notify(self, state, **extra):
         self.event(state=state, **extra)
@@ -277,12 +278,22 @@ class CarplayHDMI:
             self.night_mode = night_mode
             self.cond.notify()
 
+    def set_gps(self, fix):
+        with self.cond:
+            self.gps = fix
+            self.cond.notify()
+
     def send_inputs(self, proc, sent_night_mode=False):
+        sent_gps = None
         while not self.stop_event.is_set() and proc.poll() is None:
             with self.cond:
                 if self.night_mode != sent_night_mode:
                     sent_night_mode = self.night_mode
                     item = dict(type='projection.appearance', night_mode=sent_night_mode)
+                elif self.gps != sent_gps:
+                    from hlauncher_sdk.vehicle_gps import fresh_gps_payload
+                    sent_gps = self.gps
+                    item = dict(type='projection.gps', fix=fresh_gps_payload(sent_gps))
                 elif self.queue or self.mic_queue:
                     item = dict(self.queue.popleft() if self.queue else self.mic_queue.popleft())
                 else:
@@ -300,7 +311,8 @@ class CarplayHDMI:
             except (OSError, ValueError):
                 self.finish_button(item.get('sequence'), 'CarPlay USB bridge write failed')
                 return
-            if item.get('type')!='microphone':self.notify("carplay_input_forwarded", **item)
+            if item.get('type') not in ('microphone', 'projection.gps'):
+                self.notify("carplay_input_forwarded", **item)
 
     def microphone(self, pcm):
         if self.mic_format!=(16000,1) or len(pcm)%2:return False

@@ -29,10 +29,12 @@ def channel():
 
 
 class Worker:
-    def __init__(self, manifest, width, height, event, playback=None, log_dir=None, *, carplay_fps=None):
+    def __init__(self, manifest, width, height, event, playback=None, log_dir=None, *, carplay_fps=None, car_gps=False):
         self.network = None
         self.lease=ProjectionLease() if manifest.bundled and manifest.id in PROJECTIONS else None
         self.manifest = manifest
+        self.car_gps = car_gps
+        self.last_gps = None
         self.event = event
         self.width, self.height = width, height
         self.frame_bytes = width * height * 2
@@ -78,6 +80,7 @@ class Worker:
             PYTHONPATH=os.pathsep.join(filter(None, (str(ROOT / "sdk"), str(ROOT), env.get("PYTHONPATH")))),
         )
         env.pop("HLAUNCHER_RADIO_ADDRESS", None)
+        env['HLAUNCHER_CAR_GPS'] = '1' if car_gps else '0'
         if carplay_fps is not None:
             env['CIVIC_CARPLAY_FPS'] = str(carplay_fps)
         if not manifest.bundled and manifest.data_path is not None:
@@ -321,6 +324,8 @@ class PluginHost:
             options = {}
             if manifest.bundled and plugin_id == 'carplay':
                 options['carplay_fps'] = Preferences(self.state_dir/'settings.json').carplay_fps
+            if getattr(manifest, 'bundled', False) and plugin_id in PROJECTIONS:
+                options['car_gps'] = Preferences(self.state_dir/'settings.json').car_gps(plugin_id)
             worker=Worker(manifest,self.width,height,self.event,
                           playback=getattr(self.audio,'playback',None), **options)
             self.workers[plugin_id]=worker
@@ -431,7 +436,11 @@ class PluginHost:
             if "session" in worker.manifest.capabilities:
                 worker.send(type="radio.session", **self.session)
         if values.get("connected") is False:
-            self.deactivate()
+            if self.active in PROJECTIONS:
+                if worker := self.workers.get(self.active):
+                    worker.send(type="touch.cancel")
+            else:
+                self.deactivate()
 
     def touch(self, touch):
         if worker := self.workers.get(self.active):
@@ -452,6 +461,22 @@ class PluginHost:
         if self.active=='obd' and worker is not None and worker.manifest.bundled:
             return worker.send(type='vehicle.gauges',snapshot=snapshot)
         return False
+
+    def sync_projection_gps(self, fix):
+        for ident in PROJECTIONS:
+            worker = self.workers.get(ident)
+            if not getattr(worker, 'car_gps', False) or worker.last_gps == fix:
+                continue
+            if worker.send(type='projection.gps', fix=fix):
+                worker.last_gps = fix
+
+    def sync_projection_vehicle(self, state):
+        worker = self.workers.get('android-auto')
+        if worker is None or not getattr(worker.manifest, 'bundled', False):
+            return
+        if getattr(worker, 'projection_vehicle', None) != state:
+            if worker.send(type='projection.vehicle', **state):
+                worker.projection_vehicle = state
 
     def sync_projection_appearance(self, plugin_id=None):
         for ident in (plugin_id,) if plugin_id else PROJECTIONS:

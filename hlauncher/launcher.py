@@ -16,6 +16,7 @@ from .config import Preferences
 from .colors import PictureSettings, DEFAULTS, LIMITS
 from .display import Framebuffer
 from .plugin_host import PluginHost
+from .projection import PROJECTIONS
 from .touch import pixels, for_viewport
 
 
@@ -83,6 +84,8 @@ class Launcher:
         self.protocols = protocol_diagnostics or ProtocolDiagnostics(self.prefs.path.parent/'protocol-captures')
         self.host.projection_night_mode = self.projection_night_mode
         self.protocol_page = 0
+        self.integration_tab = 'Display'
+        self.request_hondalink_display_test = None
         self.vehicle_data_tab = 0
         self.vehicle_signal_id = 44
         self.protocol_marker_index = 0
@@ -112,6 +115,7 @@ class Launcher:
         self.banner = ""
         self.last_status = None
         self.has_frame = False
+        self.started = False
         self.pending_default = False
         self.last_frame_at = 0
         self.draw()
@@ -390,8 +394,13 @@ class Launcher:
             "com.honda.hondalink.launcher",
         ):
             return False
-        self.show_start_page()
+        self.start()
         return True
+
+    def start(self):
+        if not self.started:
+            self.show_start_page()
+            self.started = True
 
     def safety_notice(self, message=''):
         self.mode = 'safety_notice'
@@ -546,6 +555,19 @@ class Launcher:
     def projection_night_mode(self, plugin_id):
         return self.prefs.auto_night(plugin_id) and self.protocols.illumination_night_mode()
 
+    def toggle_car_gps(self, plugin_id):
+        try:
+            self.prefs.set_car_gps(plugin_id, not self.prefs.car_gps(plugin_id))
+        except OSError as exc:
+            self.banner = 'Could not save GPS setting'
+            self.event(state='settings_save_failed', error=str(exc))
+        else:
+            if plugin_id in self.host.workers:
+                self.host.stop(plugin_id)
+                self.host.request_projection(plugin_id)
+            self.banner = 'GPS setting saved'
+        self.draw()
+
     def apply_adapter_branding(self):
         manifest=self.manifests.get('carplay')
         if not manifest or not self.prefs.enabled(manifest):
@@ -614,6 +636,24 @@ class Launcher:
 
     def protocol_tab(self, page):
         self.protocol_page = page
+        self.draw()
+
+    def set_integration_tab(self, tab):
+        self.integration_tab = tab
+        self.draw()
+
+    def mark_integration_test(self, tab):
+        self.protocols.marker('HondaLink integration: ' + tab)
+        self.draw()
+
+    def test_hondalink_display(self, action):
+        if not self.prefs.data['debug_mode'] or self.mode != 'protocol_tests' or self.protocol_page != 4:
+            return
+        if self.request_hondalink_display_test:
+            self.request_hondalink_display_test(action)
+        else:
+            self.protocols.observe(dict(state='honda_display_test_result', action=action,
+                                       status='Radio transport unavailable'))
         self.draw()
 
     def vehicle_tab(self, tab):
@@ -1148,7 +1188,9 @@ class Launcher:
             self.inputs.steering_mode=None
             self.inputs.control_epochs['hondalink-iap'] += 1
         if values.get("connected") is False:
-            self.home()
+            self.press = self.pressed_box = None
+            if self.host.active not in PROJECTIONS and not self.pending_default:
+                self.home()
 
     def tick(self):
         if self.plugin_manager:
@@ -1192,6 +1234,9 @@ class Launcher:
         if now - getattr(self, 'projection_appearance_checked', 0) >= .1:
             self.projection_appearance_checked = now
             self.host.sync_projection_appearance()
+            self.host.sync_projection_gps(self.protocols.projection_gps())
+            if 'android-auto' in self.host.workers:
+                self.host.sync_projection_vehicle(self.protocols.projection_vehicle_state())
         if self.host.active=='obd' and time.monotonic()-getattr(self,'vehicle_gauge_sent',0)>=1/30:
             self.vehicle_gauge_sent=time.monotonic()
             self.host.vehicle_gauges(self.protocols.gauge_snapshot())

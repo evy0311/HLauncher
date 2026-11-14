@@ -43,9 +43,9 @@ def system(ui):
 def protocols(ui):
     p=page_for(ui,'HondaLink diagnostics',ui.system_diagnostics)
     s=ui.protocols.snapshot()
-    for i,title in enumerate(('Connection','Vehicle data','Calls / mic','Traffic')):
-        x=24+i*170
-        p.button((x,112,x+162,156),title,lambda i=i:ui.protocol_tab(i),selected=i==ui.protocol_page,size=17)
+    for i,title in enumerate(('Connection','Vehicle data','Calls / mic','Traffic','Integration')):
+        x=24+i*136
+        p.button((x,112,x+128,156),title,lambda i=i:ui.protocol_tab(i),selected=i==ui.protocol_page,size=16)
     if ui.protocol_page==0:
         rows=[('HondaLink','Connected' if s['connected'] else 'Waiting for radio'),
               ('Authentication','Verified' if ui.host.session.get('authenticated') else 'Waiting'),
@@ -70,6 +70,11 @@ def protocols(ui):
         for i,row in enumerate(rows):p.info(176+i*34,*row)
         p.text((24,320),'Voice output',16)
         p.button((252,312,696,356),'Hands-free' if ui.voice_audio.output=='sco' else 'HDMI',ui.toggle_voice_output,size=18)
+    elif ui.protocol_page==4:
+        from .integration import draw
+        draw(ui,p,s)
+        present(ui,p)
+        return
     else:
         for i,line in enumerate(s['recent'][:7]):p.text((24,176+i*24),p.fit(line,672,15),15)
     p.text((24,366),p.fit(f"{s['status']} · {s['saved']} saved · {s['dropped']} dropped",672,14),14)

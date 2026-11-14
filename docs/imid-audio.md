@@ -4,7 +4,6 @@ The owner reports that the i-MID audio page shows **Apps** with a blank content
 area while HondaLink/HLauncher is open. This trace checks the decrypted Connect
 IPA, the stock Civic radio firmware, and HLauncher's current metadata handling.
 No phone-to-i-MID song-text command has been established for this source mode.
-No runtime code, audio routing, firmware or Pi settings were changed.
 
 ## Findings at a glance
 
@@ -14,7 +13,7 @@ No runtime code, audio routing, firmware or Pi settings were changed.
 | Connect native audio layer | `HLAudio` and `HLJsAudio` | Observes notifications and forwards mute state into the WebView. The inspected handlers do not emit HondaLink track metadata. |
 | Firmware AppMode display data | `RN_ExtDispAppMode`, Communication.exe publishers `0x51148/0x511C4` | Two status publications, each containing three one-byte scalar values; no string arguments in those publishers. |
 | Bluetooth AVRCP | Existing HLauncher `AvrcpTarget` | A distinct metadata channel with title/artist/album response support. This does not establish that the radio uses it for the Apps i-MID page. |
-| HLauncher radio metadata policy | `media.radio_metadata()` and controls-worker `metadata()` | Only a source label is sent today. Actual track title, artist and album remain local. |
+| HLauncher radio metadata policy | `media.radio_metadata()` and controls-worker `metadata()` | AVRCP serves the selected projection's title, artist and album when reported, or the source label (such as **CarPlay**) when a title is unavailable. |
 
 The external-display model also names BTA, iPod, USB, CD and Pandora branches.
 Their presence does not establish that Bluetooth/iPod text is merged into the
@@ -95,24 +94,24 @@ text support for AppMode.
 “SubDisplay” is insufficient to identify a now-playing text path; it must not
 be used as evidence that song metadata reaches this audio page.
 
-## HLauncher currently exports source labels only
+## Source selection and HLauncher metadata
 
-The host's local now-playing broker accepts title, artist, album, app,
-playback state and time fields from plugins. However:
+The CarPlay bridge handles dongle MediaData USB type `0x2A`, subtype `1`.
+The adapter requests dashboard reports via BoxSettings. Song, artist and album
+fields feed the host's now-playing broker when the adapter supplies them.
+The AVRCP target answers GetElementAttributes and sends subscribed track-change
+notifications. Its fallback is available even if the dongle reports no song.
 
-- `hlauncher/media.py:radio_metadata(plugin)` returns only title `Carplay` or
-  `Android Auto`, plus artist `HLauncher`; it does not consume song fields.
-- `hlauncher/controls_worker.py:metadata()` validates the local broker snapshot
-  and calls that source-label helper, so actual track data is excluded before
-  the AVRCP target sees it.
-- `hlauncher/control_protocols.py:AvrcpTarget` supports GetElementAttributes and
-  track-change notifications. Its ability to answer those requests does not
-  prove that the radio requests or displays them in Apps mode.
-
-This source-only behavior is deliberate in the existing implementation and its
-tests. It is a separate limitation from the radio's choice of metadata source.
-Simply changing this helper might improve Bluetooth Audio text while doing
-nothing for Apps. It should not be presented as a confirmed i-MID fix.
+A follow-up scan found direct code references to the AppMode RN publication IDs
+`0x44000000` and `0x44020000` only at the two Communication.exe publishers above.
+AV.exe separately implements `AudioSourceAppMode` (vtable `0xC5BB4`) and Bluetooth
+audio status objects (`AVMsg_RNBTAudioStatusInfoSTDLong` and `STDShort`, vtables
+`0xC7BD4` and `0xC7B44`). The Bluetooth module also exposes AVRCP attribute APIs
+such as `BTAVRCP_CtGetItemAttributes`. These are separate source paths. The
+traced Apps publishers have no track string to forward, and no bridge from
+Bluetooth metadata into that Apps publication was identified. The final i-MID
+rendering path and whether a specific firmware revision queries AVRCP while
+Apps is selected still need hardware verification.
 
 ## Useful next experiment
 
@@ -128,9 +127,8 @@ area **without switching out of Apps or changing the audio route**:
 3. Observe whether the radio fetches the fields and whether either display
    changes while Apps remains active. No query, a returned response, and text
    actually appearing are three different outcomes.
-4. If the radio receives the fields but Apps still shows blank, trace or modify
-   the radio-side source-to-display mapping separately. If it works, replace
-   source-only forwarding with an opt-in, active-audio-owner metadata contract.
+4. Compare the result with Bluetooth Audio selected. A radio-side source mapping
+   would need to supply Apps text if the stock i-MID ignores the AVRCP reply.
 
 This test has not been performed in this trace. Real song availability from
 CarPlay/Android Auto also depends on what their projection bridges report; a

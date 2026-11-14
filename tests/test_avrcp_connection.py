@@ -195,7 +195,7 @@ class AvrcpConnection(unittest.TestCase):
                 query=request(0x20,bytes(8)+b'\x02'+struct.pack('!II',1,2))
                 right.sendall(query)
                 reply=right.recv(512)
-                expected=b'\x02'+struct.pack('!IHH',1,106,7)+b'Carplay'+struct.pack('!IHH',2,106,9)+b'HLauncher'
+                expected=b'\x02'+struct.pack('!IHH',1,106,7)+b'CarPlay'+struct.pack('!IHH',2,106,9)+b'HLauncher'
                 self.assertEqual(reply[13:],expected)
                 right.sendall(request(0x31,b'\x02'+bytes(4),ctype=3,transaction=8))
                 self.assertEqual(right.recv(512)[3],15)

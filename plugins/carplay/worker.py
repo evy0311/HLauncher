@@ -51,6 +51,8 @@ def main():
                     backend.apply_branding(message.get("request_id"))
                 elif kind == "projection.appearance":
                     backend.set_night_mode(message.get('night_mode') is True)
+                elif kind == "projection.gps":
+                    backend.set_gps(message.get('fix'))
                 elif kind == "radio.button":
                     result = backend.button(message)
                     client.send(type='radio.button.result', button=message.get('button'),

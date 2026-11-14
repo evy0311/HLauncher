@@ -47,6 +47,9 @@ class RadioUI(unittest.TestCase):
         ui.system_settings();header=ui.fb.last.crop((80,0,720,52))
         methods=[ui.ssh_settings,ui.adapter_branding_page,ui.appearance_settings,ui.startup_settings,ui.recovery_page,lambda:ui.storage_confirm(True),ui.plugin_settings,lambda:ui.plugin_detail('carplay'),lambda:ui.plugin_detail('obd'),ui.tile_colors,
                  ui.color_settings,ui.system_diagnostics,ui.protocol_tests,
+                 lambda:ui.protocol_tab(4),
+                 lambda:ui.set_integration_tab('Buttons'),
+                 lambda:ui.set_integration_tab('Display'),
                  lambda:ui.debug_tools('menu'),lambda:ui.debug_tools('audio'),
                  lambda:ui.debug_tools('colors'),lambda:ui.debug_tools('inputs'),lambda:ui.debug_tools('volume'),ui.shutdown_page]
         with patch('hlauncher.ui.chrome.datetime') as clock:
@@ -129,7 +132,7 @@ class RadioUI(unittest.TestCase):
             records=decode_records(can_data([(0x17c,bytes.fromhex('000003e800000000'))]))))
         ui.draw()
         self.assertEqual(ui.protocols.snapshot()['vehicle_signals'][43]['value'],1000)
-        for tab in (0,1,2):
+        for tab in (0,1,2,3):
             ui.vehicle_tab(tab)
             for (x,y,r,b),_ in ui.actions:self.assertTrue(0<=x<r<=720 and 0<=y<b<=480)
             for index,(a,_) in enumerate(ui.actions):
@@ -249,6 +252,18 @@ class RadioUI(unittest.TestCase):
         saved = Preferences(ui.prefs.path)
         self.assertFalse(saved.auto_night('android-auto'))
         self.assertFalse(saved.auto_night('carplay'))
+
+    def test_car_gps_switch_is_independent_on_both_plugin_pages(self):
+        ui = self.ui
+        ui.plugin_detail('carplay')
+        self.assertFalse(ui.prefs.car_gps('carplay'))
+        self.assertFalse(ui.prefs.car_gps('android-auto'))
+        next(action for box, action in ui.actions if box[:2] == (24, 384))()
+        self.assertTrue(Preferences(ui.prefs.path).car_gps('carplay'))
+        ui.plugin_detail('android-auto')
+        next(action for box, action in ui.actions if box[:2] == (24, 256))()
+        self.assertTrue(Preferences(ui.prefs.path).car_gps('android-auto'))
+        self.assertTrue(Preferences(ui.prefs.path).car_gps('carplay'))
 
     def test_wifi_power_page_queues_power_and_boot_settings(self):
         ui = self.ui

@@ -67,15 +67,19 @@ def record_signals(mid, raw, api_ids=None):
 GAUGE_API_IDS = (44,40,167,1002,12,1003)
 
 
-def gauge_subscriptions():
+def signal_subscriptions(api_ids):
     masks={}
-    for ident in GAUGE_API_IDS:
+    for ident in api_ids:
         for source in BY_ID[ident]['sources']:
             mid=source['message_id']
             masks[mid]=masks.get(mid,0)|(((1<<source['bits'])-1)<<source['trailing_offset'])
     return tuple(dict(message_id=mid,can_type={'B-CAN':0,'F-CAN':1,'OTHER':2}[MESSAGES[mid]['canType']],
                       length=MESSAGES[mid]['size'],mask=mask.to_bytes(MESSAGES[mid]['size'],'big').hex())
                  for mid,mask in sorted(masks.items()))
+
+
+def gauge_subscriptions():
+    return signal_subscriptions(GAUGE_API_IDS)
 
 
 class SignalCache:

@@ -5,6 +5,8 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QJsonArray>
+#include <cmath>
+#include <f1x/openauto/autoapp/Service/MediaSink/TelephonyAudioService.hpp>
 #include <boost/asio.hpp>
 #include <boost/log/utility/setup/console.hpp>
 #include <boost/log/expressions.hpp>
@@ -62,8 +64,15 @@ public:
          if(queued+packet.size()>16*1024*1024){std::cerr<<"OpenAuto output stalled; restarting session\n";std::_Exit(3);}
          queued+=packet.size();pending.emplace_back(std::move(packet));}ready.notify_one();
     }
-    void state(const char* text){auto b=QJsonDocument(QJsonObject{{"status",text}}).toJson(QJsonDocument::Compact);send(2,reinterpret_cast<const uint8_t*>(b.constData()),b.size());}
+    void json(const QJsonObject& value) {
+        auto raw = QJsonDocument(value).toJson(QJsonDocument::Compact);
+        send(2, reinterpret_cast<const uint8_t*>(raw.constData()), raw.size());
+    }
+    void state(const char* text) { json({{"status", text}}); }
 };
+
+#include "projection_status.hpp"
+
 class Video:public oa::projection::IVideoOutput {
     Output& out;
 public:
@@ -81,7 +90,10 @@ class Audio:public oa::projection::IAudioOutput {
     Output& out;uint32_t rate,channels,stream;
 public:
     Audio(Output& o,uint32_t r,uint32_t c,uint32_t s):out(o),rate(r),channels(c),stream(s){}
-    bool open()override{return true;}void start()override{}void stop()override{}void suspend()override{}
+    bool open() override { return true; }
+    void start() override { if (stream == 3) out.json({{"state", "telephony_audio"}, {"active", true}}); }
+    void stop() override { if (stream == 3) out.json({{"state", "telephony_audio"}, {"active", false}}); }
+    void suspend() override { stop(); }
     uint32_t getSampleSize()const override{return 16;}
     uint32_t getChannelCount()const override{return channels;}
     uint32_t getSampleRate()const override{return rate;}
@@ -90,11 +102,18 @@ public:
       std::vector<uint8_t> bytes{uint8_t(rate>>24),uint8_t(rate>>16),uint8_t(rate>>8),uint8_t(rate),uint8_t(channels),uint8_t(stream)};
       bytes.insert(bytes.end(),b.cdata,b.cdata+b.size);out.send(3,bytes.data(),bytes.size());}
 };
-class Input:public oa::projection::IInputDevice {
-    std::mutex lock;oa::projection::IInputDeviceEventHandler* handler=nullptr;
+class Input:public oa::projection::IInputDevice, public std::enable_shared_from_this<Input> {
+    std::mutex lock;
+    oa::projection::IInputDeviceEventHandler* handler = nullptr;
+    boost::asio::steady_timer voiceRelease;
 public:
+    explicit Input(boost::asio::io_service& io) : voiceRelease(io) {}
     void start(oa::projection::IInputDeviceEventHandler& h)override{std::lock_guard<std::mutex> guard(lock);handler=&h;}
-    void stop()override{std::lock_guard<std::mutex> guard(lock);handler=nullptr;}
+    void stop() override {
+        std::lock_guard<std::mutex> guard(lock);
+        handler = nullptr;
+        voiceRelease.cancel();
+    }
     ButtonCodes getSupportedButtonCodes()const override{
       return {media::KEYCODE_CALL,media::KEYCODE_ENDCALL,media::KEYCODE_SEARCH,
               media::KEYCODE_MEDIA_NEXT,media::KEYCODE_MEDIA_PREVIOUS,media::KEYCODE_MEDIA_PLAY_PAUSE,
@@ -105,6 +124,21 @@ public:
       if(std::find(codes.begin(),codes.end(),code)==codes.end())return false;
       std::lock_guard<std::mutex> guard(lock);
       if(!handler)return false;
+      if (code == media::KEYCODE_SEARCH) {
+          // Forward a short push-to-talk press with distinct down/up times.
+          handler->onButtonEvent({oa::projection::ButtonEventType::PRESS, oa::projection::WheelDirection::NONE, code});
+          voiceRelease.expires_after(std::chrono::milliseconds(100));
+          voiceRelease.async_wait([weak = weak_from_this(), code](const boost::system::error_code& error) {
+              if (error) return;
+              if (auto input = weak.lock()) {
+                  std::lock_guard<std::mutex> guard(input->lock);
+                  if (input->handler)
+                      input->handler->onButtonEvent({oa::projection::ButtonEventType::RELEASE,
+                                                    oa::projection::WheelDirection::NONE, code});
+              }
+          });
+          return true;
+      }
       handler->onButtonEvent({oa::projection::ButtonEventType::PRESS,oa::projection::WheelDirection::NONE,code});
       handler->onButtonEvent({oa::projection::ButtonEventType::RELEASE,oa::projection::WheelDirection::NONE,code});
       return true;
@@ -165,22 +199,52 @@ public:
 class Factory:public oa::service::IServiceFactory {
     boost::asio::io_service& io;Output& out;std::shared_ptr<Input> input;
     bool nightMode;
+    bool carGps;
+    bool extendedServices;
+    std::optional<GpsFix> gps;
+    VehicleState vehicle;
     std::weak_ptr<SessionSensors> sensors;
+    std::weak_ptr<RadioMicrophone> microphone;
 public:
-    Factory(boost::asio::io_service& i,Output& o,std::shared_ptr<Input> in,bool initialNightMode=false):
-      io(i),out(o),input(in),nightMode(initialNightMode){}
+    Factory(boost::asio::io_service& i,Output& o,std::shared_ptr<Input> in,bool initialNightMode=false,
+            bool carGps=false,bool extendedServices=false):
+      io(i),out(o),input(in),nightMode(initialNightMode),carGps(carGps),extendedServices(extendedServices){}
+    void setGps(std::optional<GpsFix> fix) {
+        gps = carGps ? fix : std::nullopt;
+        if (auto session = sensors.lock()) session->setGps(gps);
+    }
     void setNightMode(bool enabled){
       nightMode=enabled;
       if(auto session=sensors.lock())session->setNightMode(enabled);
     }
+    void setVehicle(VehicleState state) {
+        vehicle = state;
+        if (auto session = sensors.lock()) session->setVehicle(state);
+    }
+
+    void micPCM(aasdk::common::Data data) {
+        if (auto input = microphone.lock()) input->push(std::move(data));
+    }
+
     oa::service::ServiceList create(aasdk::messenger::IMessenger::Pointer messenger)override{
       oa::service::ServiceList services;
       services.emplace_back(std::make_shared<ProjectionVideo>(io,messenger,out));
       services.emplace_back(std::make_shared<oa::service::mediasink::MediaAudioService>(io,messenger,std::make_shared<Audio>(out,48000,2,0)));
       services.emplace_back(std::make_shared<oa::service::mediasink::GuidanceAudioService>(io,messenger,std::make_shared<Audio>(out,16000,1,1)));
-      services.emplace_back(std::make_shared<oa::service::mediasink::SystemAudioService>(io,messenger,std::make_shared<Audio>(out,16000,1,1)));
-      services.emplace_back(std::make_shared<oa::service::mediasource::MicrophoneMediaSourceService>(io,messenger,std::make_shared<UnavailableMicrophone>()));
-      auto sessionSensors=std::make_shared<SessionSensors>(io,messenger,nightMode);
+      services.emplace_back(std::make_shared<oa::service::mediasink::SystemAudioService>(io,messenger,std::make_shared<Audio>(out,16000,1,2)));
+      if (extendedServices)
+          services.emplace_back(std::make_shared<oa::service::mediasink::TelephonyAudioService>(
+              io, messenger, std::make_shared<Audio>(out, 16000, 1, 3)));
+      auto mic = std::make_shared<RadioMicrophone>([output=&out](bool requested) {
+          output->json({{"state", "microphone_request"}, {"requested", requested}});
+      });
+      microphone = mic;
+      services.emplace_back(std::make_shared<oa::service::mediasource::MicrophoneMediaSourceService>(io, messenger, mic));
+      if (extendedServices) {
+          services.emplace_back(std::make_shared<ProjectionPhoneStatus>(io, messenger, out));
+          services.emplace_back(std::make_shared<ProjectionMediaStatus>(io, messenger, out));
+      }
+      auto sessionSensors=std::make_shared<SessionSensors>(io,messenger,nightMode,vehicle,carGps,gps,extendedServices);
       sensors=sessionSensors;
       services.emplace_back(std::move(sessionSensors));
       services.emplace_back(std::make_shared<oa::service::inputsource::InputSourceService>(io,messenger,input));
@@ -196,20 +260,35 @@ int main(int argc,char** argv){
         void onButtonEvent(const oa::projection::ButtonEvent& e)override{events.push_back(e);}
         void onTouchEvent(const oa::projection::TouchEvent&)override{}
       } capture;
-      Input input;bool ok=!input.button(QJsonObject{{"code",87}});input.start(capture);
-      const auto codes=input.getSupportedButtonCodes();
-      for(auto code:codes)ok=input.button(QJsonObject{{"code",int(code)}})&&ok;
+      boost::asio::io_service io;
+      auto input = std::make_shared<Input>(io);
+      bool ok = !input->button(QJsonObject{{"code",87}});
+      input->start(capture);
+      const auto codes = input->getSupportedButtonCodes();
+      for (auto code : codes) {
+        ok = input->button(QJsonObject{{"code", int(code)}}) && ok;
+        if (code == media::KEYCODE_SEARCH) {
+            ok = capture.events.back().type == oa::projection::ButtonEventType::PRESS && ok;
+            io.run();
+            io.restart();
+        }
+      }
       ok=ok&&capture.events.size()==codes.size()*2;
       for(size_t i=0;i<codes.size()&&ok;++i)
         ok=capture.events[i*2].code==codes[i]&&capture.events[i*2+1].code==codes[i]
           &&capture.events[i*2].type==oa::projection::ButtonEventType::PRESS
           &&capture.events[i*2+1].type==oa::projection::ButtonEventType::RELEASE;
-      input.stop();ok=ok&&!input.button(QJsonObject{{"code",87}});
+      input->stop();ok=ok&&!input->button(QJsonObject{{"code",87}});
       std::cout<<"{\"valid\":"<<(ok?"true":"false")<<",\"supported_buttons\":"<<codes.size()<<"}\n";return ok?0:1;
     }
 
     if(argc>1&&std::string(argv[1])=="--check-driving-policy"){
-      std::cout<<"{\"driving_status\":"<<SessionSensors::drivingPolicy()<<"}\n";return 0;
+      std::cout<<"{\"driving_status\":"<<SessionSensors::drivingPolicy({})<<",\"parked_status\":"
+               <<SessionSensors::drivingPolicy({0, true})<<",\"moving_status\":"
+               <<SessionSensors::drivingPolicy({5000, true})<<"}\n";
+      return SessionSensors::drivingPolicy({0,true}) != 0 ||
+             SessionSensors::drivingPolicy({5000,true}) == 0 ||
+             SessionSensors::drivingPolicy({}) == 0;
     }
 
     if(argc>1&&std::string(argv[1])=="--check-services"){
@@ -217,8 +296,9 @@ int main(int argc,char** argv){
       std::cout.rdbuf(std::cerr.rdbuf());
       // Construct real factory descriptors without starting channels, USB or BT.
       // Output's normal lifetime ends with the process, as in the runtime path.
-      auto* out=new Output();boost::asio::io_service io;auto input=std::make_shared<Input>();
-      Factory factory(io,*out,input);auto services=factory.create(nullptr);
+      auto* out=new Output();boost::asio::io_service io;auto input=std::make_shared<Input>(io);
+      const bool gps = argc > 2 && std::string(argv[2]) == "--gps";
+      Factory factory(io,*out,input,false,gps);auto services=factory.create(nullptr);
       aap_protobuf::service::control::message::ServiceDiscoveryResponse response;
       for(auto& service:services)service->fillFeatures(response);
       std::set<uint32_t> ids;bool mic=false,sensors=false,inputOk=false;int audio=0,video=0;
@@ -230,7 +310,9 @@ int main(int argc,char** argv){
         }
         if(channel.has_sensor_source_service()){
           std::set<int> types;for(const auto& sensor:channel.sensor_source_service().sensors())types.insert(sensor.sensor_type());
-          sensors=types==std::set<int>{10,13};
+          auto expected = std::set<int>{10,13};
+          if (gps) expected.insert(1);
+          sensors = types == expected;
         }
         if(channel.has_input_source_service()){
           const auto& source=channel.input_source_service();
@@ -241,7 +323,7 @@ int main(int argc,char** argv){
         }
       }
       bool ok=response.IsInitialized()&&response.channels_size()==7&&ids.size()==7&&mic&&sensors&&inputOk&&audio==3&&video==1;
-      auto result=QJsonDocument(QJsonObject{{"valid",ok},{"channels",response.channels_size()},{"microphone_endpoint",mic},{"sensor_endpoints",sensors},{"vehicle_gps_advertised",false},{"physical_capture_available",false}}).toJson(QJsonDocument::Compact);
+      auto result=QJsonDocument(QJsonObject{{"valid",ok},{"channels",response.channels_size()},{"microphone_endpoint",mic},{"sensor_endpoints",sensors},{"vehicle_gps_advertised",gps},{"host_microphone_bridge",true}}).toJson(QJsonDocument::Compact);
       result.append('\n');::write(1,result.constData(),result.size());std::_Exit(ok?0:1);
     }
 
@@ -257,7 +339,7 @@ int main(int argc,char** argv){
       std::cout<<"{\"legacy_identity_present\":"<<(ok?"true":"false")<<"}\n";return ok?0:1;
     }
 
-    if(argc>1&&std::string(argv[1])=="--check"){std::cout<<"{\"engine\":\"OpenAuto\",\"usb\":true,\"video\":\"800x480@60\",\"touch_points\":2,\"microphone\":false}\n";return 0;}
+    if(argc>1&&std::string(argv[1])=="--check"){std::cout<<"{\"engine\":\"OpenAuto\",\"usb\":true,\"video\":\"800x480@60\",\"touch_points\":2,\"microphone\":true}\n";return 0;}
     // Upstream console messages must never corrupt the framed stdout channel.
     std::cout.rdbuf(std::cerr.rdbuf());
     signal(SIGPIPE,SIG_IGN);qputenv("QT_QPA_PLATFORM","offscreen");QGuiApplication qt(argc,argv);
@@ -268,8 +350,10 @@ int main(int argc,char** argv){
     aasdk::usb::AccessoryModeQueryFactory query(usb,io);
     aasdk::usb::AccessoryModeQueryChainFactory chains(usb,io,query);
     auto config=std::make_shared<oa::configuration::Configuration>();
-    auto input=std::make_shared<Input>();
-    Factory services(io,out,input,qgetenv("HLAUNCHER_NIGHT_MODE")=="1");
+    auto input=std::make_shared<Input>(io);
+    // The Samsung completed discovery with the original seven channels.
+    Factory services(io,out,input,qgetenv("HLAUNCHER_NIGHT_MODE")=="1",
+                     qgetenv("HLAUNCHER_CAR_GPS")=="1",qgetenv("HLAUNCHER_AA_EXTENDED_SERVICES")=="1");
     oa::service::AndroidAutoEntityFactory entities(io,config,services);
     auto hub=std::make_shared<aasdk::usb::USBHub>(usb,io,chains);
     auto enumerator=std::make_shared<aasdk::usb::ConnectedAccessoriesEnumerator>(usb,io,chains);
@@ -284,6 +368,37 @@ int main(int argc,char** argv){
         auto raw=QJsonDocument(ack).toJson(QJsonDocument::Compact);out.send(2,reinterpret_cast<const uint8_t*>(raw.constData()),raw.size());
       });
       if(obj["type"].toString()=="touch")io.post([input,obj]{input->touch(obj);});
+      if (obj["type"].toString() == "microphone.pcm") {
+        const auto encoded = obj["pcm"].toString().toLatin1();
+        if (encoded.size() <= 5500) {
+          auto pcm = QByteArray::fromBase64(encoded);
+          if (!pcm.isEmpty() && pcm.size() <= 4096 && pcm.size() % 2 == 0) {
+            aasdk::common::Data bytes(pcm.begin(), pcm.end());
+            io.post([&services, bytes=std::move(bytes)]() mutable { services.micPCM(std::move(bytes)); });
+          }
+        }
+      }
+      if (obj["type"].toString() == "projection.gps") {
+        std::optional<GpsFix> fix;
+        const auto data = obj["fix"].toObject();
+        const auto lat = data["latitude"], lon = data["longitude"];
+        const int remaining = data["remaining_ms"].toInt();
+        if (lat.isDouble() && lon.isDouble() && std::abs(lat.toDouble()) <= 90 &&
+            std::abs(lon.toDouble()) <= 180 && remaining > 0 && remaining <= 3000) {
+            fix = GpsFix{static_cast<int>(std::lround(lat.toDouble() * 1e7)),
+                         static_cast<int>(std::lround(lon.toDouble() * 1e7)),
+                         std::chrono::steady_clock::now() + std::chrono::milliseconds(remaining)};
+        }
+        io.post([&services, fix] { services.setGps(fix); });
+      }
+      if (obj["type"].toString() == "projection.vehicle") {
+        VehicleState state;
+        const auto speed = obj["speed_kph"];
+        if (speed.isDouble() && speed.toDouble() >= 0 && speed.toDouble() <= 400)
+          state.speedMmPerSecond = static_cast<int>(std::lround(speed.toDouble() * (1000.0 / 3.6)));
+        if (obj["parking_brake"].isBool()) state.parkingBrake = obj["parking_brake"].toBool();
+        io.post([&services, state] { services.setVehicle(state); });
+      }
       if(obj["type"].toString()=="projection.appearance" && obj["night_mode"].isBool()){
         const bool enabled=obj["night_mode"].toBool();
         io.post([&services,enabled]{services.setNightMode(enabled);});

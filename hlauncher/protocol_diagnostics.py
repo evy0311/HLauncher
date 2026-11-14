@@ -32,6 +32,8 @@ class ProtocolDiagnostics:
         self.recent=deque(maxlen=12);self.voice={};self.mic={};self.connected=False
         self.last_marker='';self.sequence=0
         self.vehicle=VehicleTraffic()
+        self.app_keys = deque(maxlen=6)
+        self.display_trials = deque(maxlen=4)
 
     def observe(self, item):
         state=item.get('state','')
@@ -57,6 +59,8 @@ class ProtocolDiagnostics:
             if state=='iap_remote_reset':
                 self.advertised.clear();self.sessions.clear();self.vehicle.clear()
             if state=='honda_app_disconnect_received':self.vehicle.clear()
+            if state=='honda_display_test_result':
+                self.display_trials.appendleft(dict(event))
             if state in ('projection_voice_state','projection_voice_route'):self.voice={k:v for k,v in item.items() if k!='state'}
             if state.startswith(('audio_meter_','audio_capture_')):self.mic.update({k:v for k,v in item.items() if k!='state'})
             if state=='projection_mic_stats':self.mic.update({k:v for k,v in item.items() if k!='state'})
@@ -75,6 +79,9 @@ class ProtocolDiagnostics:
             if self.recording:
                 try:self.pending.put_nowait(('event',event))
                 except queue.Full:self.dropped+=1
+            if state=='radio_button' and item.get('source') in ('hondalink-iap','hfp','avrcp'):
+                button = str(item.get('button', '')).replace('_', ' ').capitalize()
+                self.app_keys.appendleft(dict(event, label=button))
             if state=='honda_frame':
                 for detail in self.vehicle.observe(event):self.observe(detail)
 
@@ -115,8 +122,10 @@ class ProtocolDiagnostics:
                 counts=dict(self.counts),advertised=sorted(self.advertised),sessions=dict(self.sessions),
                 messages=[dict(v) for v in self.messages.values()],recent=list(self.recent),
                 voice=dict(self.voice),mic=dict(self.mic),last_marker=self.last_marker,
+                app_keys=list(self.app_keys),display_trials=list(self.display_trials),
                 vehicle_status=dict(self.vehicle.status),vehicle_changes=self.vehicle.changes,
                 vehicle_readings=self.vehicle.snapshot_readings(),
+                vehicle_gps=self.vehicle.snapshot_gps(),
                 vehicle_signals=self.vehicle.snapshot_signals(),
                 vehicle_can_records=self.vehicle.snapshot_can_records(),
                 vehicle_subscription=dict(self.vehicle.subscription))
@@ -131,6 +140,25 @@ class ProtocolDiagnostics:
                 interval_seconds=row['interval_seconds'],samples=row['samples'])
                 for row in rows if row['received']}
             return dict(connected=self.connected,monotonic=now,readings=readings)
+
+    def projection_gps(self):
+        with self.lock:
+            gps = self.vehicle.snapshot_gps()
+            if not self.connected or not gps or gps['stale'] or gps['fix'] is None:
+                return None
+            latitude, longitude = gps['fix']
+            return dict(latitude=latitude, longitude=longitude, at=gps['at'])
+
+    def projection_vehicle_state(self, now=None):
+        now = time.monotonic() if now is None else now
+        with self.lock:
+            if not self.connected:
+                return dict(speed_kph=None, parking_brake=None)
+            speed, = self.vehicle.signals.snapshot(now, {152})
+            return dict(
+                speed_kph=speed['value'] if speed['received'] and speed['age_seconds'] <= 2 else None,
+                parking_brake=self.vehicle.status.get('parking_brake_engaged'),
+            )
 
     def illumination_night_mode(self, now=None):
         now = time.monotonic() if now is None else now

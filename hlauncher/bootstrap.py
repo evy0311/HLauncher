@@ -22,7 +22,9 @@ class BootstrapLauncher:
         self.splash = None
         self.display_lock=threading.RLock()
         self.preparing=None
+        self.boot_pending = False
         self.closing=False
+        self.display_test = None
 
     def set_peer(self, peer): self.peer_address = peer
 
@@ -46,6 +48,7 @@ class BootstrapLauncher:
         options=dict(independent_audio=True,protocol_diagnostics=self.protocols)
         if self.splash is not None:options['framebuffer']=self.splash
         self.ui = factory(self.event,**options)
+        self.ui.request_hondalink_display_test = self.queue_display_test
         self.splash=None
         self.inputs = self.ui.inputs
         if self.session: self.ui.session_changed(**self.session)
@@ -59,14 +62,31 @@ class BootstrapLauncher:
         if self.ui.mode=='protocol_tests' and self.ui.protocol_page==1:return 'diagnostics'
         from .projection import PROJECTIONS
         host = self.ui.host
-        illumination = any(ident in PROJECTIONS and worker.manifest.bundled and
+        illumination = any(ident in PROJECTIONS and getattr(worker.manifest, 'bundled', False) and
                            self.ui.prefs.auto_night(ident)
                            for ident, worker in getattr(host, 'workers', {}).copy().items())
-        if self.ui.mode == 'plugin' and host.active == 'obd':
-            return 'gauges_illumination' if illumination else 'gauges'
-        return 'illumination' if illumination else 'off'
+        gauges = self.ui.mode == 'plugin' and host.active == 'obd'
+        android = getattr(host, 'workers', {}).get('android-auto')
+        driving = android is not None and getattr(android.manifest, 'bundled', False)
+        gps = any(getattr(worker, 'car_gps', False) for worker in getattr(host, 'workers', {}).copy().values())
+        return '_'.join(name for enabled, name in (
+            (gauges, 'gauges'), (illumination, 'illumination'), (driving, 'driving'), (gps, 'gps'),
+        ) if enabled) or 'off'
+
+    def queue_display_test(self, action):
+        if self.display_test is not None and action != 'exit':
+            self.event(state='honda_display_test_result', action=action, status='Already queued')
+            return
+        delay = 8 if action == 'show' else 0
+        self.display_test = (action, time.monotonic() + delay)
+        self.event(state='honda_display_test_result', action=action,
+                   status=f'Sending in {delay}s' if delay else 'Queued')
 
     def session_changed(self, **values):
+        if values.get('connected') is False and self.display_test:
+            action, _ = self.display_test
+            self.display_test = None
+            self.event(state='honda_display_test_result', action=action, status='Radio disconnected')
         self.session.update(values)
         if self.ui: self.ui.session_changed(**values)
 
@@ -74,6 +94,17 @@ class BootstrapLauncher:
         if self.ui: self.ui.update(touch)
 
     def tick(self):
+        if self.boot_pending and not self.preparing.is_alive():
+            self.boot_pending = False
+            if self.ui is None and not self.closing:
+                # Fresh installs still wait for the radio pairing and launch flow.
+                if peer := self.state.peer:
+                    try:
+                        if self.peer_address is None:
+                            self.set_peer(peer)
+                        self.open().start()
+                    except Exception as exc:
+                        self.event(state='launcher_boot_start_error', error=str(exc))
         if self.ui:self.ui.tick()
         elif self.splash and time.monotonic()-getattr(self,'splash_checked',0)>1:
             self.splash_checked=time.monotonic()
@@ -107,6 +138,7 @@ class BootstrapLauncher:
                 except Exception as exc:self.event(state="display_prepare_error",error=str(exc))
         self.preparing=threading.Thread(target=work,name="display-prepare",daemon=True)
         self.preparing.start()
+        self.boot_pending = True
 
     def prewarm_home(self):
         # Render offscreen to cache the actual theme, labels, icons and reflections.

@@ -239,6 +239,22 @@ def main():
                         changes,replies=parser.sync_vehicle_scope()
                         for item in changes:event(uuid=profile.uuid,**item)
                         profile.queue_replies(device,replies)
+                if launcher.display_test and now >= launcher.display_test[1]:
+                    action, _ = launcher.display_test
+                    launcher.display_test = None
+                    for _, profile in profiles:
+                        if not profile.uuid.endswith('cafe'):
+                            continue
+                        for device, parser in list(profile.parsers.items()):
+                            if device not in profile.sockets:
+                                continue
+                            changes, replies = parser.request_display_test(action)
+                            for item in changes:
+                                event(uuid=profile.uuid, **item)
+                            profile.queue_replies(device, replies)
+                            break
+                        else:
+                            event(state='honda_display_test_result', action=action, status='Radio disconnected')
         except Exception as exc:
             event(state="touch_overlay_error", error=str(exc))
         return True

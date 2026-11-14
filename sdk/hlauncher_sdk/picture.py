@@ -5,7 +5,10 @@ import os
 from pathlib import Path
 import tempfile
 
-DEFAULTS = dict(saturation=100, contrast=100, brightness=0)
+NEUTRAL = dict(saturation=100, contrast=100, brightness=0)
+# Driver-seat tests on the Civic found that lower brightness separated pale
+# Maps colors and the location marker, with a modest saturation boost.
+DEFAULTS = dict(saturation=110, contrast=100, brightness=-10)
 LIMITS = dict(saturation=(0, 150), contrast=(50, 150), brightness=(-25, 25))
 
 

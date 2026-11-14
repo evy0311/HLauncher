@@ -1,29 +1,71 @@
 """Read-only HondaLink subscriptions: no CAN writes, resets or actuator commands."""
 import base64
 import hashlib
+from itertools import combinations
 import time
-from .vehicle_signals import SUBSCRIPTIONS, SESSION_PREFIX, MESSAGES, record_signals, ALIASES, GAUGE_API_IDS, gauge_subscriptions
+from .vehicle_signals import SUBSCRIPTIONS, SESSION_PREFIX, MESSAGES, record_signals, ALIASES, GAUGE_API_IDS, signal_subscriptions
 from .aes import decrypt as decrypt_body
 
 HONDALINK = 'jp.co.honda.rd.dispaudio.app.hondalink'
 GENERAL = 'jp.co.honda.rd.dispaudio.app.generals'
 
+# Stock Civic Diag.exe reads eight bytes for IMID_AUDIOSW (0x12F95757).
+# Keep the raw probe out of the recovered SDK inventory and the gauge feed.
+IMID_AUDIO_SWITCH_ID = 0x12F95757
+IMID_AUDIO_SWITCH = dict(message_id=IMID_AUDIO_SWITCH_ID, can_type=0,
+                         length=8, mask='ffffffffffffffff')
 ILLUMINATION_ID = 0x12F85450
 ILLUMINATION_API_IDS = (5, 6)
 ILLUMINATION_SUBSCRIPTION = next(row for row in SUBSCRIPTIONS if row['message_id'] == ILLUMINATION_ID)
-SCOPES = ('off', 'gauges', 'illumination', 'gauges_illumination', 'diagnostics')
+DRIVING_API_IDS = (152,)
+GPS_IDS = (0x99F00003, 0x99F00004)
+GPS_SUBSCRIPTIONS = tuple(row for row in SUBSCRIPTIONS if row['message_id'] in GPS_IDS)
+
+SCOPE_GROUPS = (('gauges', GAUGE_API_IDS), ('illumination', ILLUMINATION_API_IDS),
+                ('driving', DRIVING_API_IDS), ('gps', ()))
+SCOPED_API_IDS = {'off': ()}
+for count in range(1, len(SCOPE_GROUPS) + 1):
+    for groups in combinations(SCOPE_GROUPS, count):
+        SCOPED_API_IDS['_'.join(name for name, _ in groups)] = tuple(
+            api for _, ids in groups for api in ids)
+SCOPES = (*SCOPED_API_IDS, 'diagnostics')
+
+
+def diagnostic_subscriptions():
+    return (*SUBSCRIPTIONS, IMID_AUDIO_SWITCH)
 
 
 def subscription_rows(scope):
-    if scope == 'illumination':
-        return (ILLUMINATION_SUBSCRIPTION,)
-    if scope == 'gauges_illumination':
-        return (*gauge_subscriptions(), ILLUMINATION_SUBSCRIPTION)
-    if scope == 'gauges':
-        return gauge_subscriptions()
-    if scope == 'off':
-        return ()
-    return SUBSCRIPTIONS
+    if scope == 'diagnostics':
+        return diagnostic_subscriptions()
+    # Preserve the known full illumination mask, even in mixed subscriptions.
+    api_ids = tuple(api for api in SCOPED_API_IDS[scope] if api not in ILLUMINATION_API_IDS)
+    rows = signal_subscriptions(api_ids)
+    if 'illumination' in scope:
+        rows = (*rows, ILLUMINATION_SUBSCRIPTION)
+    return (*rows, *GPS_SUBSCRIPTIONS) if 'gps' in scope else rows
+
+
+def decode_gps_pair(records):
+    """Return decimal degrees from a complete HondaLink normal-data batch."""
+    pair = {}
+    for record in records:
+        ident = record['can_id']
+        if ident not in GPS_IDS:
+            continue
+        if ident in pair or record['dlc'] != 4 or len(record['data']) != 8:
+            return None
+        pair[ident] = int.from_bytes(bytes.fromhex(record['data']), 'big', signed=True)
+    if len(pair) != 2:
+        return None
+    lat, lon = (pair[ident] for ident in GPS_IDS)
+    if abs(lat) > 324000000 or abs(lon) > 648000000:
+        return None
+    return lat / 3600000, lon / 3600000
+
+
+def subscription_ticks(scope):
+    return 1 if 'gauges' in scope or 'driving' in scope else 10
 
 
 def subscription_payloads(scope='diagnostics'):
@@ -36,7 +78,7 @@ def subscription_payloads(scope='diagnostics'):
         normal.extend((row['can_type'], row['length']))
         normal.extend(bytes.fromhex(row['mask']))
     if scope != 'diagnostics':
-        ticks = 1 if scope.startswith('gauges') else 10
+        ticks = subscription_ticks(scope)
         return (bytes((2, 0, 0, ticks, 1, 1)) + normal,)
     header = bytes.fromhex('0200000a0104')
     # Three diagnostic receive presets, never clear-DTC or maintenance resets.
@@ -86,8 +128,9 @@ def decode_records(payload, key=None, api_ids=None):
         layout = MESSAGES.get(mid)
         values = record_signals(mid, raw, api_ids) if data_type == 0 else {}
         fields = {alias: values[str(api_id)] for api_id, alias in ALIASES.items() if str(api_id) in values}
-        records.append(dict(can_id=mid, can_class=({'B-CAN':0, 'F-CAN':1, 'OTHER':2}[layout['canType']] if layout else None),
-            data_type=data_type, name=layout['name'] if layout else 'Unknown message',
+        imid_switch = data_type == 0 and mid == IMID_AUDIO_SWITCH_ID
+        records.append(dict(can_id=mid, can_class=({'B-CAN':0, 'F-CAN':1, 'OTHER':2}[layout['canType']] if layout else 0 if imid_switch else None),
+            data_type=data_type, name=layout['name'] if layout else 'IMID_AUDIOSW' if imid_switch else 'Unknown message',
             dlc=length, data=raw.hex(), fields=fields, signals=values,
             api_ids=list(api_ids) if api_ids is not None else None))
     if offset != len(body):raise ValueError('Trailing CAN record data')
@@ -114,14 +157,8 @@ class VehicleSubscription:
         if sid not in self.keys or (previous and (previous['scope']==scope or at-previous['at']<.35)):return
         if scope=='off' and previous is None:return
         rows = subscription_rows(scope)
-        api_ids = {
-            'diagnostics': None,
-            'gauges': GAUGE_API_IDS,
-            'illumination': ILLUMINATION_API_IDS,
-            'gauges_illumination': (*GAUGE_API_IDS, *ILLUMINATION_API_IDS),
-            'off': (),
-        }[scope]
-        cycle = 1 if scope.startswith('gauges') else 10
+        api_ids = SCOPED_API_IDS.get(scope)
+        cycle = subscription_ticks(scope)
         payloads=subscription_payloads(scope)
         request = self.requests[sid] = dict(at=at,scope=scope,api_ids=api_ids,
             previous_api_ids=previous['api_ids'] if previous else None,can_ids={r['message_id'] for r in rows},

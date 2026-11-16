@@ -195,9 +195,17 @@ class Launcher:
 
     def themes_page(self):
         self.themes.reload()
-        self.mode = 'themes'
+        self.theme_preview_screen = 'home'
+        self.preview_theme(self.layout_theme.id)
+
+    def move_theme_preview(self, direction):
+        choices = tuple(self.themes.choices)
+        index = choices.index(self.theme_preview.id)
+        self.preview_theme(choices[(index + direction) % len(choices)])
+
+    def set_theme_preview_screen(self, screen):
+        self.theme_preview_screen = screen
         self.press = self.pressed_box = None
-        self.banner = ''
         self.draw()
 
     def preview_theme(self, identifier):
@@ -1199,7 +1207,6 @@ class Launcher:
             return
         if action == "down":
             self.press = point
-            self.press_started = time.monotonic()
             self.pressed_box = next((box for box, _ in self.actions if point and
                 box[0] <= point[0] <= box[2] and box[1] <= point[1] <= box[3]), None)
             if self.pressed_box is not None:
@@ -1214,10 +1221,6 @@ class Launcher:
             callback = next((fn for bounds, fn in self.actions if bounds == box), None)
             self.press = self.pressed_box = None
             if callback is not None:
-                if (action == 'up' and self.mode == 'settings' and callback == self.appearance_settings
-                        and time.monotonic() - self.press_started >= 0.65):
-                    self.themes_page()
-                    return
                 callback()
                 return
             if box is not None:

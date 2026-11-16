@@ -288,20 +288,32 @@ class RadioUI(unittest.TestCase):
         ui = self.ui
         ui.settings()
         original = ui.fb.last.copy()
-        box = next(box for box, action in ui.actions if action == ui.appearance_settings)
-        x, y = (box[0] + box[2]) / 2, (box[1] + box[3]) / 2
+        next(action for _, action in ui.actions if action == ui.appearance_settings)()
+        next(action for _, action in ui.actions if action == ui.themes_page)()
+        self.assertEqual(ui.mode, 'theme_preview')
+        self.assertEqual((ui.theme_preview.id, ui.theme_preview_screen), ('oem', 'home'))
 
-        def tap(action):
-            ui.update({'contacts': [{'slot': 0, 'action': action, 'has_position': True,
-                                    'x_raw': round(x * 32767 / 719), 'y_raw': round(y * 32767 / 479)}]})
+        def press_at(x, y):
+            next(action for (left, top, right, bottom), action in ui.actions
+                 if left <= x < right and top <= y < bottom)()
 
-        with patch('hlauncher.launcher.time.monotonic', side_effect=[100, 101]):
-            tap('down')
-            tap('up')
-        self.assertEqual(ui.mode, 'themes')
-        ui.preview_theme('rail')
+        press_at(620, 270)
+        self.assertEqual(ui.theme_preview.id, 'rail')
+        press_at(220, 436)
+        self.assertEqual(ui.theme_preview_screen, 'settings')
+        press_at(620, 270)
+        self.assertEqual((ui.theme_preview.id, ui.theme_preview_screen), ('stack', 'settings'))
+        press_at(620, 270)
+        self.assertEqual(ui.theme_preview.id, 'oem')
+        press_at(80, 270)
+        self.assertEqual(ui.theme_preview.id, 'stack')
         self.assertEqual(Preferences(ui.prefs.path).data['layout_theme'], 'oem')
-        ui.select_theme()
+        ui.actions[0][1]()
+        self.assertEqual(ui.mode, 'appearance_settings')
+        self.assertEqual(Preferences(ui.prefs.path).data['layout_theme'], 'oem')
+        next(action for _, action in ui.actions if action == ui.themes_page)()
+        press_at(620, 270)
+        press_at(570, 436)
         self.assertEqual(Preferences(ui.prefs.path).data['layout_theme'], 'rail')
         ui.settings()
         rail_box, open_system = next((box, action) for box, action in ui.actions
@@ -312,8 +324,11 @@ class RadioUI(unittest.TestCase):
         self.assertEqual(ui.mode, 'recovery_settings')
         next(action for _, action in ui.actions if action == ui.wifi_power_page)()
         self.assertEqual(ui.mode, 'wifi_power_settings')
-        ui.preview_theme('oem')
-        ui.select_theme()
+        ui.appearance_settings()
+        next(action for _, action in ui.actions if action == ui.themes_page)()
+        self.assertEqual(ui.theme_preview.id, 'rail')
+        press_at(80, 270)
+        press_at(570, 436)
         ui.settings()
         self.assertIsNone(ImageChops.difference(original, ui.fb.last).getbbox())
 

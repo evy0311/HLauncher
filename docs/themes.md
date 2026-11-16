@@ -1,8 +1,9 @@
 # Layout themes
 
-On the radio, open **Settings**, then press and hold **Appearance**. Select a
-theme to preview it, then select **Use theme**. A normal tap still opens
-Appearance. The OEM theme uses the original layouts and saved background color.
+On the radio, open **Settings → Appearance → Change theme**. Use **Previous**
+and **Next** to browse themes and switch between the **Home** and **Settings**
+previews. Select **Use theme** to apply the previewed theme. The OEM theme uses
+the original layouts and saved background color.
 
 **Rail** places the title, Back button and clock in a left column. **Stack**
 uses full-width rows. The new layouts cover Home, Settings, Appearance, System
@@ -13,7 +14,7 @@ grid. In another layout, hold first and then drag from the grid.
 ## Make a theme
 
 Open **Layout themes** on the Pi's local setup page. Download Rail or Stack as
-a template, edit the JSON, then use **Import theme**. Reopen Themes on the radio
+a template, edit the JSON, then use **Import theme**. Reopen Change theme on the radio
 to preview and apply it. Give your theme its own lowercase ID and display name.
 Importing a file with the same custom ID replaces that theme. You can download
 your installed custom themes again from the setup page.

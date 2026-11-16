@@ -1,5 +1,6 @@
 """Shared settings, connection and picture pages; no display or service ownership."""
 import math
+from datetime import datetime
 from functools import lru_cache
 from pathlib import Path
 from PIL import Image
@@ -281,43 +282,61 @@ def appearance(ui):
             Item('Background color', ui.tile_colors, color_name),
             Item('Show clock', ui.toggle_clock, 'On' if clock else 'Off'),
             Item('Picture', ui.color_settings),
-            Item('Themes', ui.themes_page, ui.layout_theme.name),
+            Item('Change theme', ui.themes_page, ui.layout_theme.name),
     )):
         return
     p=page_for(ui,'Appearance',ui.settings)
     draw_rows(ui,p,[Row('Background color',ui.tile_colors,value=color_name),
                     Row('Show clock',ui.toggle_clock,toggle=clock),
-                    Row('Picture',ui.color_settings)])
+                    Row('Picture',ui.color_settings),
+                    Row('Change theme',ui.themes_page,value=ui.layout_theme.name)])
     present(ui,p)
-
-
-def layout_themes(ui):
-    p = page_for(ui, 'Themes', ui.appearance_settings)
-    rows = [
-        Row(theme.name, lambda identifier=theme.id: ui.preview_theme(identifier),
-            value='Active' if theme.id == ui.layout_theme.id else '')
-        for theme in ui.themes.choices.values()
-    ]
-    draw_rows(ui, p, rows)
-    present(ui, p)
 
 
 def theme_preview(ui):
     from . import home, settings, theme_menu
 
     theme = ui.theme_preview
-    p = page_for(ui, theme.name, ui.themes_page)
-    if layout := theme.layouts.get('home'):
-        items = theme_menu.home_items(home.launcher_layout(ui))
-        preview = theme_menu.render(theme, layout, 'Home', items, size=(420, 280))
-    elif layout := theme.layouts.get('settings'):
-        items = [Item(row.title, row.action) for row in settings.categories(ui)]
-        preview = theme_menu.render(theme, layout, 'Settings', [items], size=(420, 280), back=ui.home)
+    screen = ui.theme_preview_screen
+    choices = tuple(ui.themes.choices)
+    current = choices.index(theme.id) + 1
+    p = page_for(ui, 'Change theme', ui.appearance_settings)
+    p.label((24, 112), p.fit(theme.name, 480, 25), 25)
+    status = f'{current} / {len(choices)}'
+    if theme.id == ui.layout_theme.id:
+        status += '  ·  Active'
+    p.text((696, 128), status, 17, anchor='rm')
+    size = (384, 256)
+    layout = theme.layouts.get(screen)
+    color = ui.prefs.data['tile_color']
+    show_clock = ui.prefs.data['show_clock']
+    clock = datetime.now().strftime('%-I:%M') if show_clock else None
+    if screen == 'home':
+        pages = home.launcher_layout(ui)
+        if layout:
+            preview = theme_menu.render(theme, layout, 'Home', theme_menu.home_items(pages),
+                                        size=size, clock=clock, change_page=ui.change_page)
+        else:
+            preview = home.render(pages, theme=color, size=size, clock=clock, show_clock=show_clock)
     else:
-        preview = home.render(home.launcher_layout(ui), theme=ui.prefs.data['tile_color'], size=(420, 280))
-    p.image.paste(preview.image, (150, 115))
-    p.button((184, 406, 536, 452), 'Use theme', ui.select_theme, selected=True, size=22)
-    p.notice(ui.banner, 458)
+        rows = settings.categories(ui)
+        if layout:
+            items = [Item(row.title, row.action) for row in rows]
+            preview = theme_menu.render(theme, layout, 'Settings', [items], size=size,
+                                        back=ui.home, clock=clock, footer=f'Version {__version__}')
+        else:
+            preview = settings.render(rows, ui.home, theme=color, size=size, clock=clock,
+                                      version=__version__, show_clock=show_clock)
+    p.image.paste(preview.image, (168, 144))
+    p.draw.rectangle((167, 143, 552, 400), outline='#64616d')
+    p.button((24, 246, 152, 298), '‹  Previous', lambda: ui.move_theme_preview(-1), secondary=True)
+    p.button((568, 246, 696, 298), 'Next  ›', lambda: ui.move_theme_preview(1), secondary=True)
+    p.button((24, 414, 148, 458), 'Home', lambda: ui.set_theme_preview_screen('home'),
+             selected=screen == 'home')
+    p.button((160, 414, 284, 458), 'Settings', lambda: ui.set_theme_preview_screen('settings'),
+             selected=screen == 'settings')
+    p.button((408, 414, 696, 458), 'Use theme', ui.select_theme, selected=True, size=22)
+    p.notice(ui.banner, 462)
     present(ui, p)
 
 
@@ -432,4 +451,4 @@ PAGES={'ssh_settings':ssh,'adapter_branding':adapter_branding,'appearance_settin
        'plugins_settings':plugins,'plugin_detail':plugin_detail,'tile_colors':themes,'colors':picture,'hdmi_test':hdmi,
        'shutdown_confirm':shutdown,'shutdown_pending':shutdown,'about_settings':about,
        'legal_info':legal_info,'audio_coming_soon':audio_coming_soon,
-       'themes':layout_themes,'theme_preview':theme_preview}
+       'theme_preview':theme_preview}

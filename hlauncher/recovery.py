@@ -251,7 +251,7 @@ PAGE = '''<!doctype html><html><head><meta charset="utf-8"><meta name="viewport"
 
 <details>
 <summary>Layout themes</summary>
-<p>On the radio, open Settings and hold Appearance to preview or switch themes. OEM is the original layout.</p>
+<p>On the radio, open Settings → Appearance → Change theme to preview or switch themes. OEM is the original layout.</p>
 <div id="theme-downloads"></div>
 <p>To make your own theme, download a template, change its ID and name, and edit its layouts and colors.</p>
 <label for="themefile">Theme JSON file</label><input type="file" id="themefile" accept=".json,application/json">
@@ -300,7 +300,7 @@ async function uploadTheme(){
         const response=await fetch('/api/layout-themes',{method:'POST',headers:{'Content-Type':'application/json'},body:file});
         const data=await response.json();
         if(!response.ok)throw new Error(data.error||'Import failed');
-        status.textContent='Imported '+data.name+'. Reopen Themes on the radio.';
+        status.textContent='Imported '+data.name+'. Reopen Change theme on the radio.';
         await loadThemeDownloads();
     }catch(error){status.textContent=error.message}
 }

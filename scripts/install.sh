@@ -26,7 +26,7 @@ if [[ -d $root ]]; then
   cp -a "$root" "/opt/hlauncher.backup-$stamp"
 fi
 install -d "$root" /var/log/hlauncher /var/lib/hlauncher /etc/systemd/system/bluetooth.service.d
-for path in hlauncher sdk plugins examples bluetooth scripts packaging config docs tests third_party native LICENSE NOTICE README.md THIRD_PARTY_NOTICES.md; do
+for path in hlauncher sdk plugins examples bluetooth scripts packaging config docs tests third_party native firmware LICENSE NOTICE README.md THIRD_PARTY_NOTICES.md hlauncher.env.example; do
   cp -a "$path" "$root/"
 done
 bash "$root/scripts/build_pipewire_pcm.sh"

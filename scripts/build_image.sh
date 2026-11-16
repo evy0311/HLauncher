@@ -64,7 +64,7 @@ fi
 rm -f "$work/root/etc/resolv.conf"
 cp -L /etc/resolv.conf "$work/root/etc/resolv.conf"
 mkdir -p "$work/root/tmp/hlauncher-source"
-for path in hlauncher sdk plugins examples bluetooth scripts packaging config docs tests third_party native LICENSE NOTICE README.md THIRD_PARTY_NOTICES.md hlauncher.env.example; do
+for path in hlauncher sdk plugins examples bluetooth scripts packaging config docs tests third_party native firmware LICENSE NOTICE README.md THIRD_PARTY_NOTICES.md hlauncher.env.example; do
   cp -a "$source_root/$path" "$work/root/tmp/hlauncher-source/"
 done
 # Host-side npm caches/vendor downloads are excluded; installer fetches locked dependencies.

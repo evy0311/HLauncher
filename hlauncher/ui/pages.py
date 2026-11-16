@@ -13,6 +13,7 @@ from .scroll_list import Row,draw as draw_rows
 from .chrome import scale_bounds
 from . import home_art as art
 from .projection import wrap_status
+from .theme_menu import Item, settings_menu
 from sdk.hlauncher_sdk.fonts import font
 
 
@@ -55,7 +56,6 @@ def legal_info(ui):
 
 
 def system(ui):
-    p=page_for(ui,'System',ui.settings)
     info=ui.storage_info
     rows=[('Wi-Fi','',ui.recovery_page),
           ('Setup wizard','',lambda:ui.setup_page(True)),
@@ -64,6 +64,9 @@ def system(ui):
           ('Storage protection','Enabled' if info['protected'] else 'Off' if info['available'] else 'Unavailable',lambda:ui.storage_confirm(not info['protected'])),
           ('Shut down','',ui.shutdown_page)]
     if ui.prefs.data['debug_mode']:rows.append(('Diagnostics','',ui.system_diagnostics))
+    if settings_menu(ui, 'System', ui.settings, (Item(title, action, value) for title, value, action in rows)):
+        return
+    p=page_for(ui,'System',ui.settings)
     draw_rows(ui,p,[Row(title,action,value=value) if title!='Debug mode' else
                     Row(title,action,toggle=ui.prefs.data['debug_mode']) for title,value,action in rows])
     p.notice(ui.banner)
@@ -80,19 +83,27 @@ def network(ui):
         present(ui,p);return
     connection = network_status()
     address = connection.get('address')
-    p=page_for(ui,'Wi-Fi',getattr(ui,'recovery_return',ui.system_settings))
+    back = getattr(ui, 'recovery_return', ui.system_settings)
+    from ..ssh_access import status
+    ssh = status()
+    ssh_value = 'On' if ssh['enabled'] else 'Off'
+    if settings_menu(ui, 'Wi-Fi', back, (
+            Item('Setup hotspot', ui.hotspot_page),
+            Item('Wi-Fi power', ui.wifi_power_page),
+            Item('SSH access', ui.ssh_settings, ssh_value),
+    ), footer=f'http://{address}:8080' if address else 'No network connection'):
+        return
+    p=page_for(ui,'Wi-Fi',back)
     if address:
         p.label((24,128),'http://'+address+':8080',26)
         p.text((24,176),'Open this page on a device on the same network as the Pi',17)
     else:
         p.label((24,128),'No network connection',26)
         p.text((24,176),'Start the setup hotspot to connect this Pi to Wi-Fi',17)
-    from ..ssh_access import status
-    ssh=status()
     p.bar((24, 218, 696, 274), 'Setup hotspot', ui.hotspot_page, size=27)
     p.bar((24, 286, 696, 342), 'Wi-Fi power', ui.wifi_power_page, size=27)
     p.bar((24, 354, 696, 410), 'SSH access', ui.ssh_settings,
-          value='On' if ssh['enabled'] else 'Off', size=27)
+          value=ssh_value, size=27)
     p.notice(ui.banner)
     present(ui,p)
 
@@ -263,11 +274,52 @@ def adapter_branding(ui):
 
 
 def appearance(ui):
+    color = ui.prefs.data['tile_color']
+    color_name = 'Custom' if color.startswith('#') else color
+    clock = ui.prefs.data['show_clock']
+    if settings_menu(ui, 'Appearance', ui.settings, (
+            Item('Background color', ui.tile_colors, color_name),
+            Item('Show clock', ui.toggle_clock, 'On' if clock else 'Off'),
+            Item('Picture', ui.color_settings),
+            Item('Themes', ui.themes_page, ui.layout_theme.name),
+    )):
+        return
     p=page_for(ui,'Appearance',ui.settings)
-    draw_rows(ui,p,[Row('Background color',ui.tile_colors,value='Custom' if ui.prefs.data['tile_color'].startswith('#') else ui.prefs.data['tile_color']),
-                    Row('Show clock',ui.toggle_clock,toggle=ui.prefs.data['show_clock']),
+    draw_rows(ui,p,[Row('Background color',ui.tile_colors,value=color_name),
+                    Row('Show clock',ui.toggle_clock,toggle=clock),
                     Row('Picture',ui.color_settings)])
     present(ui,p)
+
+
+def layout_themes(ui):
+    p = page_for(ui, 'Themes', ui.appearance_settings)
+    rows = [
+        Row(theme.name, lambda identifier=theme.id: ui.preview_theme(identifier),
+            value='Active' if theme.id == ui.layout_theme.id else '')
+        for theme in ui.themes.choices.values()
+    ]
+    draw_rows(ui, p, rows)
+    present(ui, p)
+
+
+def theme_preview(ui):
+    from . import home, settings, theme_menu
+
+    theme = ui.theme_preview
+    p = page_for(ui, theme.name, ui.themes_page)
+    if layout := theme.layouts.get('home'):
+        items = theme_menu.home_items(home.launcher_layout(ui))
+        preview = theme_menu.render(theme, layout, 'Home', items, size=(420, 280))
+    elif layout := theme.layouts.get('settings'):
+        items = [Item(row.title, row.action) for row in settings.categories(ui)]
+        preview = theme_menu.render(theme, layout, 'Settings', [items], size=(420, 280), back=ui.home)
+    else:
+        preview = home.render(home.launcher_layout(ui), theme=ui.prefs.data['tile_color'], size=(420, 280))
+    p.image.paste(preview.image, (150, 115))
+    p.button((184, 406, 536, 452), 'Use theme', ui.select_theme, selected=True, size=22)
+    p.notice(ui.banner, 458)
+    present(ui, p)
+
 
 
 def startup(ui):
@@ -379,4 +431,5 @@ def waiting(ui):
 PAGES={'ssh_settings':ssh,'adapter_branding':adapter_branding,'appearance_settings':appearance,'startup_settings':startup,'system_settings':system,'recovery_settings':network,'hotspot_settings':hotspot,'wifi_power_settings':wifi_power,'storage_confirm':storage,
        'plugins_settings':plugins,'plugin_detail':plugin_detail,'tile_colors':themes,'colors':picture,'hdmi_test':hdmi,
        'shutdown_confirm':shutdown,'shutdown_pending':shutdown,'about_settings':about,
-       'legal_info':legal_info,'audio_coming_soon':audio_coming_soon}
+       'legal_info':legal_info,'audio_coming_soon':audio_coming_soon,
+       'themes':layout_themes,'theme_preview':theme_preview}

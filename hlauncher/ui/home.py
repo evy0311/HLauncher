@@ -200,8 +200,7 @@ def render(layout, *, theme='Red', size=(720,480), page=0, clock=None,
     return Frame(image,actions,page)
 
 
-def draw_launcher(launcher):
-    """Thin adapter; callbacks and enabled/default plugin policy remain core-owned."""
+def launcher_layout(launcher):
     from .home_edit import SETTINGS
 
     entries=[Entry(m.name,m.icon or m.id,lambda pid=m.id:launcher.open_plugin(pid),m.id)
@@ -209,9 +208,29 @@ def draw_launcher(launcher):
     # entries.append(Entry('Audio', 'audio', launcher.audio_page, AUDIO))
     entries.append(Entry('Settings', 'settings', launcher.settings, SETTINGS))
     by_id = {entry.id: entry for entry in entries}
+    return [[by_id.get(pid) for pid in page] for page in launcher.home_pages()]
+
+
+def draw_launcher(launcher):
+    """Thin adapter; callbacks and enabled/default plugin policy remain core-owned."""
     editor = launcher.home_editor
-    layout = [[by_id.get(pid) for pid in page] for page in launcher.home_pages()]
+    layout = launcher_layout(launcher)
     confirmation = editor.dialog()
+    theme = launcher.layout_theme
+    alternate = theme.layouts.get('home')
+    if alternate and not (editor.editing or confirmation or launcher.banner):
+        from . import theme_menu
+
+        frame = theme_menu.render(
+            theme, alternate, 'Home', theme_menu.home_items(layout),
+            size=(launcher.fb.w, launcher.fb.h), page=launcher.page,
+            change_page=launcher.change_page, slide=launcher.home_slide,
+            pressed=launcher.pressed_box if launcher.press is not None else None,
+            clock=datetime.now().strftime('%-I:%M') if launcher.prefs.data['show_clock'] else None,
+        )
+        launcher.page = frame.page
+        theme_menu.present(launcher, frame)
+        return
     frame=render(layout,theme=launcher.prefs.data['tile_color'],size=(launcher.fb.w,launcher.fb.h),
                  page=launcher.page,message=launcher.banner,dismiss=launcher.dismiss_home_notice,
                  change_page=launcher.change_page,

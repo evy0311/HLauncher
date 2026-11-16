@@ -284,6 +284,39 @@ class RadioUI(unittest.TestCase):
         ui.actions[0][1]()
         self.assertEqual(ui.mode, 'system_settings')
 
+    def test_theme_picker_preserves_oem_and_uses_existing_routes(self):
+        ui = self.ui
+        ui.settings()
+        original = ui.fb.last.copy()
+        box = next(box for box, action in ui.actions if action == ui.appearance_settings)
+        x, y = (box[0] + box[2]) / 2, (box[1] + box[3]) / 2
+
+        def tap(action):
+            ui.update({'contacts': [{'slot': 0, 'action': action, 'has_position': True,
+                                    'x_raw': round(x * 32767 / 719), 'y_raw': round(y * 32767 / 479)}]})
+
+        with patch('hlauncher.launcher.time.monotonic', side_effect=[100, 101]):
+            tap('down')
+            tap('up')
+        self.assertEqual(ui.mode, 'themes')
+        ui.preview_theme('rail')
+        self.assertEqual(Preferences(ui.prefs.path).data['layout_theme'], 'oem')
+        ui.select_theme()
+        self.assertEqual(Preferences(ui.prefs.path).data['layout_theme'], 'rail')
+        ui.settings()
+        rail_box, open_system = next((box, action) for box, action in ui.actions
+                                     if action == ui.system_settings)
+        self.assertGreaterEqual(rail_box[0], 250)
+        open_system()
+        next(action for _, action in ui.actions if action == ui.recovery_page)()
+        self.assertEqual(ui.mode, 'recovery_settings')
+        next(action for _, action in ui.actions if action == ui.wifi_power_page)()
+        self.assertEqual(ui.mode, 'wifi_power_settings')
+        ui.preview_theme('oem')
+        ui.select_theme()
+        ui.settings()
+        self.assertIsNone(ImageChops.difference(original, ui.fb.last).getbbox())
+
     def test_audio_returns_to_the_page_that_opened_it(self):
         ui=self.ui;ui.settings()
         next(action for _, action in ui.actions if action == ui.audio_coming_soon)()

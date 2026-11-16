@@ -49,6 +49,7 @@ class Preferences:
                      "setup_complete": False, "setup_step": 0, "safety_notice_version": 0,
                      "debug_mode": False, "show_clock": False, "ssh_enabled": False, "wifi_power": "off",
                      "wifi_delay_boot": True,
+                     "layout_theme": "oem",
                      "home_pages": [], "carplay_fps": CARPLAY_FRAME_RATES[0],
                      "carplay_auto_night": True, "android_auto_auto_night": True,
                      "carplay_car_gps": False, "android_auto_car_gps": False}
@@ -72,6 +73,9 @@ class Preferences:
             self.data['wifi_power'] = mode if mode in WIFI_POWER_MODES else previous_mode
             delay = loaded.get('wifi_delay_boot')
             self.data['wifi_delay_boot'] = delay if type(delay) is bool else not self.data['setup_complete']
+            layout_theme = loaded.get('layout_theme')
+            if isinstance(layout_theme, str) and re.fullmatch(r'[a-z][a-z0-9-]{0,31}', layout_theme):
+                self.data['layout_theme'] = layout_theme
             fps = loaded.get('carplay_fps')
             if type(fps) is int and fps in CARPLAY_FRAME_RATES:
                 self.data['carplay_fps'] = fps

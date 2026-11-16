@@ -142,10 +142,15 @@ class Editor:
             self.gesture = None
             if point is None:
                 return False
+            alternate = None if self.editing else ui.layout_theme.layouts.get('home')
             for slot, plugin_id in enumerate(ui.home_pages()[ui.page]):
                 if not plugin_id:
                     continue
-                x, y, right, bottom = slot_box(slot)
+                if alternate:
+                    from .theme_menu import slot_box as alternate_slot_box
+                    x, y, right, bottom = alternate_slot_box(alternate, slot)
+                else:
+                    x, y, right, bottom = slot_box(slot)
                 if self.editing and plugin_id in ui.manifests:
                     left, top, button_right, button_bottom = remove_button_box(right, y)
                     if left <= point[0] <= button_right and top <= point[1] <= button_bottom:
@@ -214,6 +219,9 @@ class Editor:
             return
         if self.gesture and not self.editing and now - self.gesture.since >= HOLD_SECONDS:
             self.editing = True
+            # Alternative Home layouts edit in the shared OEM grid.
+            if ui.layout_theme.layouts.get('home'):
+                self.gesture = None
             ui.press = ui.pressed_box = ui.home_swipe = None
             ui.draw()
         elif self.editing and self.gesture:

@@ -139,6 +139,8 @@ saved theme choices are retained.
 
 ## Custom theme
 
+For complete layout changes, see [Layout themes](themes.md).
+
 The six preset colors remain fixed. Settings → Appearance → Background color
 and the wizard’s Appearance step also offer Custom color. The native touch
 picker previews the shared chrome and tile while editing: hue/saturation wheel,

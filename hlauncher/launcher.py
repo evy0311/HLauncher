@@ -34,6 +34,9 @@ class Launcher:
         self.fb = framebuffer or Framebuffer(event)
         self.fb.open()
         self.prefs = preferences or Preferences()
+        from .themes import Themes
+        self.themes = Themes(self.prefs.path.parent)
+        self.theme_menu_pages = {}
         self.audio_settings = AudioSettings(self.prefs.path.with_name('audio.json'))
         self.audio_notice = ''
         self.audio_checked = 0
@@ -185,6 +188,37 @@ class Launcher:
         self.press=None
         self.banner=''
         self.draw()
+
+    @property
+    def layout_theme(self):
+        return self.themes.get(self.prefs.data['layout_theme'])
+
+    def themes_page(self):
+        self.themes.reload()
+        self.mode = 'themes'
+        self.press = self.pressed_box = None
+        self.banner = ''
+        self.draw()
+
+    def preview_theme(self, identifier):
+        self.theme_preview = self.themes.get(identifier)
+        self.mode = 'theme_preview'
+        self.press = self.pressed_box = None
+        self.banner = ''
+        self.draw()
+
+    def select_theme(self):
+        previous = self.prefs.data['layout_theme']
+        self.prefs.data['layout_theme'] = self.theme_preview.id
+        try:
+            self.prefs.save(force=('layout_theme',))
+        except OSError:
+            self.prefs.data['layout_theme'] = previous
+            self.banner = 'Could not save the theme'
+            self.draw()
+            return
+        self.theme_menu_pages.clear()
+        self.appearance_settings()
 
     def startup_settings(self):
         self.host.deactivate()
@@ -1165,6 +1199,7 @@ class Launcher:
             return
         if action == "down":
             self.press = point
+            self.press_started = time.monotonic()
             self.pressed_box = next((box for box, _ in self.actions if point and
                 box[0] <= point[0] <= box[2] and box[1] <= point[1] <= box[3]), None)
             if self.pressed_box is not None:
@@ -1179,6 +1214,10 @@ class Launcher:
             callback = next((fn for bounds, fn in self.actions if bounds == box), None)
             self.press = self.pressed_box = None
             if callback is not None:
+                if (action == 'up' and self.mode == 'settings' and callback == self.appearance_settings
+                        and time.monotonic() - self.press_started >= 0.65):
+                    self.themes_page()
+                    return
                 callback()
                 return
             if box is not None:

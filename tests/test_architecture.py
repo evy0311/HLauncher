@@ -300,7 +300,7 @@ class Architecture(unittest.TestCase):
         ui=Launcher(framebuffer=Display(),preferences=self.preferences(),manifests={'carplay':self.carplay})
         try:
             ui.settings()
-            self.assertEqual(len(ui.actions),6)
+            self.assertEqual(len(ui.actions),7)
             ui.actions[4][1]()
             self.assertEqual(ui.mode,'startup_settings')
             ui.actions[1][1]()

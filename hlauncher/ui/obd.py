@@ -20,5 +20,5 @@ def draw_launcher(launcher):
     draw_rows(launcher,page,[Row(row.get('name') or 'BLE device',
         lambda address=row['address']:launcher.obd_connect(address),value=row['address']) for row in devices],top=228,bottom=436)
     if not devices:page.text((24,240),'Scan nearby BLE devices, then select your dongle.',18)
-    page.text((24,452),'BLE ELM327 · unsupported sensors show —',14)
+    page.text((24,452),'Unavailable sensor readings show —',14)
     present(launcher,page)

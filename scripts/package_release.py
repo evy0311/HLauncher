@@ -154,8 +154,6 @@ def package(root, persist, version, key, output, commit):
             shutil.copy2(app/'packaging'/name,path)
     stock=root/'etc/systemd/system/bluealsa.service'
     stock.unlink(missing_ok=True);stock.symlink_to('/dev/null')
-    # Retain the OS package inventory used to compile native artifacts.
-    shutil.copy2(root/'var/lib/dpkg/status',output/'os-packages.txt')
     return item
 
 

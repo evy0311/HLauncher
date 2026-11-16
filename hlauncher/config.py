@@ -47,8 +47,8 @@ class Preferences:
         self.path = Path(path) if path else STATE_DIR / "settings.json"
         self.data = {"enabled": {}, "background": {}, "default_plugin": None, "tile_color": "Red", "custom_color": "#198B96",
                      "setup_complete": False, "setup_step": 0, "safety_notice_version": 0,
-                     "debug_mode": False, "show_clock": False, "ssh_enabled": False, "wifi_power": "on",
-                     "wifi_delay_boot": False,
+                     "debug_mode": False, "show_clock": False, "ssh_enabled": False, "wifi_power": "off",
+                     "wifi_delay_boot": True,
                      "home_pages": [], "carplay_fps": CARPLAY_FRAME_RATES[0],
                      "carplay_auto_night": True, "android_auto_auto_night": True,
                      "carplay_car_gps": False, "android_auto_car_gps": False}
@@ -66,9 +66,12 @@ class Preferences:
             self.data['debug_mode'] = loaded.get('debug_mode', False) is True
             self.data['show_clock'] = loaded.get('show_clock', False) is True
             self.data['ssh_enabled'] = loaded.get('ssh_enabled', False) is True
-            if loaded.get('wifi_power') in WIFI_POWER_MODES:
-                self.data['wifi_power'] = loaded['wifi_power']
-            self.data['wifi_delay_boot'] = loaded.get('wifi_delay_boot') is True
+            # Settings from before the Wi-Fi controls used always-on Wi-Fi.
+            previous_mode = 'on' if self.data['setup_complete'] else 'off'
+            mode = loaded.get('wifi_power')
+            self.data['wifi_power'] = mode if mode in WIFI_POWER_MODES else previous_mode
+            delay = loaded.get('wifi_delay_boot')
+            self.data['wifi_delay_boot'] = delay if type(delay) is bool else not self.data['setup_complete']
             fps = loaded.get('carplay_fps')
             if type(fps) is int and fps in CARPLAY_FRAME_RATES:
                 self.data['carplay_fps'] = fps

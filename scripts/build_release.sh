@@ -24,7 +24,7 @@ xz -T0 "$output/HLauncher-$version-pi4.img"
 rm "$output/HLauncher-$version-pi4.img.sha256"
 cp "$notes" "$output/RELEASE-NOTES.md"
 (cd "$output" && sha256sum "HLauncher-$version-pi4.img.xz" "HLauncher-$version-pi4-arm64.tar.xz" "HLauncher-$version-sources.tar.xz" "HLauncher-$version-local-update.hlu" \
-  hlauncher-release.json hlauncher-release.sig release.pub os-packages.txt RELEASE-NOTES.md > SHA256SUMS)
+  hlauncher-release.json hlauncher-release.sig release.pub > SHA256SUMS)
 openssl pkeyutl -sign -rawin -inkey "$key" -in "$output/SHA256SUMS" -out "$output/SHA256SUMS.sig"
 python3 scripts/validate_release.py "$version" "$output" >/dev/null
 echo "Release artifacts: $output"

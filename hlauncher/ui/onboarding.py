@@ -1,6 +1,6 @@
 """Resumable setup presented in the shared stock-radio theme."""
 import math
-from ..onboarding import STEPS
+from ..onboarding import REQUIREMENTS, STEPS
 from ..config import TILE_COLORS
 from .controls import Page, present
 
@@ -35,7 +35,7 @@ def draw_safety_notice(launcher):
                 (launcher.fb.w, launcher.fb.h), launcher.pressed_box,
                 heading_y=88, show_clock=launcher.prefs.data['show_clock'])
     safety_notice_text(page)
-    page.text((24, 336), 'Cancel opens Wi-Fi & pairing for recovery.', 17)
+    page.text((24, 336), 'Cancel opens Wi-Fi for recovery.', 17)
     if launcher.banner:
         page.text((24, 370), launcher.banner, 17, fill='#efbd82')
     page.button((24, 408, 240, 460), 'Cancel', launcher.recovery_page, secondary=True)
@@ -75,7 +75,7 @@ def draw_launcher(launcher):
                 y=144+i*68
                 page.button((24,y,696,y+56),'',action,selected)
                 page.label((42,y+7),title,23)
-                requirement={'carplay':'USB adapter','android-auto':'USB phone connection','obd':'BLE ELM327 adapter'}.get(pid,'')
+                requirement=REQUIREMENTS.get(pid,'')
                 page.text((42,y+34),requirement,14)
                 page.text((676,y+28),'Enabled' if selected else 'Disabled',17,anchor='rm')
             else:
@@ -96,11 +96,11 @@ def draw_launcher(launcher):
             page.theme=theme
         page.button((24,332,696,384),'Custom color',launcher.custom_color,selected=launcher.prefs.data['tile_color'].startswith('#'),size=23)
     elif step==4:
-        for i,text in enumerate(('Wi-Fi is optional. Connect for software updates,',
-                                 'SSH access, debugging and custom features.')):
+        for i,text in enumerate(('Wi-Fi starts off. Set it up for software updates,',
+                                 'SSH access or troubleshooting.')):
             page.text((24,136+i*28),text,19)
         page.button((24,224,696,284),'Set up Wi-Fi',launcher.recovery_page,size=24)
-        page.text((24,324),'You can also do this later in System > Wi-Fi & pairing',17)
+        page.text((24,324),'You can also set it up later in System > Wi-Fi',17)
     else:
         if launcher.storage_info['available']:
             for i,text in enumerate(('Reduces the risk of corruption after sudden power loss.',

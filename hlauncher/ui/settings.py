@@ -53,10 +53,10 @@ def render(rows, back, *, theme='Red', size=(720,480), clock=None,
 def draw_launcher(launcher):
     rows=[Row('Plugins','',launcher.plugin_settings),
           Row('Appearance','',launcher.appearance_settings),
-          # Row('Audio & EQ','',launcher.audio_page),
           Row('About','',launcher.about_settings),
           Row('Startup','',launcher.startup_settings),
-          Row('System','',launcher.system_settings)]
+          Row('System','',launcher.system_settings),
+          Row('Audio','',launcher.audio_coming_soon)]
     frame=render(rows,launcher.home,theme=launcher.prefs.data['tile_color'],
                  size=(launcher.fb.w,launcher.fb.h),banner=launcher.banner,version=__version__,
                  pressed=launcher.pressed_box if launcher.press is not None else None,

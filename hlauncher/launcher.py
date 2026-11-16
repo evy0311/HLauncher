@@ -312,7 +312,7 @@ class Launcher:
         self.draw()
 
     def ssh_settings(self):
-        self.ssh_return=self.hotspot_page if self.mode=='hotspot_settings' else self.recovery_page
+        self.ssh_return=self.hotspot_page if self.mode=='hotspot_settings' else self.network_resume
         self.host.deactivate()
         self.mode='ssh_settings';self.press=None;self.banner='';self.draw()
 
@@ -472,6 +472,11 @@ class Launcher:
 
     def legal_info(self):
         self.mode = 'legal_info'
+        self.press = None
+        self.draw()
+
+    def audio_coming_soon(self):
+        self.mode = 'audio_coming_soon'
         self.press = None
         self.draw()
 

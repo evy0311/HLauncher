@@ -1,6 +1,7 @@
 """Publication requires complete, authentic fresh-install and update artifacts."""
 import json
 import lzma
+import os
 from pathlib import Path
 import subprocess
 import tempfile
@@ -47,6 +48,25 @@ class ReleaseAssets(unittest.TestCase):
             path=self.folder/name;data=path.read_bytes();path.unlink()
             with self.assertRaisesRegex(ValueError,'Missing release asset'):validate(self.folder,self.version)
             path.write_bytes(data)
+
+    def test_publisher_uploads_only_validated_assets(self):
+        notes = self.folder/'RELEASE-NOTES.md'
+        notes.write_text('Release notes for the GitHub description.\n')
+        (self.folder/'os-packages.txt').write_text('Build inventory\n')
+        gh = self.folder/'gh'
+        gh.write_text('#!/usr/bin/env python3\nimport json, sys\nprint(json.dumps(sys.argv[1:]))\n')
+        gh.chmod(0o755)
+        script = Path(__file__).resolve().parents[1]/'scripts/publish_release.sh'
+        env = dict(os.environ, PATH=str(self.folder) + os.pathsep + os.environ['PATH'])
+        result = subprocess.run(['bash', str(script), self.version, str(self.folder)],
+                                env=env, check=True, capture_output=True, text=True)
+        command = json.loads(result.stdout.splitlines()[0])
+        notes_arg = command.index('--notes-file')
+        self.assertEqual(Path(command[notes_arg+1]).resolve(), notes.resolve())
+        uploaded = [Path(path).name for path in command[notes_arg+2:]]
+        self.assertEqual(uploaded, assets(self.version))
+        self.assertNotIn(notes.name, uploaded)
+        self.assertNotIn('os-packages.txt', uploaded)
     def test_local_image_and_missing_compatibility_are_rejected(self):
         for field,value in [('local_test',True),('local_test',None),('system_contract',None),('commit','')]:
             original=dict(self.info);self.info[field]=value;self.sign()

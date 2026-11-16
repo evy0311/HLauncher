@@ -82,17 +82,19 @@ The image already includes both projection engines, the services and the tested
 
 ## If pairing or the display does not work
 
-The initial HDMI welcome may be invisible until the radio is paired. An unpaired
-Pi without a Wi-Fi connection starts its **HLauncher-XXXX** hotspot when a valid
-Wi-Fi country is configured. Connect using the device password in `HLAUNCHER-SETUP.txt` or on the radio, then open
-[http://192.168.4.1:8080](http://192.168.4.1:8080). On Ethernet/normal Wi-Fi, use
+The initial HDMI welcome may be invisible until the radio is paired. Wi-Fi starts
+off on a fresh install. Use Ethernet if you need the setup page before you can
+reach the wizard. From the wizard's Network step or **Settings → System → Wi-Fi**,
+open **Setup hotspot** and select **Start setup hotspot**. Connect using the device
+password in `HLAUNCHER-SETUP.txt` or on the radio, then open
+[http://192.168.4.1:8080](http://192.168.4.1:8080). On Ethernet or personal Wi-Fi, use
 `http://PI_ADDRESS:8080`. The page can reopen pairing or select a radio manually.
 Sign in as `hlauncher` with the device password. Use the setup hotspot or a trusted local network.
 
 After first boot, `HLAUNCHER-SETUP.txt` on the card's boot partition lists this
 Pi's connection details. Shut down before removing the card to read it on another
 computer. On a managed image, SSH starts off. Enable it on the radio under
-**Settings → System → Wi-Fi & pairing → SSH access**. The initial SSH login is
+**Settings → System → Wi-Fi → SSH access**. The initial SSH login is
 **`hlauncher`** / **`ilovevtec1234`**. Change the password with `passwd` while
 storage protection is off so the change survives reboot.
 

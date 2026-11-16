@@ -16,8 +16,8 @@ def assets(version):
     updater.version(version)
     return [f'HLauncher-{version}-pi4.img.xz',f'HLauncher-{version}-pi4-arm64.tar.xz',
             f'HLauncher-{version}-local-update.hlu',f'HLauncher-{version}-sources.tar.xz',
-            'hlauncher-release.json','hlauncher-release.sig','release.pub','os-packages.txt',
-            'RELEASE-NOTES.md','SHA256SUMS','SHA256SUMS.sig']
+            'hlauncher-release.json','hlauncher-release.sig','release.pub',
+            'SHA256SUMS','SHA256SUMS.sig']
 
 
 def validate(folder, version):

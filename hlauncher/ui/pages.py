@@ -1,5 +1,9 @@
 """Shared settings, connection and picture pages; no display or service ownership."""
 import math
+from functools import lru_cache
+from pathlib import Path
+from PIL import Image
+from .. import __version__
 from ..config import TILE_COLORS
 from ..colors import DEFAULTS,LIMITS
 from ..recovery import job_status, network_status
@@ -17,9 +21,29 @@ def page_for(ui,title,back=None):
                 ui.pressed_box if ui.press is not None else None,show_clock=ui.prefs.data['show_clock'])
 
 
+@lru_cache(maxsize=1)
+def about_logo():
+    path = Path(__file__).parent/'assets/branding/hlauncher-180.png'
+    with Image.open(path) as image:
+        return image.convert('RGBA').resize((144, 144), Image.Resampling.LANCZOS)
+
+
 def about(ui):
     page = page_for(ui, 'About', ui.settings)
-    page.bar((24,144,696,200), 'Legal info', ui.legal_info)
+    logo = about_logo()
+    page.image.paste(logo, (24, 130), logo)
+    page.label((192, 133), 'HLauncher', 34)
+    page.text((192, 184), f'Version {__version__}', 21, fill='#efedf6')
+    page.text((192, 224), 'Created by Evan Horsley (evy0311)', 20)
+    page.text((192, 256), 'Open source under the GNU GPL', 17)
+    page.info(313, 'GitHub', 'https://github.com/evy0311/HLauncher')
+    page.bar((24, 368, 696, 424), 'Legal info', ui.legal_info)
+    present(ui, page)
+
+
+def audio_coming_soon(ui):
+    page = page_for(ui, 'Audio', ui.settings)
+    page.text((360, 244), 'Coming soon', 25, anchor='mm')
     present(ui, page)
 
 
@@ -33,8 +57,7 @@ def legal_info(ui):
 def system(ui):
     p=page_for(ui,'System',ui.settings)
     info=ui.storage_info
-    rows=[('Wi-Fi & pairing','',ui.recovery_page),
-          ('Wi-Fi power','',ui.wifi_power_page),
+    rows=[('Wi-Fi','',ui.recovery_page),
           ('Setup wizard','',lambda:ui.setup_page(True)),
           ('Software updates','',ui.updates_page),
           ('Debug mode','On' if ui.prefs.data['debug_mode'] else 'Off',ui.toggle_debug),
@@ -55,16 +78,21 @@ def network(ui):
         p.text((24,208),'Connect your phone or computer to the same Wi-Fi',18)
         p.text((24,248),'The new setup-page address will appear here when ready',17)
         present(ui,p);return
-    connection=network_status();address=connection.get('address')
-    if not address or address=='192.168.4.1':return hotspot(ui)
-    p=page_for(ui,'Wi-Fi & pairing',getattr(ui,'recovery_return',ui.system_settings))
-    p.label((24,128),'http://'+address+':8080',26)
-    p.text((24,176),'Open this page on a device on the same network as the Pi',17)
+    connection = network_status()
+    address = connection.get('address')
+    p=page_for(ui,'Wi-Fi',getattr(ui,'recovery_return',ui.system_settings))
+    if address:
+        p.label((24,128),'http://'+address+':8080',26)
+        p.text((24,176),'Open this page on a device on the same network as the Pi',17)
+    else:
+        p.label((24,128),'No network connection',26)
+        p.text((24,176),'Start the setup hotspot to connect this Pi to Wi-Fi',17)
     from ..ssh_access import status
     ssh=status()
-    p.bar((24,224,696,280),'SSH access',ui.ssh_settings,value='On' if ssh['enabled'] else 'Off',size=30)
-    p.button((24,316,696,364),'Use setup hotspot instead',ui.hotspot_page,size=21,secondary=True)
-    p.text((24,420),'Use the page to connect Wi-Fi, pair a radio or install an update',16)
+    p.bar((24, 218, 696, 274), 'Setup hotspot', ui.hotspot_page, size=27)
+    p.bar((24, 286, 696, 342), 'Wi-Fi power', ui.wifi_power_page, size=27)
+    p.bar((24, 354, 696, 410), 'SSH access', ui.ssh_settings,
+          value='On' if ssh['enabled'] else 'Off', size=27)
     p.notice(ui.banner)
     present(ui,p)
 
@@ -74,7 +102,7 @@ def wifi_power(ui):
     prefs = Preferences(ui.prefs.path).data
     mode = prefs['wifi_power']
     delay = prefs['wifi_delay_boot']
-    p = page_for(ui, 'Wi-Fi power', ui.system_settings)
+    p = page_for(ui, 'Wi-Fi power', ui.network_resume)
     status = network_status().get('wifi_state')
     p.text((24, 121), {'on':'Wi-Fi is on', 'off':'Wi-Fi is off', 'asleep':'Wi-Fi is asleep',
                         'unavailable':'Wi-Fi status unavailable'}.get(status, 'Wi-Fi status pending'), 20)
@@ -83,9 +111,9 @@ def wifi_power(ui):
         p.button((left, 158, right, 214), label, lambda value=value: ui.set_wifi_power(value),
                  selected=mode == value, size=22)
     p.text((24, 230), 'Tap Sleep again to wake Wi-Fi for another idle period.', 17)
-    p.bar((24, 282, 696, 338), 'Delay Wi-Fi at boot', lambda: ui.set_wifi_boot(not delay),
-          toggle=delay, size=27)
-    p.text((24, 357), 'Wait for HLauncher to start before enabling Wi-Fi.', 17)
+    p.bar((24, 282, 696, 338), 'Wi-Fi during boot', lambda: ui.set_wifi_boot(not delay),
+          toggle=not delay, size=27)
+    p.text((24, 357), 'When off, Wi-Fi waits for HLauncher before starting in On or Sleep mode.', 17)
     result = job_status(ui.prefs.path.parent)
     if (ui.prefs.path.parent/'maintenance-request.json').exists() or result.get('status') == 'Working':
         p.notice('Applying Wi-Fi setting…')
@@ -95,8 +123,7 @@ def wifi_power(ui):
 
 
 def hotspot(ui):
-    parent=ui.network_resume if ui.mode=='hotspot_settings' else getattr(ui,'recovery_return',ui.system_settings)
-    p=page_for(ui,'Setup hotspot',parent)
+    p=page_for(ui,'Setup hotspot',ui.network_resume)
     creds=SetupState(ui.prefs.path.parent).credentials()
     connection=network_status();ready=connection.get('address')=='192.168.4.1'
     p.text((24,116),'Connect your phone or computer to this temporary network',17)
@@ -110,9 +137,6 @@ def hotspot(ui):
     busy=queued or result.get('status')=='Working'
     if busy:p.text((24,334),'Applying connection changes…',20,fill='#efedf6')
     else:p.button((24,316,696,364),'Restart hotspot' if ready else 'Start setup hotspot',lambda:ui.maintenance('hotspot'),size=22)
-    from ..ssh_access import status
-    ssh=status()
-    p.bar((24,380,696,436),'SSH access',ui.ssh_settings,value='On' if ssh['enabled'] else 'Off',size=30)
     message=ui.banner or (result.get('message','') if result.get('status')=='Failed' else '')
     if message:p.notice(message)
     else:p.text((24,452),'Starting the hotspot disconnects the Pi from its current Wi-Fi',14)
@@ -207,8 +231,7 @@ def plugin_detail(ui):
     if manifest.id=='carplay':
         rows.append(Row('Frame rate', ui.toggle_carplay_fps, value=f'{ui.prefs.carplay_fps} FPS'))
         rows.append(Row('Adapter icon',ui.adapter_branding_page))
-    elif manifest.id=='obd':rows.append(Row('OBD adapter',ui.obd_settings))
-    elif manifest.keep_alive and manifest.id!='android-auto':
+    elif manifest.keep_alive and manifest.id not in ('android-auto', 'obd'):
         rows.append(Row('Run in background',lambda:ui.toggle_background(manifest.id),toggle=ui.prefs.background_enabled(manifest)))
     if manifest.id in ('carplay', 'android-auto'):
         rows.append(Row('Follow headlights', lambda: ui.toggle_auto_night(manifest.id),
@@ -221,7 +244,6 @@ def plugin_detail(ui):
 
 
 def adapter_branding(ui):
-    from PIL import Image
     from ..config import ROOT
     p=page_for(ui,'CarPlay adapter icon',ui.plugin_detail)
     with Image.open(ROOT/'hlauncher/ui/assets/branding/hlauncher-180.png') as icon:
@@ -356,4 +378,5 @@ def waiting(ui):
 
 PAGES={'ssh_settings':ssh,'adapter_branding':adapter_branding,'appearance_settings':appearance,'startup_settings':startup,'system_settings':system,'recovery_settings':network,'hotspot_settings':hotspot,'wifi_power_settings':wifi_power,'storage_confirm':storage,
        'plugins_settings':plugins,'plugin_detail':plugin_detail,'tile_colors':themes,'colors':picture,'hdmi_test':hdmi,
-       'shutdown_confirm':shutdown,'shutdown_pending':shutdown,'about_settings':about,'legal_info':legal_info}
+       'shutdown_confirm':shutdown,'shutdown_pending':shutdown,'about_settings':about,
+       'legal_info':legal_info,'audio_coming_soon':audio_coming_soon}

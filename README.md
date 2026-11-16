@@ -25,7 +25,7 @@ and future native-radio experiments are on [my blog](https://www.evanhorsley.com
 | --- | --- | --- |
 | CarPlay | iPhone and compatible Carlinkit USB adapter connected to the Pi | [CarPlay](plugins/carplay/README.md) |
 | Android Auto | Android phone connected directly to a Pi USB host port | [Android Auto](plugins/android-auto/README.md) |
-| OBD Gauges | Compatible Bluetooth LE ELM327 adapter | [OBD Gauges](plugins/obd/README.md) |
+| OBD Gauges | HondaLink vehicle data from the factory radio | [OBD Gauges](plugins/obd/README.md) |
 
 Power currently comes from a cigarette-lighter USB plug supplying **3 A**. The Pi
 loses power whenever the car cuts power to the socket, without a clean shutdown.
@@ -66,13 +66,14 @@ signed releases and can restore the previously installed application version.
 Checks and installation are manual. A signed **`.hlu`** file can also be uploaded
 from a phone/computer through the local setup page. See [updates](docs/updates.md).
 
-**Settings → System → Wi-Fi & pairing** shows network and setup access. Join the
+Wi-Fi starts off on a fresh install. To set it up, open **Settings → System →
+Wi-Fi → Setup hotspot** and select **Start setup hotspot**. Join the
 **HLauncher-XXXX** hotspot with the device's setup password, then open
 [the setup page](http://192.168.4.1:8080). Sign in as **`hlauncher`** with that
 same device password. The radio's hotspot screen and the SD card's
 `HLAUNCHER-SETUP.txt` show it.
 
-SSH starts off. Enable it from **Wi-Fi & pairing → SSH access** on the radio.
+SSH starts off. Enable it from **Wi-Fi → SSH access** on the radio.
 The initial SSH credentials are **`hlauncher` / `ilovevtec1234`**. Use a trusted
 network and change the SSH password with `passwd`. See [first boot and recovery](docs/onboarding.md).
 

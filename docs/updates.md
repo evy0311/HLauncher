@@ -77,14 +77,15 @@ sudo bash scripts/build_release.sh 0.2.0 /images/bookworm-arm64-lite.img US \
   /secure/location/hlauncher-release.pem /releases/hlauncher-0.2.0 /releases/notes-0.2.0.md
 ```
 
-The script builds native/Node dependencies once inside the image, then creates:
+The script builds native/Node dependencies once inside the image, then creates
+the release assets:
 
 - `HLauncher-0.2.0-pi4.img.xz`: flashable fresh-install image.
 - `HLauncher-0.2.0-pi4-arm64.tar.xz`: full application and native runtime bundle.
 - `HLauncher-0.2.0-local-update.hlu`: signed container for local network upload.
 - `hlauncher-release.json` and `.sig`: signed compatibility/checksum metadata.
 - `HLauncher-0.2.0-sources.tar.xz`: project and fetched external sources.
-- `release.pub`, `os-packages.txt`, `SHA256SUMS`, `SHA256SUMS.sig`, and `RELEASE-NOTES.md`.
+- `release.pub`, `SHA256SUMS` and `SHA256SUMS.sig` for verifying signatures and downloads.
 
 The image is seeded with the same application files/version/manifest as the
 update bundle. The writable partition defaults to 4096 MiB; override
@@ -94,9 +95,9 @@ Unsigned direct `build_image.sh` development builds do not get update trust/layo
 The country argument remains build-time configuration in this version.
 
 Keep release notes short: changes since the previous release, plus essential
-installation or compatibility information. Supply that notes file to the build;
-it is copied into the release and covered by SHA256SUMS. Leave test reports and
-build details out of the release notes.
+installation or compatibility information. Supply the notes file to the build.
+The publisher uses the build directory’s copy as the GitHub release description.
+Leave test reports and build details out of the release notes.
 
 Every future release must include both a production fresh-install image and all
 signed updater files. `scripts/validate_release.py` blocks incomplete releases,
@@ -132,7 +133,7 @@ power-loss hardware acceptance are required in addition to the local tests.
 ## Local update testing without GitHub
 
 Open Settings → System → Software updates → Install local update file, or open
-Settings → System → Wi-Fi & pairing. Connect your computer to the Pi's network and visit its recovery
+Settings → System → Wi-Fi. Connect your computer to the Pi's network and visit its recovery
 page (`http://PI_ADDRESS:8080`, or `http://192.168.4.1:8080` on its hotspot).
 Sign in as `hlauncher` with the device’s setup password on the setup hotspot or a trusted local network. Choose a `.hlu` file
 under Local update and install it. The file is streamed to disk, checked with the

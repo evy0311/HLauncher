@@ -30,17 +30,20 @@ class ProtocolCapture(unittest.TestCase):
             monitor = ProtocolDiagnostics(folder, min_free=0)
             try:
                 monitor.observe(dict(state='connected', uuid='test-cafe'))
-                monitor.vehicle.status['parking_brake_engaged'] = True
+                frame = dict(session=1, message=0x61, protocol=(0, 'jp.co.honda.rd.dispaudio.app.generals'),
+                             payload='10100000000000')
+                monitor.vehicle.observe(dict(frame, monotonic=10))
+                monitor.vehicle.observe(dict(frame, monotonic=11))  # Unchanged frames refresh the reading.
                 with patch.object(monitor.vehicle.signals, 'snapshot',
                                   side_effect=lambda now, ids: [
-                                      dict(received=True, value=0, age_seconds=now - 10)]):
+                                      dict(received=True, value=0, age_seconds=0, at=now)]):
                     self.assertEqual(monitor.projection_vehicle_state(11),
-                                     dict(speed_kph=0, parking_brake=True))
+                                     dict(speed_kph=0, parking_brake=True,speed_until=13,brake_until=13))
                     self.assertEqual(monitor.projection_vehicle_state(13),
-                                     dict(speed_kph=None, parking_brake=True))
+                                     dict(speed_kph=0, parking_brake=None,speed_until=15,brake_until=None))
                 monitor.observe(dict(state='closed', uuid='test-cafe'))
                 self.assertEqual(monitor.projection_vehicle_state(13),
-                                 dict(speed_kph=None, parking_brake=None))
+                                 dict(speed_kph=None, parking_brake=None,speed_until=None,brake_until=None))
             finally:
                 monitor.close()
 

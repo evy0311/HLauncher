@@ -29,12 +29,15 @@ class ProfileRegistry:
 
 
 def main():
-    import argparse, os, pathlib, socket
+    import argparse, os, socket
+    from concurrent.futures import ThreadPoolExecutor
     from hlauncher.config import RADIO_PATH, RADIO_ADDRESS
     from hlauncher.protocol_diagnostics import ProtocolDiagnostics
     from hlauncher.protocol.session import StartProbe
     from hlauncher.touch import decode_touch
     from hlauncher.bootstrap import BootstrapLauncher
+    from hlauncher.audio_process import MixerExited
+    from hlauncher.config import RUNTIME_DIR
     from hlauncher.setup_state import SetupState, atomic_json, address
     from hlauncher.event_log import EventLog
     import dbus, dbus.service, dbus.mainloop.glib
@@ -51,6 +54,7 @@ def main():
     dbus.mainloop.glib.DBusGMainLoop(set_as_default=True)
     bus = dbus.SystemBus()
     loop = GLib.MainLoop()
+    auth_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="radio-auth")
     if not state.path.exists() and RADIO_ADDRESS != '00:00:00:00:00:00':
         try:
             values = dbus.Interface(bus.get_object('org.bluez', RADIO_PATH),
@@ -111,7 +115,8 @@ def main():
             self.sockets[str(device)] = s
             if self.uuid.endswith("cafe"):
                 launcher.session_changed(connected=True, authenticated=False)
-            self.parsers[str(device)] = StartProbe(launch_app=launch_app,vehicle_scope=launcher.vehicle_scope)
+            self.parsers[str(device)] = StartProbe(launch_app=launch_app, vehicle_scope=launcher.vehicle_scope,
+                                                   auth_executor=auth_executor)
             self.watches[str(device)] = GLib.io_add_watch(
                 s.fileno(),
                 GLib.IO_IN | GLib.IO_HUP | GLib.IO_ERR,
@@ -174,7 +179,8 @@ def main():
             if device in self.txw:
                 GLib.source_remove(self.txw.pop(device))
             self.tx.pop(device, None)
-            self.parsers.pop(device, None)
+            if parser := self.parsers.pop(device, None):
+                parser.cancel_auth()
             if self.uuid.endswith("cafe"):
                 launcher.session_changed(connected=False, authenticated=False)
             self.watches.pop(device, None)
@@ -210,7 +216,8 @@ def main():
         def RequestDisconnection(self, device):
             key = str(device)
             self.tx.pop(key, None)
-            self.parsers.pop(key, None)
+            if parser := self.parsers.pop(key, None):
+                parser.cancel_auth()
             if key in self.txw:
                 GLib.source_remove(self.txw.pop(key))
             if key in self.watches:
@@ -225,9 +232,22 @@ def main():
             for device in list(self.sockets):
                 self.RequestDisconnection(device)
 
+    restart = False
+
     def draw_tick():
+        nonlocal restart
         try:
             event.refresh()
+            for _, profile in profiles:
+                for device, parser in profile.parsers.items():
+                    if parser.pending_auth is None:
+                        continue
+                    changes, replies = parser.poll_auth()
+                    for item in changes:
+                        event(uuid=profile.uuid, **item)
+                        if item['state'] == 'iap_accessory_key_proof':
+                            launcher.session_changed(authenticated=item['verified'])
+                    profile.queue_replies(device, replies)
             launcher.tick()
             import time
             now=time.monotonic()
@@ -255,6 +275,11 @@ def main():
                             break
                         else:
                             event(state='honda_display_test_result', action=action, status='Radio disconnected')
+        except MixerExited as exc:
+            restart = True
+            event(state='audio_process_error', error=str(exc))
+            loop.quit()
+            return False
         except Exception as exc:
             event(state="touch_overlay_error", error=str(exc))
         return True
@@ -265,12 +290,12 @@ def main():
                         authenticated=bool(launcher.session.get('authenticated')),
                         hondalink_ready=any(parser.vehicle_auth_sessions for _, profile in profiles
                             for parser in profile.parsers.values()), monotonic=time.monotonic())
-        try: atomic_json(pathlib.Path('/run/hlauncher/connection.json'),connection)
+        try: atomic_json(RUNTIME_DIR/'connection.json',connection,durable=False)
         except OSError as exc:event(state='connection_status_error',error=str(exc))
         from hlauncher import __version__
-        try: atomic_json(pathlib.Path('/run/hlauncher/update-health.json'),
+        try: atomic_json(RUNTIME_DIR/'update-health.json',
                          dict(version=__version__,monotonic=time.monotonic(),
-                              profiles_ready=all(profile.registered for _,profile in profiles)))
+                              profiles_ready=all(profile.registered for _,profile in profiles)),durable=False)
         except OSError as exc:event(state='update_health_error',error=str(exc))
         for _, profile in profiles:
             if profile.uuid.endswith('cafe'):
@@ -330,5 +355,8 @@ def main():
                 manager().UnregisterProfile(path)
             except dbus.DBusException:
                 pass
+        auth_executor.shutdown(wait=False, cancel_futures=True)
         launcher.close()
         event.close()
+    if restart:
+        raise SystemExit(1)

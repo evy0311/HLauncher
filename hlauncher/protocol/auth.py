@@ -1,6 +1,6 @@
 """Diagnostic accessory-key possession verification, not Apple CA policy validation."""
 
-import os, pathlib, re, subprocess, tempfile
+import os, pathlib, re, subprocess, tempfile, time
 
 
 class AccessoryProof:
@@ -20,10 +20,14 @@ class AccessoryProof:
             raise ValueError("inconsistent certificate sections")
         if section in self.sections and self.sections[section] != data:
             raise ValueError("changed certificate section")
+        total = sum(len(value) for key, value in self.sections.items() if key != section)
+        if total + len(data) > 64 * 1024:
+            raise ValueError("accessory certificate is too large")
         self.sections[section] = data
         return all(i in self.sections for i in range(maximum + 1))
 
     def prepare_challenge(self):
+        deadline = time.monotonic() + 4
         cert = b"".join(self.sections[i] for i in range(self.maximum + 1))
         with tempfile.TemporaryDirectory(prefix="civic-iap-cert-") as td:
             root = pathlib.Path(td)
@@ -40,7 +44,7 @@ class AccessoryProof:
                     "-print_certs",
                 ],
                 capture_output=True,
-                timeout=4,
+                timeout=max(0, deadline - time.monotonic()),
             )
             if r.returncode:
                 raise ValueError("cannot decode accessory PKCS7 certificate")
@@ -57,7 +61,7 @@ class AccessoryProof:
                     ["openssl", "x509", "-pubkey", "-noout"],
                     input=pem,
                     capture_output=True,
-                    timeout=4,
+                    timeout=max(0, deadline - time.monotonic()),
                 )
                 if r.returncode:
                     raise ValueError("cannot extract accessory public key")
@@ -69,6 +73,7 @@ class AccessoryProof:
     def verify(self, signature):
         if not self.public_key or self.challenge is None:
             return False, "no_pending_challenge"
+        deadline = time.monotonic() + 4
         with tempfile.TemporaryDirectory(prefix="civic-iap-proof-") as td:
             root = pathlib.Path(td)
             (root / "challenge").write_bytes(self.challenge)
@@ -92,7 +97,7 @@ class AccessoryProof:
                         "digest:sha1",
                     ],
                     capture_output=True,
-                    timeout=4,
+                    timeout=max(0, deadline - time.monotonic()),
                 )
                 if r.returncode == 0:
                     return True, "rsa_pkcs1_sha1_digest_key_" + str(i)

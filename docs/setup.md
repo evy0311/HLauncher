@@ -45,7 +45,10 @@ Check for other `bluetooth.service.d` overrides before proceeding. The older `99
 Automatic enrollment and the setup wizard are described in [first boot and recovery](onboarding.md). Start the dedicated agent and services after stopping any competing BlueALSA instance:
 
 ```bash
-sudo systemctl disable --now bluealsa.service bluealsa-aplay.service
+# Stop these stock services if they are running. The installer masks bluealsa.service.
+sudo systemctl stop bluealsa.service
+# Run this only if bluealsa-aplay.service exists.
+sudo systemctl disable --now bluealsa-aplay.service
 sudo systemctl restart bluetooth
 sudo systemctl enable --now hlauncher-grow hlauncher-firstboot hlauncher-pairing hlauncher-recovery hlauncher-audio hlauncher-connect hlauncher
 ```
@@ -80,7 +83,7 @@ The launcher switches tty1 to graphics mode while it is running, hiding the logi
 
 The default renderer uses DRM/KMS with two RGB565 buffers. It fills the offscreen buffer and flips at vertical blank rather than overwriting the buffer currently being scanned out. Presentation runs on its own thread with a latest-frame slot, so the Bluetooth loop does not wait for the display. This addresses the horizontal split seen during CarPlay swipes with direct `/dev/fb0` writes.
 
-Look for `display_backend` with `backend: drm` and `vsync: true` in the journal. `display_pageflips` records completed flips and dropped pending frames. If DRM initialization or presentation fails, the launcher logs the failure and falls back to the older framebuffer path, which may tear. For diagnosis, add `HLAUNCHER_DISPLAY=fbdev` to `/etc/hlauncher.env` and restart HLauncher to explicitly select that older path. Remove the override to use DRM again. With DRM active, `/dev/fb0` still reports the console framebuffer geometry, but reading its pixels does not capture the application's scanout buffers.
+If Debug was active when the display opened, look for `display_backend` with `backend: drm` and `vsync: true` in `/var/log/hlauncher/debug.jsonl`. `display_pageflips` records completed flips and dropped pending frames. If DRM initialization or presentation fails, the launcher logs the failure and falls back to the older framebuffer path, which may tear. For diagnosis, add `HLAUNCHER_DISPLAY=fbdev` to `/etc/hlauncher.env` and restart HLauncher to explicitly select that older path. Remove the override to use DRM again. With DRM active, `/dev/fb0` still reports the console framebuffer geometry, but reading its pixels does not capture the application's scanout buffers.
 
 ## Start
 
@@ -105,7 +108,7 @@ Start the installed service again afterward with `sudo systemctl start hlauncher
 
 Settings is built into the launcher. **Settings → Plugins** lists installed plugins
 and lets you enable or disable each one. **Settings → Startup → Start with** cycles
-between Launcher and the enabled plugins. Changes are saved in `/var/lib/hlauncher/settings.json`. Disabling the default plugin resets the default to Launcher. Returning with CarPlay's Honda icon always goes to the launcher, even when CarPlay is the default.
+between Home and the enabled plugins. Changes are saved in `/var/lib/hlauncher/settings.json`. Disabling a bundled startup plugin resets the selection to Home. Returning with CarPlay's Honda icon always goes to the launcher, even when CarPlay is the default.
 
 **Settings → System → Wi-Fi power** offers **On**, **Off**, and **Sleep after 3
 minutes**. Sleep turns off the Pi's Wi-Fi radio after three minutes of inactivity
@@ -114,7 +117,14 @@ Active Wi-Fi TCP connections and HLauncher updates postpone sleep. **Delay Wi-Fi
 at boot** holds Wi-Fi off until the launcher service is ready, with a startup
 timeout for recovery access. On is the default, with the boot delay disabled.
 
-CarPlay, Android Auto and OBD Gauges are included; the setup wizard chooses which to enable. OBD Gauges supports compatible BLE ELM327 adapters. Android Auto requires the separately built OpenAuto engine: run `sudo bash scripts/install_android_auto.sh`, then connect an Android phone directly to the Pi USB port. It is confirmed working on the project setup; microphone/call integration remains unavailable. See [plugins](plugins.md) for installing an external plugin or writing one.
+CarPlay, Android Auto and OBD Gauges are bundled. The gauges use HondaLink
+data. The OBD adapter tools separately support compatible BLE ELM327 devices.
+For a source install, build the Android Auto engine with
+`sudo bash scripts/install_android_auto.sh`, then connect an Android phone
+directly to the Pi USB port. Android Auto bridges radio microphone capture, and
+its extended telephony and media status services are opt-in. End-to-end behavior
+depends on the phone and radio. [Android Auto guide](../plugins/android-auto/README.md)
+· [Plugin installation and development](plugins.md)
 
 CarPlay media audio uses HDMI. Its voice/call path requests the radio microphone
 through the core capture API and defaults identified voice output to Bluetooth
@@ -133,7 +143,7 @@ sudo node /opt/hlauncher/plugins/carplay/runtime/usb/bridge.mjs --check
 
 Production mode records bounded errors. Enable Debug in System settings before collecting detailed protocol logs; packet captures can contain private/device data. The fresh image keeps general logs in RAM and protocol captures in persistent state. See [logging and recovery](onboarding.md#production-and-debug) for retention and exports.
 
-If Bluetooth restarts and HondaLink no longer opens, restart HLauncher so it registers its profiles again:
+HLauncher retries profile registration after Bluetooth restarts. If HondaLink still fails to open after Bluetooth comes back, restart HLauncher manually.
 
 ```bash
 sudo systemctl restart hlauncher
@@ -160,7 +170,7 @@ and the existing hands-free profiles.
 
 ### HDMI audio
 
-CarPlay PCM goes through the plugin API to a core-owned mixer and one `aplay` worker. The mixer converts simultaneous streams
+Projection PCM goes to the core-owned mixer, which selects direct ALSA or PipeWire according to the current setting. The mixer converts simultaneous streams
 to 48 kHz stereo; `config/alsa-hdmi.conf` selects `vc4hdmi0`
 (the HDMI connector nearest the Pi 4 power connector). The mixer preserves PCM in 32-bit float and uses SoXR VHQ 28-bit linear-phase
 conversion for source rates other than 48 kHz. PipeWire EQ and its bridge retain
@@ -170,11 +180,11 @@ unchanged. Ordinary media uses this output; identified Siri/call streams default
 Bluetooth SCO. See the [CarPlay audio guide](../plugins/carplay/README.md#audio-and-microphone). Audio control/volume messages are logged; automatic
 media ducking is not implemented yet.
 
-`audio_hdmi_open`, `audio_hdmi_progress` and `audio_hdmi_alsa` in the launcher journal
+`audio_hdmi_open`, `audio_hdmi_progress` and `audio_hdmi_alsa` in the launcher Debug log
 show device selection, PCM writes/drops and ALSA diagnostics. Successful writes
 verify software delivery, not that HondaLink selected that physical input.
 The main ALSA endpoint is fixed to HDMI; diagnostics report the requested format.
-Playback failures retry after five seconds and do not stop video or HondaLink.
+Playback device failures retry after five seconds. If the mixer process exits, the installed service restarts HLauncher.
 
 ### HDMI color range
 
@@ -185,9 +195,9 @@ This is an HDMI output setting, separate from the display picture sliders.
 Failures are logged and do not prevent the launcher from opening.
 
 Settings → Appearance → Picture → HDMI test compares Auto, Full and Limited.
-Leaving the test restores the range that was active when it opened, normally
-Limited. For other displays, `HLAUNCHER_HDMI_RGB=auto` or `full` overrides the
-default through the service environment. No radio firmware change is involved.
+Back restores the range that was active when the test opened. **Save HDMI range**
+persists a selection and takes precedence over the fallback
+`HLAUNCHER_HDMI_RGB=auto` or `full` service setting.
 
 The HDMI diagnostics also report native CRTC gamma/degamma table sizes and CTM
 availability. These depend on the running driver; Raspberry Pi's 6.12 VC4 driver
@@ -208,9 +218,9 @@ per-frame picture filter. Built-in UI previews use native Pillow operations on
 redraw. Third-party raw plugin frames remain unchanged. The former software
 16–235 inset is ignored, including on installs that previously saved it.
 
-PipeWire defaults to off on each HLauncher service start. The audio process starts
-the private graph only when the setting is enabled, and stops the graph and its
-playback clients when disabled. The graph unit is not enabled at boot.
+PipeWire defaults to off with fresh preferences. The audio process uses the saved
+setting to manage the private graph and playback clients. The graph unit has no
+independent boot enablement.
 
 
 ### Projection plugins
@@ -233,37 +243,21 @@ roll back. Pairing and HDMI settings do not need resetting.
 
 ### Record a HondaLink drive test
 
-Open Settings → Diagnostics → HondaLink. With Debug enabled, capture starts with the
-HLauncher service and continues while using CarPlay, Android Auto or Settings.
-Connection, Vehicle data, Calls/mic and Traffic tabs show received activity.
-Vehicle messages remain identified by session/message until their sensor fields
-are decoded. No simulated sensor values are added to this page.
-The Vehicle data tab shows parking brake Engaged/Released using the in-car test
-mapping, plus received radio flags and payload-change counts. Disconnecting
-clears the displayed brake state. Sensors without received data are omitted.
-After the Honda application authentication exchange, HLauncher requests cyclic
-RPM (`0x17C`) and temperature (`0x324`) records in class 1, plus the six-byte
-B-CAN VSPNE candidate (`0x12F85050`) in class 0, once per connection. The cycle
-field is 500; its time units and actual delivery rate remain unverified. The
-VSPNE request selects all six bytes, including possible speed/RPM fields, for
-raw diagnostics. No vehicle-bus transmit command is enabled.
-Coolant and intake-air mappings follow the older Honda K/Civic layout; confirm
-them against the car during a cold-start/warm-up test. Newer Hondas reuse `0x324`
-with different meanings. VSPNE is not decoded into speed or RPM yet.
-The Vehicle data tab displays VSPNE hex bytes, receipt and payload-change counts,
-and sample age. Identical records still increment RX and refresh age; a frozen
-payload with advancing RX is distinct from a stopped stream. Readings older than
-five seconds show Stale, and a disconnect clears them. Requests, settings
-responses, timeouts, invalid/encrypted data and every decoded raw record are
-captured while recording is enabled. The capture summary includes subscription
-history, sensor values and class-qualified `can_activity` with latest raw bytes
-and receipt/change counts. Enable Debug before connecting, or start recording
-before reconnecting, to retain the subscription exchange as well as samples.
-Capture records include app-protocol identity and bounded byte/bit differences
-for non-touch packets; other unmapped flags are not labeled as sensors.
+Enable **Settings → System → Debug mode**, then open **Settings → System →
+Diagnostics → HondaLink**. The tabs are Connection, Vehicle data, Calls / mic,
+Traffic and Integration. Recording can continue while using projection or
+Settings. The Integration tab shows received button actions and has experimental
+Show and Exit HondaLink probes. Check the factory display to see whether it acted.
 
-Use **Mark test step** before each phase: connection, tracks, Siri, incoming call,
-outgoing call, call end, vehicle controls and completion. **Stop recording** saves
+The [Vehicle data guide](vehicle-data.md) lists the requested signals, diagnostic
+presets and projection feeds. Open the Vehicle data tab during the test to
+request the full diagnostic inventory. Other pages request data only for active
+consumers. Enable Debug or start a capture before reconnecting to retain the
+subscription exchange as well as received samples. Captures include app-protocol
+identity, raw records, decoded values, and bounded changes to non-touch payloads.
+
+Use **Mark test step** at each phase of the test, from connection and track
+controls through Siri, calls and vehicle controls. **Stop recording** saves
 the current capture; **Start recording** starts another. Captures are private JSONL
 files under `/var/lib/hlauncher/protocol-captures`, rotated within 64 MB. The page
 shows dropped events and storage errors. Microphone audio is not saved: only

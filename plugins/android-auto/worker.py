@@ -296,7 +296,7 @@ def main():
                         engine.night_mode = message.get('night_mode') is True
                 elif kind == 'projection.vehicle':
                     with engine.lock:
-                        engine.vehicle = {key: message.get(key) for key in ('speed_kph', 'parking_brake')}
+                        engine.vehicle = {key: message.get(key) for key in ('speed_kph', 'parking_brake', 'speed_until', 'brake_until')}
                 elif kind == 'projection.gps':
                     with engine.lock:
                         engine.gps = message.get('fix')

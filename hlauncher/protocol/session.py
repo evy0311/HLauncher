@@ -47,7 +47,7 @@ def pi_honda_identity(device_info=None):
 
 
 class StartProbe:
-    def __init__(self, launch_app=None, vehicle_scope=None):
+    def __init__(self, launch_app=None, vehicle_scope=None, auth_executor=None):
         self.launch_app = launch_app
         self.vehicle_scope = vehicle_scope or (lambda:'diagnostics')
         self.active_app = None
@@ -55,6 +55,8 @@ class StartProbe:
         self.tokens = []
         self.identification = False
         self.proof = AccessoryProof()
+        self.auth_executor = auth_executor
+        self.pending_auth = None
         self.auth_transaction = None
         self.authenticated = False
         self.ui_mode = 0
@@ -160,6 +162,7 @@ class StartProbe:
                 events.append(dict(state='iap_remote_reset'))
                 self.tokens = []
                 self.identification = False
+                self.cancel_auth()
                 self.proof = AccessoryProof()
                 self.auth_transaction = None
                 self.authenticated = False
@@ -284,6 +287,8 @@ class StartProbe:
                 and p[2:4] == bytes.fromhex("8000")
                 and self.identification
             ):
+                if self.pending_auth is not None:
+                    continue
                 major, minor, section, maximum = p[4:8]
                 try:
                     if major != 2:
@@ -298,23 +303,7 @@ class StartProbe:
                         }
                     )
                     if complete:
-                        challenge, size, keys = self.proof.prepare_challenge()
-                        replies.append(packet(b"\0\x16" + p[2:4] + b"\0"))
-                        self.auth_transaction = bytes.fromhex("8001")
-                        replies.append(
-                            packet(
-                                b"\0\x17" + self.auth_transaction + challenge + b"\0"
-                            )
-                        )
-                        events.append(
-                            {
-                                "state": "iap_signature_challenge_sent",
-                                "certificate_bytes": size,
-                                "public_keys": keys,
-                                "challenge": challenge.hex(),
-                                "chain_validation": False,
-                            }
-                        )
+                        self.run_auth('certificate', p[2:4], b'', events, replies)
                     else:
                         replies.append(packet(b"\0\x02" + p[2:4] + b"\0\x15"))
                 except (
@@ -330,27 +319,8 @@ class StartProbe:
                 and self.auth_transaction is not None
                 and p[2:4] == self.auth_transaction
             ):
-                try:
-                    ok, method = self.proof.verify(p[4:])
-                    replies.append(packet(b"\0\x19" + p[2:4] + bytes([0 if ok else 1])))
-                    events.append(
-                        {
-                            "state": "iap_accessory_key_proof",
-                            "verified": ok,
-                            "method": method,
-                            "signature_bytes": len(p) - 4,
-                            "chain_validation": False,
-                        }
-                    )
-                    self.auth_transaction = None
-                    self.authenticated = ok
-                except (
-                    ValueError,
-                    OSError,
-                    TimeoutError,
-                    subprocess.TimeoutExpired,
-                ) as e:
-                    events.append({"state": "iap_signature_error", "error": str(e)})
+                if self.pending_auth is None:
+                    self.run_auth('signature', p[2:4], p[4:], events, replies)
             elif p[:2] == b"\0\x64" and self.authenticated:
                 # iAP RequestApplicationLaunch: three reserved bytes followed by an AppID.
                 app_id = None
@@ -908,6 +878,50 @@ class StartProbe:
                     }
                 )
         return events, replies
+
+    def run_auth(self, kind, transaction, signature, events, replies):
+        if kind == 'certificate':
+            operation, args = self.proof.prepare_challenge, ()
+        else:
+            operation, args = self.proof.verify, (signature,)
+        if self.auth_executor is None:
+            self.finish_auth(kind, transaction, len(signature), lambda: operation(*args), events, replies)
+        else:
+            future = self.auth_executor.submit(operation, *args)
+            self.pending_auth = (future, kind, transaction, len(signature))
+
+    def finish_auth(self, kind, transaction, signature_bytes, result, events, replies):
+        try:
+            if kind == 'certificate':
+                challenge, size, keys = result()
+                replies.append(packet(b"\0\x16" + transaction + b"\0"))
+                self.auth_transaction = bytes.fromhex("8001")
+                replies.append(packet(b"\0\x17" + self.auth_transaction + challenge + b"\0"))
+                events.append(dict(state='iap_signature_challenge_sent', certificate_bytes=size,
+                                   public_keys=keys, challenge=challenge.hex(), chain_validation=False))
+            else:
+                ok, method = result()
+                replies.append(packet(b"\0\x19" + transaction + bytes([0 if ok else 1])))
+                events.append(dict(state='iap_accessory_key_proof', verified=ok, method=method,
+                                   signature_bytes=signature_bytes, chain_validation=False))
+                self.auth_transaction = None
+                self.authenticated = ok
+        except (ValueError, OSError, subprocess.TimeoutExpired) as exc:
+            events.append(dict(state=f'iap_{kind}_error', error=str(exc)))
+
+    def poll_auth(self):
+        events, replies = [], []
+        if self.pending_auth is not None:
+            future, kind, transaction, count = self.pending_auth
+            if future.done():
+                self.pending_auth = None
+                self.finish_auth(kind, transaction, count, future.result, events, replies)
+        return events, replies
+
+    def cancel_auth(self):
+        if self.pending_auth is not None:
+            self.pending_auth[0].cancel()
+            self.pending_auth = None
 
     def close_session(self, sid):
         self.vehicle_subscription.clear(sid)

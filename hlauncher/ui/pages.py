@@ -55,13 +55,13 @@ def network(ui):
         p.text((24,208),'Connect your phone or computer to the same Wi-Fi',18)
         p.text((24,248),'The new setup-page address will appear here when ready',17)
         present(ui,p);return
-    connection=network_status(ui.prefs.path.parent);address=connection.get('address')
+    connection=network_status();address=connection.get('address')
     if not address or address=='192.168.4.1':return hotspot(ui)
     p=page_for(ui,'Wi-Fi & pairing',getattr(ui,'recovery_return',ui.system_settings))
     p.label((24,128),'http://'+address+':8080',26)
     p.text((24,176),'Open this page on a device on the same network as the Pi',17)
     from ..ssh_access import status
-    ssh=status(ui.prefs.path.parent)
+    ssh=status()
     p.bar((24,224,696,280),'SSH access',ui.ssh_settings,value='On' if ssh['enabled'] else 'Off',size=30)
     p.button((24,316,696,364),'Use setup hotspot instead',ui.hotspot_page,size=21,secondary=True)
     p.text((24,420),'Use the page to connect Wi-Fi, pair a radio or install an update',16)
@@ -75,7 +75,7 @@ def wifi_power(ui):
     mode = prefs['wifi_power']
     delay = prefs['wifi_delay_boot']
     p = page_for(ui, 'Wi-Fi power', ui.system_settings)
-    status = network_status(ui.prefs.path.parent).get('wifi_state')
+    status = network_status().get('wifi_state')
     p.text((24, 121), {'on':'Wi-Fi is on', 'off':'Wi-Fi is off', 'asleep':'Wi-Fi is asleep',
                         'unavailable':'Wi-Fi status unavailable'}.get(status, 'Wi-Fi status pending'), 20)
     for left, right, label, value in ((24, 168, 'On', 'on'), (180, 324, 'Off', 'off'),
@@ -98,19 +98,20 @@ def hotspot(ui):
     parent=ui.network_resume if ui.mode=='hotspot_settings' else getattr(ui,'recovery_return',ui.system_settings)
     p=page_for(ui,'Setup hotspot',parent)
     creds=SetupState(ui.prefs.path.parent).credentials()
-    connection=network_status(ui.prefs.path.parent);ready=connection.get('address')=='192.168.4.1'
+    connection=network_status();ready=connection.get('address')=='192.168.4.1'
     p.text((24,116),'Connect your phone or computer to this temporary network',17)
     p.panel((24,156,696,244))
     for y,label,value in ((172,'Network',creds['ssid']),(208,'Password',creds['password'])):
         p.text((42,y),label,16);p.text((240,y),p.fit(value,432,17),17,fill='#efedf6')
-    p.label((24,268),'http://192.168.4.1:8080',25)
+    p.label((24,266),'http://192.168.4.1:8080',25)
+    p.text((24,298),'Setup login: hlauncher and the password above',16)
     result=job_status(ui.prefs.path.parent)
     queued=(ui.prefs.path.parent/'maintenance-request.json').exists()
     busy=queued or result.get('status')=='Working'
     if busy:p.text((24,334),'Applying connection changes…',20,fill='#efedf6')
     else:p.button((24,316,696,364),'Restart hotspot' if ready else 'Start setup hotspot',lambda:ui.maintenance('hotspot'),size=22)
     from ..ssh_access import status
-    ssh=status(ui.prefs.path.parent)
+    ssh=status()
     p.bar((24,380,696,436),'SSH access',ui.ssh_settings,value='On' if ssh['enabled'] else 'Off',size=30)
     message=ui.banner or (result.get('message','') if result.get('status')=='Failed' else '')
     if message:p.notice(message)
@@ -120,13 +121,14 @@ def hotspot(ui):
 
 def ssh(ui):
     from ..ssh_access import status
-    info=status(ui.prefs.path.parent)
+    info=status()
     p=page_for(ui,'SSH access',getattr(ui,'ssh_return',ui.recovery_page))
     p.bar((24,128,696,184),'SSH',lambda:ui.set_ssh(not info['enabled']),toggle=info['enabled'],size=30)
     p.panel((24,216,696,328))
     p.text((42,236),'Username',20);p.text((292,236),info['username'],22,fill='#efedf6')
     p.text((42,280),'Default password',20);p.text((292,280),info['password'],22,fill='#efedf6')
-    address=network_status(ui.prefs.path.parent).get('address')
+    p.text((24,338),'Enable only on a trusted network. Change the password with passwd.',16)
+    address=network_status().get('address')
     if address:p.text((24,368),'ssh '+info['username']+'@'+address,24,fill='#efedf6')
     result=job_status(ui.prefs.path.parent)
     busy=(ui.prefs.path.parent/'maintenance-request.json').exists() or result.get('status')=='Working'

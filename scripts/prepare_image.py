@@ -68,7 +68,7 @@ tmpfs /var/log tmpfs defaults,noatime,nosuid,nodev,size=32m,mode=0755 0 0
         subprocess.run(['systemctl','--root',str(root),'enable','hlauncher-updater.service'],check=True,capture_output=True)
     ssh_unit=root/'etc/systemd/system/ssh.service.d';ssh_unit.mkdir(parents=True,exist_ok=True)
     shutil.copy2(root/'opt/hlauncher/packaging/90-hlauncher-ssh.conf',ssh_unit/'90-hlauncher.conf')
-    subprocess.run(['systemctl','--root',str(root),'enable','ssh.service'],check=True,capture_output=True)
+    subprocess.run(['systemctl','--root',str(root),'disable','ssh.service'],check=True,capture_output=True)
     subprocess.run(['systemctl','--root',str(root),'disable','ssh.socket'],check=False,capture_output=True)
     # Kernel/partitions cannot expand past the state partition. The builder sizes root first.
     for path in (root/'boot/cmdline.txt', root/'boot/firmware/cmdline.txt'):

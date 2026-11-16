@@ -10,6 +10,7 @@ from pathlib import Path
 import re
 import shutil
 import tempfile
+import sys
 
 from .catalog import EXTERNAL_CAPABILITIES, Manifest, PLUGIN_ID, RESERVED_IDS, discover
 from .config import ROOT, STATE_DIR
@@ -319,6 +320,7 @@ def main(argv):
             from .plugin_preview import preview
             preview(Path(args.source), Path(args.output))
         elif args.action in ('install', 'update'):
+            print('External plugins run as root on the Pi. Install only code you trust.', file=sys.stderr)
             from .plugin_sources import github_repo, github_assets, fetch_asset
             repo = github_repo(args.source)
             if repo is None and not Path(args.source).expanduser().exists():

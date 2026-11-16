@@ -1,4 +1,6 @@
 """Local network setup/recovery site and serialized maintenance jobs."""
+import base64
+import hmac
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 import os
@@ -8,11 +10,9 @@ import subprocess
 import tempfile
 import threading
 import time
-from urllib.parse import urlsplit
-from .config import STATE_DIR, WIFI_POWER_MODES, Preferences
+from .config import RUNTIME_DIR, STATE_DIR, WIFI_POWER_MODES, Preferences
 from .setup_state import SetupState, atomic_json, address
 from .storage import configure, execute, status as storage_status
-from .ssh_access import status as ssh_status
 from .wifi_power import BOOT_HOLD, WifiPower
 
 UPDATER_CONFIG=Path('/etc/hlauncher-updater/config.json')
@@ -24,14 +24,19 @@ def request_job(operation, **values):
     # No shell commands are accepted. The daemon owns one fixed request queue.
     STATE_DIR.mkdir(parents=True, exist_ok=True)
     path = STATE_DIR/'maintenance-request.json'
-    fd = os.open(path, os.O_CREAT|os.O_EXCL|os.O_WRONLY, 0o600)
+    fd, pending = tempfile.mkstemp(prefix='.maintenance-', dir=STATE_DIR)
     try:
         with os.fdopen(fd,'w') as output:
             json.dump(dict(operation=operation, id=time.time_ns(), **values),output)
             output.flush(); os.fsync(output.fileno())
-    except BaseException:
-        path.unlink(missing_ok=True)
-        raise
+        os.link(pending, path)
+        directory = os.open(STATE_DIR, os.O_RDONLY)
+        try:
+            os.fsync(directory)
+        finally:
+            os.close(directory)
+    finally:
+        os.unlink(pending)
 
 
 def job_status(folder=STATE_DIR):
@@ -41,15 +46,15 @@ def job_status(folder=STATE_DIR):
 
 def connection_status():
     try:
-        item=json.loads(Path('/run/hlauncher/connection.json').read_text())
+        item=json.loads((RUNTIME_DIR/'connection.json').read_text())
         if time.monotonic()-item.get('monotonic',0)>5:return {'status':'Waiting for connection service'}
         return item
     except (OSError,ValueError,TypeError):return {'status':'Waiting for connection service'}
 
 
-def network_status(folder=STATE_DIR):
+def network_status(runtime=None):
     try:
-        item=json.loads((Path(folder)/'network-status.json').read_text())
+        item=json.loads(((runtime or RUNTIME_DIR)/'network-status.json').read_text())
         if 0<=time.monotonic()-item.get('monotonic',0)<10:return item
     except (OSError,ValueError,TypeError):pass
     return {}
@@ -199,6 +204,9 @@ class Maintenance:
                  'ipv4.addresses','192.168.4.1/24','ipv6.method','disabled',
                  'wifi-sec.key-mgmt','wpa-psk','wifi-sec.psk',creds['password'],
                  'connection.autoconnect','no'],'profile creation',timeout=10)
+        else:
+            run(['nmcli','connection','modify','HLauncher Recovery','802-11-wireless.ssid',creds['ssid'],
+                 'wifi-sec.psk',creds['password']], 'profile update', timeout=10)
         run(['nmcli','--wait','15','connection','up','HLauncher Recovery'],'activation',timeout=20)
         self.ap = True
         if self.portal:self.portal.start()
@@ -240,7 +248,7 @@ PAGE = '''<!doctype html><html><head><meta charset="utf-8"><meta name="viewport"
 <button onclick="wifi()">Connect to Wi-Fi</button></section>
 <section><h2>Local update</h2><p>Install a signed .hlu file from your computer. Your settings stay saved; HLauncher restarts after verification.</p>
 <label for="updatefile">Update file</label><input type="file" id="updatefile" accept=".hlu"><button id="uploadbutton" onclick="uploadUpdate()">Install local update</button><p id="uploadstatus" role="status"></p></section>
-<section><h2>SSH access</h2><p id="sshstate">Checking SSH…</p><p>Username: <b>pi</b><br>Default password: <b>raspberry</b></p><button id="sshbutton" class="secondary" onclick="toggleSSH()">Enable SSH</button></section>
+
 <details><summary>Radio pairing</summary><p>On the radio, open Settings → Phone → Connect a phone → Add Bluetooth device. Select HLauncher and confirm the pairing code. To replace the saved radio, reopen pairing below.</p>
 <button class="secondary" onclick="act('pair')">Forget radio and reopen pairing</button>
 <details><summary>Enter a radio address manually</summary><p>Use this only if the radio was not recognized automatically.</p><label for="peer">Bluetooth address</label><input id="peer" placeholder="AA:BB:CC:DD:EE:FF"><button class="secondary" onclick="manual()">Allow this radio for five minutes</button></details></details>
@@ -253,15 +261,16 @@ function act(operation){if(operation==='pair'&&!confirm('Forget the saved radio 
 function manual(){post('/api/manual',{address:document.getElementById('peer').value})}
 async function wifi(){if(!document.getElementById('ssid').value)return;let queued=await post('/api/job',{operation:'wifi',ssid:document.getElementById('ssid').value,password:document.getElementById('password').value,country:document.getElementById('country').value.toUpperCase()});if(queued){document.getElementById('password').value='';document.getElementById('notice').textContent='The Pi is switching networks. Reconnect this device to the same Wi-Fi afterward.'}}
 async function uploadUpdate(){let file=document.getElementById('updatefile').files[0];if(!file){document.getElementById('uploadstatus').textContent='Choose a .hlu file';return}if(!confirm('Install this signed update and restart HLauncher? Your plugins and their data will be kept. Some plugins may stop working after this update.'))return;let button=document.getElementById('uploadbutton');button.disabled=true;document.getElementById('uploadstatus').textContent='Uploading…';try{let response=await fetch('/api/update-file',{method:'POST',headers:{'Content-Type':'application/octet-stream'},body:file});let data=await response.json();if(!response.ok)throw new Error(data.error||'Upload failed');document.getElementById('uploadstatus').textContent='Uploaded. Verifying and installing; HLauncher will restart.'}catch(error){document.getElementById('uploadstatus').textContent=error.message}finally{button.disabled=false}}
-let sshEnabled=false;
-function toggleSSH(){post('/api/job',{operation:'ssh',enabled:!sshEnabled})}
 function debug(){post('/api/debug',{})}
-async function refresh(){try{let r=await fetch('/api/status');let data=await r.json();document.body.style.setProperty('--accent',themes[data.theme]||(/^#[0-9A-Fa-f]{6}$/.test(data.theme||'')?[1,3,5].map(i=>parseInt(data.theme.slice(i,i+2),16)).join(','):themes.Red));document.getElementById('capture').hidden=!data.debug;sshEnabled=!!data.ssh?.enabled;document.getElementById('sshstate').textContent=sshEnabled?'SSH is on':'SSH is off';document.getElementById('sshbutton').textContent=sshEnabled?'Disable SSH':'Enable SSH';let job=data.maintenance||{};if(job.status==='Working')document.getElementById('notice').textContent='Applying connection changes…';else if(job.status==='Failed')document.getElementById('notice').textContent=job.message||job.status;else if(job.status==='Done')document.getElementById('notice').textContent=''}catch{}}
+async function refresh(){try{let r=await fetch('/api/status');let data=await r.json();document.body.style.setProperty('--accent',themes[data.theme]||(/^#[0-9A-Fa-f]{6}$/.test(data.theme||'')?[1,3,5].map(i=>parseInt(data.theme.slice(i,i+2),16)).join(','):themes.Red));document.getElementById('capture').hidden=!data.debug;let job=data.maintenance||{};if(job.status==='Working')document.getElementById('notice').textContent='Applying connection changes…';else if(job.status==='Failed')document.getElementById('notice').textContent=job.message||job.status;else if(job.status==='Done')document.getElementById('notice').textContent=''}catch{}}
 refresh();setInterval(refresh,3000)
 </script></main></body></html>'''
 
 
 def handler_for(state, maintenance):
+    login = base64.b64encode(('hlauncher:'+state.credentials()['password']).encode()).decode()
+    expected = 'Basic '+login
+
     class Handler(BaseHTTPRequestHandler):
         def setup(self):
             super().setup(); self.connection.settimeout(10)
@@ -271,7 +280,20 @@ def handler_for(state, maintenance):
             self.send_response(code); self.send_header('Content-Type',kind)
             self.send_header('Cache-Control','no-store'); self.send_header('X-Content-Type-Options','nosniff')
             self.send_header('Content-Length',str(len(raw))); self.end_headers(); self.wfile.write(raw)
+        def authorized(self):
+            supplied = self.headers.get('Authorization', '')
+            if hmac.compare_digest(supplied.encode(), expected.encode()):
+                return True
+            self.send_response(401)
+            self.send_header('WWW-Authenticate', 'Basic realm="HLauncher setup"')
+            self.send_header('Cache-Control', 'no-store')
+            self.send_header('Content-Length', '0')
+            self.end_headers()
+            return False
+
         def do_GET(self):
+            if not self.authorized():
+                return
             if self.path == '/': return self.send(200,PAGE,'text/html; charset=utf-8')
             if self.path == '/ui-font.ttf':
                 path=Path(__file__).parent/'ui/assets/fonts/NotoSansJP.ttf'
@@ -280,13 +302,14 @@ def handler_for(state, maintenance):
                 with path.open('rb') as source:
                     while block:=source.read(65536):self.wfile.write(block)
                 return
+            prefs = Preferences(state.folder/'settings.json')
             if self.path == '/api/status':
                 return self.send(200,dict(radio=state.peer or 'Waiting for pairing',
-                    setup_complete=Preferences().data['setup_complete'], debug=Preferences().data['debug_mode'],
-                    maintenance=job_status(),storage=storage_status(),connection=connection_status(),
-                    network=network_status(),ssh=ssh_status(state.folder),theme=Preferences().data['tile_color']))
+                    setup_complete=prefs.data['setup_complete'], debug=prefs.data['debug_mode'],
+                    maintenance=job_status(state.folder),connection=connection_status(),
+                    network=network_status(),theme=prefs.data['tile_color']))
             if self.path == '/debug-capture':
-                if not Preferences().data['debug_mode']:return self.send(403,{'error':'Enable debug mode first'})
+                if not prefs.data['debug_mode']:return self.send(403,{'error':'Enable debug mode first'})
                 files=sorted((state.folder/'protocol-captures').glob('protocol-*.jsonl'))
                 if not files:return self.send(404,{'error':'No capture recorded yet'})
                 with files[-1].open('rb') as source:raw=source.read(8*1024*1024)
@@ -296,8 +319,8 @@ def handler_for(state, maintenance):
                 self.end_headers();self.wfile.write(raw);return
             if self.path == '/report':
                 # Production summary contains no raw packets, phone data or network passwords.
-                return self.send(200,dict(maintenance=job_status(),storage=storage_status(),
-                    debug=Preferences().data['debug_mode'],radio_verified=bool(state.peer)))
+                return self.send(200,dict(maintenance=job_status(state.folder),storage=storage_status(),
+                    debug=prefs.data['debug_mode'],radio_verified=bool(state.peer)))
             self.send(404,{'error':'Not found'})
         def upload_update(self):
             from . import updater, update_client
@@ -314,7 +337,7 @@ def handler_for(state, maintenance):
                 if info.get('phase') in ('checking','downloading','installing'):
                     return self.send(409,{'error':'Another update operation is running'})
                 size=int(self.headers.get('Content-Length','0'))
-                if not 0<size<=updater.MAX_PACKAGE+262144:raise ValueError('Invalid update file size')
+                if not 0<size<=updater.MAX_LOCAL_UPDATE:raise ValueError('Invalid update file size')
                 if (inbox/'local-update.hlu').exists() or (state.folder/'update-request.json').exists():
                     return self.send(409,{'error':'An update is already queued'})
                 import shutil
@@ -323,17 +346,25 @@ def handler_for(state, maintenance):
                 try:
                     with partial.open('wb') as output:
                         remaining=size
+                        deadline=time.monotonic()+600
                         while remaining:
-                            block=self.rfile.read(min(65536,remaining))
+                            budget=deadline-time.monotonic()
+                            if budget<=0:raise TimeoutError('Update upload deadline exceeded')
+                            self.connection.settimeout(min(10,budget))
+                            block=self.rfile.read1(min(65536,remaining))
                             if not block:raise ValueError('Upload was interrupted')
                             output.write(block);remaining-=len(block)
+                        if time.monotonic()>=deadline:raise TimeoutError('Update upload deadline exceeded')
+                        self.connection.settimeout(10)
                         output.flush();os.fsync(output.fileno())
                     os.replace(partial,inbox/'local-update.hlu');updater.sync_dir(inbox)
                     try:update_client.request('import',state.folder)
                     except Exception:
                         (inbox/'local-update.hlu').unlink(missing_ok=True)
                         raise
-                finally:partial.unlink(missing_ok=True)
+                finally:
+                    partial.unlink(missing_ok=True)
+                    self.connection.settimeout(10)
                 self.send(202,{'status':'Local update queued'})
             except BlockingIOError:self.send(409,{'error':'Another upload is running'})
             except (OSError,ValueError):self.send(400,{'error':'Local update upload failed; check storage and retry'})
@@ -341,8 +372,11 @@ def handler_for(state, maintenance):
 
         def do_POST(self):
             origin = self.headers.get('Origin')
-            if origin and urlsplit(origin).netloc != self.headers.get('Host'):
+            if (self.headers.get('Sec-Fetch-Site') in ('cross-site', 'same-site')
+                    or (origin and origin != 'http://'+self.headers.get('Host', ''))):
                 return self.send(403,{'error':'Origin rejected'})
+            if not self.authorized():
+                return
             if self.path=='/api/update-file':return self.upload_update()
             if self.headers.get('Content-Type','').split(';')[0] != 'application/json':
                 return self.send(415,{'error':'JSON required'})
@@ -352,19 +386,22 @@ def handler_for(state, maintenance):
                 data = json.loads(self.rfile.read(size))
                 if not isinstance(data,dict): raise ValueError('Invalid request')
                 if self.path == '/api/debug':
-                    prefs = Preferences(); prefs.data['debug_mode'] = not prefs.data['debug_mode']; prefs.save()
+                    prefs = Preferences(state.folder/'settings.json'); prefs.data['debug_mode'] = not prefs.data['debug_mode']; prefs.save()
                 elif self.path == '/api/manual':
                     peer = address(data.get('address',''))
                     if state.peer: raise ValueError('Forget the saved radio first')
                     state.open_pairing()
                     atomic_json(state.folder/'manual-peer.json',{'address':peer,'expires':time.time()+300})
                 elif self.path == '/api/job':
-                    if data.get('operation') not in ('pair','wifi','ssh'): raise ValueError('Operation unavailable here')
+                    if data.get('operation') not in ('pair','wifi'): raise ValueError('Operation unavailable here')
                     if maintenance.lock.locked(): raise ValueError('An operation is already running')
-                    request_job(**data)
+                    if data['operation'] == 'pair':
+                        request_job('pair')
+                    else:
+                        request_job('wifi', ssid=data.get('ssid'), password=data.get('password'), country=data.get('country'))
                 else: return self.send(404,{'error':'Not found'})
                 self.send(202,{'status':'Requested'})
-            except (ValueError,TypeError,OSError): self.send(400,{'error':'Invalid setup request'})
+            except (ValueError,TypeError,OSError,RecursionError): self.send(400,{'error':'Invalid setup request'})
     return Handler
 
 
@@ -444,7 +481,7 @@ def main():
             except (OSError, subprocess.SubprocessError): pass
             try:
                 from .ssh_access import refresh
-                refresh(state.folder)
+                refresh()
             except OSError:pass
             wifi_mode = prefs.data['wifi_power']
             try:
@@ -457,9 +494,9 @@ def main():
                 wifi_state = 'unavailable'
             try:
                 network = sample_network(maintenance.run)
-                atomic_json(state.folder/'network-status.json',
+                atomic_json(RUNTIME_DIR/'network-status.json',
                             dict(network, wifi_mode=wifi_mode, wifi_state=wifi_state,
-                                 wifi_delay_boot=prefs.data['wifi_delay_boot']))
+                                 wifi_delay_boot=prefs.data['wifi_delay_boot']), durable=False)
             except OSError:pass
             time.sleep(2)
     threading.Thread(target=worker,daemon=True).start()

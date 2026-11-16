@@ -3,9 +3,10 @@
 Update-enabled images keep application versions under `/persist/hlauncher`,
 separate from `/persist/state`, Bluetooth bonds, network profiles and user plugins.
 `/opt/hlauncher` points to `current/app`; `/opt/hlauncher-deps` points to
-`current/runtime`. Application updates work while OS overlay protection is on.
-OS/boot/package/service changes still require a new image or a separately
-validated writable-mode migration.
+`current/runtime`. Most application updates work with storage protection on. A release that
+changes the app's installed boot units requires writable mode. Changes to the
+base OS or the stable updater require a compatible image or a separately
+validated system migration.
 
 ## User operation
 
@@ -43,8 +44,10 @@ Settings are not copied over or restored from old snapshots. v1 accepts only
 state schema 1: releases must keep that schema backward-compatible. No downloaded
 install/migration scripts execute. Native runtime dependencies under
 `/opt/hlauncher-deps` travel with the app bundle; OS libraries remain in the base
-image. A changed system contract (system services, installers or stable updater)
-is rejected with a new-image requirement. Older source/development installations
+image. The image's updater checks the signed system contract against its trusted
+configuration. The contract covers the stable updater, its systemd unit,
+system drop-ins and provisioning scripts. Application-owned service files are
+updated separately with their app version. Older source/development installations
 without the versioned layout show that an update-enabled image is required;
 this feature does not repartition or convert a live personal Pi.
 
@@ -64,8 +67,9 @@ or rotated signing key requires a separately provisioned new trust anchor.
 
 ## Build a complete release
 
-Use an ARM64 Linux host/VM as root, a clean committed checkout, internet access,
-a pristine uncompressed Raspberry Pi OS Lite Bookworm ARM64 image, and the key.
+Use an ARM64 Linux host or VM as root, a clean committed checkout, internet
+access, a pristine uncompressed Raspberry Pi OS Lite Bookworm ARM64 image,
+and the signing key. Use a three-part numeric version such as `0.2.0`.
 There is no emulated macOS or x86 image build in these scripts.
 
 ```bash
@@ -80,7 +84,7 @@ The script builds native/Node dependencies once inside the image, then creates:
 - `HLauncher-0.2.0-local-update.hlu`: signed container for local network upload.
 - `hlauncher-release.json` and `.sig`: signed compatibility/checksum metadata.
 - `HLauncher-0.2.0-sources.tar.xz`: project and fetched external sources.
-- `release.pub`, `os-packages.txt`, `SHA256SUMS`, and `RELEASE-NOTES.md`.
+- `release.pub`, `os-packages.txt`, `SHA256SUMS`, `SHA256SUMS.sig`, and `RELEASE-NOTES.md`.
 
 The image is seeded with the same application files/version/manifest as the
 update bundle. The writable partition defaults to 4096 MiB; override
@@ -97,6 +101,10 @@ build details out of the release notes.
 Every future release must include both a production fresh-install image and all
 signed updater files. `scripts/validate_release.py` blocks incomplete releases,
 missing checksums, invalid signatures and local-test images before upload.
+`SHA256SUMS.sig` authenticates the checksum list with the release key. The
+validator checks that the flash image decompresses and has a partition table
+signature. It also compares the manual update's manifest, signature and
+payload with the matching release assets.
 
 Push the source commit, test the image, then upload
 all artifacts as a GitHub **draft** using authenticated GitHub CLI:
@@ -126,24 +134,36 @@ power-loss hardware acceptance are required in addition to the local tests.
 Open Settings → System → Software updates → Install local update file, or open
 Settings → System → Wi-Fi & pairing. Connect your computer to the Pi's network and visit its recovery
 page (`http://PI_ADDRESS:8080`, or `http://192.168.4.1:8080` on its hotspot).
-The page has no login; use a trusted local network. Choose a `.hlu` file
+Sign in as `hlauncher` with the device’s setup password on the setup hotspot or a trusted local network. Choose a `.hlu` file
 under Local update and install it. The file is streamed to disk, checked with the
 same pinned signing key, platform and version rules, and installed through the
 same transactional installer. No Internet or GitHub release is required.
 
 Local upload enforces same-origin browser requests, bounded file size, enough
-storage and an exclusive upload lock; the setup API has no login. Containers accept exactly
+storage, a ten-minute deadline and an exclusive upload lock. Containers accept exactly
 three regular files: manifest, signature and compressed package. Unsigned,
 tampered and incompatible files cannot activate. Interrupted uploads can be
 retried; an interrupted activation uses normal boot recovery. This endpoint is
 not a shell or an unsigned-install bypass.
 
-For a private development image with an additional SSH key, explicitly set
-`HLAUNCHER_LOCAL_TEST_SSH_KEY` to an Ed25519 public-key path during the build.
-The private SSH key never enters the image. The standard `pi` / `raspberry` login remains available, and the private test
-image additionally accepts that development key. The signed manifest marks
-it `local_test`, and the publishing script refuses to publish such an image.
-This option is for private first-flash diagnostics, not public releases.
+For a private, update-enabled development image, run `build_image.sh` with
+a separate test signing key, a fresh output directory and an Ed25519 public key
+for SSH. The production release wrapper rejects the development SSH option.
+
+```bash
+sudo env \
+  HLAUNCHER_LOCAL_TEST_SSH_KEY=/secure/local-test-ssh.pub \
+  HLAUNCHER_RELEASE_VERSION=0.2.0 \
+  HLAUNCHER_RELEASE_KEY=/secure/local-test-release.pem \
+  HLAUNCHER_RELEASE_OUTPUT=/releases/local-0.2.0 \
+  HLAUNCHER_RELEASE_COMMIT="$(git rev-parse HEAD)" \
+  bash scripts/build_image.sh /images/bookworm-arm64-lite.img \
+  /releases/hlauncher-local-0.2.0.img US
+```
+
+This builds an uncompressed test image and signed application assets. SSH for
+`hlauncher` uses the configured public key. The signed manifest marks the build
+`local_test`, which the publication validator rejects.
 
 After building a local-test release, a version-only update can be made without
 building the OS again:
@@ -157,4 +177,8 @@ python3 scripts/build_test_update.py --base /releases/local-0.2.0 \
 Upload its `.hlu`, verify 0.2.1 is installed, then choose Restore version 0.2.0 in
 Settings. This helper refuses production release inputs and never publishes.
 
-Boot services are installed from the signed application release. Activation, rollback and interrupted-update recovery restore the matching service files and reload systemd. Updates that change boot services require SD card protection to be disabled and a reboot first. The recovery daemon itself remains outside the release. Older images require a one-time verified updater preparation before accepting a release with a new system contract.
+Activation, rollback and interrupted-update recovery install the matching
+application service files and reload systemd. Turn off storage protection and
+reboot before switching to a version that changes those files. The stable
+updater runs outside the application release. To move to an incompatible
+system contract, use a new image or a separately provisioned compatible system.

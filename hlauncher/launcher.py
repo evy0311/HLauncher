@@ -1230,11 +1230,18 @@ class Launcher:
             self.audio_checked = time.monotonic()
             if self.audio_settings.refresh():self.draw()
         self.tone_test.tick()
+        if now - getattr(self, 'audio_process_checked', 0) >= 1:
+            self.audio_process_checked = now
+            if hasattr(self.audio.playback, 'check'):
+                self.audio.playback.check()
         self.host.tick()
         if now - getattr(self, 'projection_appearance_checked', 0) >= .1:
             self.projection_appearance_checked = now
             self.host.sync_projection_appearance()
-            self.host.sync_projection_gps(self.protocols.projection_gps())
+            carplay = self.host.workers.get('carplay')
+            self.host.sync_projection_gps(self.protocols.projection_gps(),
+                                          self.protocols.projection_gps(include_speed=True)
+                                          if getattr(carplay, 'car_gps', False) else None)
             if 'android-auto' in self.host.workers:
                 self.host.sync_projection_vehicle(self.protocols.projection_vehicle_state())
         if self.host.active=='obd' and time.monotonic()-getattr(self,'vehicle_gauge_sent',0)>=1/30:

@@ -158,7 +158,7 @@ class RadioUI(unittest.TestCase):
             return SimpleNamespace(stdout='192.168.68.21/24')
         self.assertEqual(sample_network(ethernet)['address'],'192.168.68.21')
         (self.folder/'network-status.json').write_text(json.dumps(dict(monotonic=time.monotonic()+100,address='old')))
-        self.assertEqual(network_status(self.folder),{})
+        self.assertEqual(network_status(runtime=self.folder),{})
 
     def test_red_is_fresh_default_and_saved_theme_is_preserved(self):
         path=self.folder/'fresh.json'

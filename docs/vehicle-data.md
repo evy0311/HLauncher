@@ -9,6 +9,8 @@ Vehicle data. Hardware tests → HondaLink vehicle data opens the same page.
   raw bytes and receipt/change counts. Previous/Next moves through the entries.
 - **Raw / status** shows subscription progress, raw-record counts and the latest
   authentication/decryption error.
+- **GPS** shows the current coordinate pair and its age. An incomplete pair is
+  reported as invalid, and a valid fix is marked stale after three seconds.
 - **Start recording** saves a bounded protocol capture, including raw records
   and decoded API values, under `/var/lib/hlauncher/protocol-captures`. Record a
   short session and stop it after testing. The existing capture storage limit
@@ -48,9 +50,26 @@ layout but is outside the original 168-entry ALL subscription and is not shown
 as a live reading by this test. Extra diagnostic field sets,
 friendly enum descriptions and Helpnet data assembly remain separate work.
 
-The OBD Gauges home tile requests only RPM, coolant temperature, accelerator
-pedal position, intake air temperature, native-scaled barometric pressure and VTEC
-status at a target 10 Hz. Barometric units remain unverified.
-Intake and VTEC use extra fields from the underlying native CAN layouts.
-BLE is inactive for gauges. Leaving both pages clears the telemetry subscription.
-See the OBD plugin README for conversions, freshness and fullscreen controls.
+The OBD Gauges home tile requests RPM, coolant temperature, accelerator pedal
+position, intake air temperature, native-scaled barometric pressure and VTEC
+status at a target 10 Hz. Intake and VTEC use extra fields from the native CAN
+layouts. The gauges use HondaLink. See the [OBD guide](../plugins/obd/README.md)
+for conversions, freshness and fullscreen controls.
+
+Projection adds its own read-only requests while a bundled worker is running.
+**Follow headlights** uses the HondaLink illumination signal and is on by
+default. **Use car built-in GPS** is off by default. With it on, both projection
+workers can receive fresh coordinates and CarPlay can include fresh speed in
+its NMEA fix. Android Auto receives speed and parking-brake state when
+available. Those two readings expire independently after two seconds for
+Android Auto's driving policy. A missing or stale reading keeps restrictions
+in effect. The brake comes from a HondaLink radio status message with an
+in-car test mapping. CarPlay parking-brake forwarding remains unverified.
+[CarPlay vehicle data](../plugins/carplay/README.md#vehicle-data) ·
+[Android Auto](../plugins/android-auto/README.md)
+
+Outside full diagnostics, HLauncher combines the masks for active consumers
+and clears the subscription when none remain. An active gauge or speed
+request uses a 100 ms interval. Illumination or GPS alone uses a one-second
+interval. These are requested intervals. Use receive timestamps to measure
+what the radio actually delivers.

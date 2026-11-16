@@ -292,7 +292,7 @@ class Updates(unittest.TestCase):
                 connection.request('POST','/api/update-file',b'file',{'Content-Type':'application/octet-stream','Origin':'http://unrelated.invalid'})
                 response=connection.getresponse();self.assertEqual(response.status,403);response.read()
                 auth='Basic '+base64.b64encode(('hlauncher:'+state.credentials()['password']).encode()).decode()
-                headers={'Content-Type':'application/octet-stream'}
+                headers={'Content-Type':'application/octet-stream','Authorization':auth}
                 connection.request('POST','/api/update-file',b'container bytes',headers)
                 response=connection.getresponse();self.assertEqual(response.status,202);response.read()
                 self.assertEqual((self.root/'inbox/local-update.hlu').read_bytes(),b'container bytes')

@@ -16,7 +16,7 @@ class HDMI(unittest.TestCase):
     def test_exact_test_pixels_bypass_rgb565_quantization(self):
         fb=Framebuffer();fb.fd=1;fb.kms=SimpleNamespace(present=Mock())
         image=Image.new('RGB',(3,1));image.putdata([(235,235,235),(239,239,239),(251,251,251)])
-        self.assertTrue(fb.image_exact(image))
+        self.assertTrue(fb.image_test(image))
         raw=fb.kms.present.call_args.args[0]
         self.assertEqual(len(raw),12)
         self.assertEqual([tuple(raw[i:i+3]) for i in (0,4,8)],[(235,235,235),(239,239,239),(251,251,251)])

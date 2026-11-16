@@ -342,6 +342,13 @@ if (process.argv.includes('--self-test')) {
       gps.subarray(20).toString('ascii') !== nmea) {
     throw Error('CarPlay vehicle GPS USB framing failed');
   }
+  const makeSpeedSentence = speed_expires_ms => new SendVehicleGps({
+    latitude: -33.5, longitude: 151.25, utc_ms: Date.UTC(2026, 0, 2, 3, 4, 5),
+    speed_kph: 18.52, speed_expires_ms,
+  }).getPayload().subarray(4).toString('ascii').split('\r\n')[1].split(',')[7];
+  if (makeSpeedSentence(Date.now() + 10000) !== '10.00' || makeSpeedSentence(0) !== '') {
+    throw Error('CarPlay GPS speed encoding or expiry failed');
+  }
   status('self_test_ok',{touch_messages:sent.length});
   if (realtime !== process.stdout) {
     packet(3,Buffer.from('pcm fixture'));

@@ -1,8 +1,10 @@
 // Copyright (C) 2026 Evan Horsley (evy0311). GPL-3.0; see LICENSE and NOTICE.
 // Wired-session endpoints. The HLauncher host owns Bluetooth and microphone capture.
 #pragma once
+#include <algorithm>
 #include <array>
 #include <optional>
+#include <boost/asio/steady_timer.hpp>
 #include <f1x/openauto/autoapp/Projection/IAudioInput.hpp>
 #include <f1x/openauto/autoapp/Service/MediaSource/MicrophoneMediaSourceService.hpp>
 #include <aasdk/Channel/SensorSource/SensorSourceService.hpp>
@@ -66,6 +68,15 @@ public:
 struct VehicleState {
     std::optional<int> speedMmPerSecond;
     std::optional<bool> parkingBrake;
+    using Clock = std::chrono::steady_clock;
+    Clock::time_point speedUntil = Clock::time_point::max();
+    Clock::time_point brakeUntil = Clock::time_point::max();
+
+    void expire() {
+        const auto now = Clock::now();
+        if (now >= speedUntil) speedMmPerSecond.reset();
+        if (now >= brakeUntil) parkingBrake.reset();
+    }
 };
 
 struct GpsFix {
@@ -82,7 +93,7 @@ class SessionSensors:public oa::service::IService,
     bool stopped=false;
     bool nightMode;
     bool carGps;
-    bool extendedSensors;
+    boost::asio::steady_timer vehicleExpiry;
     std::optional<GpsFix> gps;
     std::set<aap_protobuf::service::sensorsource::message::SensorType> subscriptions;
     VehicleState vehicle;
@@ -130,9 +141,9 @@ private:
     }
 public:
     SessionSensors(boost::asio::io_service& io,aasdk::messenger::IMessenger::Pointer messenger,bool initialNightMode,
-                   VehicleState initialVehicle, bool carGps, std::optional<GpsFix> gps, bool extendedSensors):
+                   VehicleState initialVehicle, bool carGps, std::optional<GpsFix> gps):
         strand(io),channel(std::make_shared<aasdk::channel::sensorsource::SensorSourceService>(strand,std::move(messenger))),
-        nightMode(initialNightMode), carGps(carGps), extendedSensors(extendedSensors), gps(gps), vehicle(initialVehicle){}
+        nightMode(initialNightMode), carGps(carGps), vehicleExpiry(io), gps(gps), vehicle(initialVehicle){}
     void setGps(std::optional<GpsFix> fix) {
         boost::asio::post(strand, [self=shared_from_this(), fix] {
             self->gps = fix;
@@ -146,20 +157,35 @@ public:
             if(self->subscriptions.count(Type::SENSOR_NIGHT_MODE))self->sendValue(Type::SENSOR_NIGHT_MODE);
         });
     }
+    void updateVehicle(VehicleState state) {
+        state.expire();
+        const auto previous = vehicle;
+        vehicle = state;
+        if (subscriptions.count(Type::SENSOR_SPEED) && previous.speedMmPerSecond != state.speedMmPerSecond)
+            sendValue(Type::SENSOR_SPEED);
+        if (subscriptions.count(Type::SENSOR_PARKING_BRAKE) && previous.parkingBrake != state.parkingBrake)
+            sendValue(Type::SENSOR_PARKING_BRAKE);
+        if (subscriptions.count(Type::SENSOR_DRIVING_STATUS_DATA) && drivingPolicy(previous) != drivingPolicy(state))
+            sendValue(Type::SENSOR_DRIVING_STATUS_DATA);
+        vehicleExpiry.cancel();
+        auto next = VehicleState::Clock::time_point::max();
+        if (state.speedMmPerSecond) next = state.speedUntil;
+        if (state.parkingBrake) next = std::min(next, state.brakeUntil);
+        if (stopped || next == VehicleState::Clock::time_point::max()) return;
+        vehicleExpiry.expires_at(next);
+        vehicleExpiry.async_wait(strand.wrap([weak=weak_from_this()](const boost::system::error_code& error) {
+            if (!error) {
+                if (auto self = weak.lock(); self && !self->stopped) self->updateVehicle(self->vehicle);
+            }
+        }));
+    }
     void setVehicle(VehicleState state) {
         boost::asio::post(strand, [self=shared_from_this(), state] {
-            auto previous = self->vehicle;
-            self->vehicle = state;
-            if (self->subscriptions.count(Type::SENSOR_SPEED) && previous.speedMmPerSecond != state.speedMmPerSecond)
-                self->sendValue(Type::SENSOR_SPEED);
-            if (self->subscriptions.count(Type::SENSOR_PARKING_BRAKE) && previous.parkingBrake != state.parkingBrake)
-                self->sendValue(Type::SENSOR_PARKING_BRAKE);
-            if (self->subscriptions.count(Type::SENSOR_DRIVING_STATUS_DATA) && drivingPolicy(previous) != drivingPolicy(state))
-                self->sendValue(Type::SENSOR_DRIVING_STATUS_DATA);
+            if (!self->stopped) self->updateVehicle(state);
         });
     }
-    void start()override{stopped=false;receive();}
-    void stop()override{stopped=true;subscriptions.clear();}
+    void start()override{stopped=false;updateVehicle(vehicle);receive();}
+    void stop()override{stopped=true;vehicleExpiry.cancel();subscriptions.clear();}
     void pause()override{} void resume()override{}
     void fillFeatures(aap_protobuf::service::control::message::ServiceDiscoveryResponse& response)override{
         auto* entry=response.add_channels();entry->set_id(static_cast<uint32_t>(channel->getId()));
@@ -196,7 +222,6 @@ public:
 private:
     bool supports(Type type) const {
         if (type == Type::SENSOR_LOCATION) return carGps;
-        if (type == Type::SENSOR_SPEED || type == Type::SENSOR_PARKING_BRAKE) return extendedSensors;
-        return type == Type::SENSOR_DRIVING_STATUS_DATA || type == Type::SENSOR_NIGHT_MODE;
+        return std::find(supportedTypes.begin(), supportedTypes.end(), type) != supportedTypes.end();
     }
 };

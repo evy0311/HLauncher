@@ -23,8 +23,9 @@ bash scripts/build_image.sh "$base" "$output/HLauncher-$version-pi4.img" "$count
 xz -T0 "$output/HLauncher-$version-pi4.img"
 rm "$output/HLauncher-$version-pi4.img.sha256"
 cp "$notes" "$output/RELEASE-NOTES.md"
-(cd "$output" && sha256sum HLauncher-"$version"-*.xz "HLauncher-$version-local-update.hlu" \
+(cd "$output" && sha256sum "HLauncher-$version-pi4.img.xz" "HLauncher-$version-pi4-arm64.tar.xz" "HLauncher-$version-sources.tar.xz" "HLauncher-$version-local-update.hlu" \
   hlauncher-release.json hlauncher-release.sig release.pub os-packages.txt RELEASE-NOTES.md > SHA256SUMS)
+openssl pkeyutl -sign -rawin -inkey "$key" -in "$output/SHA256SUMS" -out "$output/SHA256SUMS.sig"
 python3 scripts/validate_release.py "$version" "$output" >/dev/null
 echo "Release artifacts: $output"
 echo "Test them, then: bash scripts/publish_release.sh $version $output"

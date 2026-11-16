@@ -26,8 +26,40 @@ REPOSITORY = 'evy0311/HLauncher'
 UNITS = ('hlauncher.service', 'hlauncher-connect.service', 'hlauncher-pairing.service',
          'hlauncher-recovery.service', 'hlauncher-audio.service')
 MAX_PACKAGE = 2 * 1024**3
+MAX_LOCAL_UPDATE = MAX_PACKAGE + 262144
 MAX_UNPACKED = 6 * 1024**3
 RESERVE = 128 * 1024**2
+LOCAL_MEMBERS = {'manifest.json': 65536, 'manifest.sig': 1024, 'package.tar.xz': MAX_PACKAGE}
+
+
+def local_members(source):
+    """Read only the fixed regular-file headers produced by the .hlu builder."""
+    for name, limit in LOCAL_MEMBERS.items():
+        try:
+            member = tarfile.TarInfo.frombuf(source.read(tarfile.BLOCKSIZE), 'ascii', 'strict')
+        except (tarfile.HeaderError, UnicodeError) as exc:
+            raise ValueError('Invalid local update header') from exc
+        if member.name != name or member.type != tarfile.REGTYPE or not 0 < member.size <= limit:
+            raise ValueError('Invalid local update member')
+        end = source.tell() + member.size
+        yield name, member.size
+        if source.tell() != end:
+            raise ValueError('Incomplete local update member')
+        padding = (-member.size) % tarfile.BLOCKSIZE
+        if source.read(padding) != bytes(padding):
+            raise ValueError('Invalid local update padding')
+    trailer = source.read(tarfile.RECORDSIZE + 1)
+    if not 2 * tarfile.BLOCKSIZE <= len(trailer) <= tarfile.RECORDSIZE or any(trailer):
+        raise ValueError('Invalid local update trailer')
+
+
+def local_blocks(source, size):
+    while size:
+        data = source.read(min(1024 * 1024, size))
+        if not data:
+            raise ValueError('Incomplete local update file')
+        size -= len(data)
+        yield data
 
 
 def version(value):

@@ -13,6 +13,14 @@ does, or [build a complete release](updates.md#build-a-complete-release).
 Compute the checksum of the **compressed download**, then compare it with its
 filename's entry in `SHA256SUMS`. They must match exactly.
 
+For a release that supplies `SHA256SUMS.sig`, you can authenticate the
+checksum list with OpenSSL 3. In this example, `release.pub` is your trusted
+copy of the HLauncher public key.
+
+```bash
+openssl pkeyutl -verify -pubin -inkey release.pub -rawin -in SHA256SUMS -sigfile SHA256SUMS.sig
+```
+
 macOS:
 
 ```bash
@@ -61,8 +69,8 @@ manually expand the OS partition into that space.
 2. On the radio, open **Settings → Phone → Connect a phone → Add Bluetooth
    device**. Select **HLauncher** and confirm within the five-minute pairing
    window. No SSH commands or Bluetooth address edits are required.
-3. Open **HondaLink** and complete **Welcome → Apps → Startup → Appearance →
-   Network → Finish**. Enable the plugins you need. Phone/OBD connection setup
+3. Open **HondaLink**, read and accept the safety notice, then complete
+   **Welcome → Apps → Startup → Appearance → Network → Finish**. Enable the plugins you need. Phone/OBD connection setup
    is separate; see [CarPlay](../plugins/carplay/README.md),
    [Android Auto](../plugins/android-auto/README.md) or [OBD](../plugins/obd/README.md).
 4. Network setup is optional. Storage protection is offered only when the
@@ -76,16 +84,17 @@ The image already includes both projection engines, the services and the tested
 
 The initial HDMI welcome may be invisible until the radio is paired. An unpaired
 Pi without a Wi-Fi connection starts its **HLauncher-XXXX** hotspot when a valid
-Wi-Fi country is configured. Connect using **`raspberry`**, then open
+Wi-Fi country is configured. Connect using the device password in `HLAUNCHER-SETUP.txt` or on the radio, then open
 [http://192.168.4.1:8080](http://192.168.4.1:8080). On Ethernet/normal Wi-Fi, use
 `http://PI_ADDRESS:8080`. The page can reopen pairing or select a radio manually.
-It has no login and should stay on a trusted local network.
+Sign in as `hlauncher` with the device password. Use the setup hotspot or a trusted local network.
 
 After first boot, `HLAUNCHER-SETUP.txt` on the card's boot partition lists this
 Pi's connection details. Shut down before removing the card to read it on another
-computer. Image SSH defaults to username **`pi`**, password **`raspberry`**;
-Wi-Fi & pairing includes an SSH toggle. These defaults apply to managed images,
-not arbitrary source installations.
+computer. On a managed image, SSH starts off. Enable it on the radio under
+**Settings → System → Wi-Fi & pairing → SSH access**. The initial SSH login is
+**`hlauncher`** / **`ilovevtec1234`**. Change the password with `passwd` while
+storage protection is off so the change survives reboot.
 
 See [first boot, Wi-Fi and storage protection](onboarding.md) and
 [HDMI troubleshooting](setup.md#hdmi) for more detail.

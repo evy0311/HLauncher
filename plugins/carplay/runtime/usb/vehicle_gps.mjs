@@ -39,9 +39,12 @@ export class SendVehicleGps extends SendableMessageWithPayload {
     const time = iso.slice(11, 23).replaceAll(':', '');
     const date = iso.slice(8, 10) + iso.slice(5, 7) + iso.slice(2, 4);
     const coords = [...coordinate(latitude, 2, 'N', 'S'), ...coordinate(longitude, 3, 'E', 'W')];
-    // HondaLink supplies position only. Leave the other receiver fields empty.
+    const speed = this.fix.speed_kph;
+    const speedKnots = Date.now() < this.fix.speed_expires_ms &&
+      Number.isFinite(speed) && speed >= 0 && speed <= 400 ? (speed / 1.852).toFixed(2) : '';
+    // Leave unsupported receiver fields empty.
     const nmea = sentence(['GPGGA', time, ...coords, '1', '', '', '', '', '', '', '', '']) +
-      sentence(['GPRMC', time, 'A', ...coords, '', '', date, '', '', 'A']);
+      sentence(['GPRMC', time, 'A', ...coords, speedKnots, '', date, '', '', 'A']);
     const ascii = Buffer.from(nmea, 'ascii');
     const size = Buffer.alloc(4);
     size.writeUInt32LE(ascii.length);

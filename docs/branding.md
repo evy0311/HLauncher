@@ -28,4 +28,4 @@ the phone to refresh the icon. Firmware without OEM icon support may ignore it.
 Selecting the OEM icon uses the existing adapter home command to return to
 HLauncher.
 
-Adapter icon requests from Settings are saved until the CarPlay worker and adapter are ready; opening the CarPlay tile first is not required. Files and protocol writes are serialized. The UI reports a transfer, not firmware read-back or a refreshed iPhone cache. Reconnect the phone to check the OEM icon and label. A failed request can be retried with Apply.
+Adapter icon requests from Settings are saved until the CarPlay worker and adapter are ready; opening the CarPlay tile first is not required. Files and protocol writes are serialized. The UI reports a transfer, not firmware read-back or a refreshed iPhone cache. Reconnect the phone to check the OEM icon and label. Use **Apply to adapter** to retry a failed request.

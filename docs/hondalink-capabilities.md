@@ -26,13 +26,13 @@ material or downloaded customer data is included in this repository.
 | Destination information | `GetDestinationPlace` reads cached head-unit authentication metadata | Not a demonstrated API for reading the active route destination; preserve its distinction from navigation coordinates. |
 | Radio clock correction | Local calendar, base UTC offset and DST flag in binary data type 3 | Not implemented; useful for clock synchronization if the radio advertises support. |
 | Voice recognition lifecycle | Availability, start/capability and end notices; incoming start callback | Partial radio/HFP/voice observation exists, but this HondaLink lifecycle is not a complete plugin service. |
-| Exit phone display | A short control message asks to exit the phone display | Not exposed as a plugin command. Different from returning to HLauncher's own Home page. |
+| Exit phone display | A short control message asks to exit the phone display | Available as a Debug integration probe. The local plugin Home action returns to HLauncher. |
 | Meter navigation guidance | Heading, destination direction, guidance flags/types, language and distance become CAN-data type 4 | Not implemented. Constructors recovered, but stock Civic parser rejects the query and packet form; see the meter-guidance trace. |
 | VIN, head-unit identity, location, ignition count | Virtual records alongside physical CAN data | Aggregate parsing/diagnostics implemented; no general plugin telemetry subscription API yet. |
 | DTC / freeze-frame context | Normal data type 0; B-CAN DTC 1; F-CAN DTC 2; F-CAN freeze-frame 3 | Diagnostics subscribe and retain records; friendly diagnostic decoding/presentation is incomplete. No ECU fault-clearing API is established. |
 | Helpnet | CAN-data type 7 has special multipart assembly | No complete assembly/consumer implementation; do not treat each part as a full report. |
 | Steering and connection state | Source mode AUDIO/APP/UNKNOWN and head-unit state callbacks | Core input/source-mode handling exists; no complete SDK-equivalent plugin event contract. |
-| Driving and parking-brake state | Separate native/JS state APIs | Parking-brake observation exists; document/test driving-state mapping before exposing it as authoritative. |
+| Driving and parking-brake state | Separate native/JS state APIs | HondaLink brake and speed feed the bundled Android Auto driving policy with independent freshness limits. See [vehicle data](vehicle-data.md). |
 | Trip and maintenance history | Native storage includes trips, fuel totals, mileage, tire pressure, warning context and maintenance messages | Storage schemas are evidence of app behavior, not additional radio commands; future logging plugins can derive history from supported readings. |
 | CRM messages | Read/listen, mark state and delete app-side messages | Not implemented. Message deletion/state updates are distinct from clearing ECU DTCs or resetting maintenance. |
 
@@ -191,9 +191,11 @@ preset setting:   dataType8 00 subcategory24be
 Mode 0 is cyclic; ticks are tenths of a second. The original default is one
 second. Physical selectors are B-CAN 0, F-CAN 1, OTHER 2; diagnostic settings
 add 3. Original ALL plus feature metadata requests 54 distinct message IDs,
-and the four settings are split over two payloads. HLauncher scopes requests
-to the visible consumer; a faster gauge setting does not change diagnostic
-polling. Actual reception cadence is established by timestamps, not requests.
+and the four settings are split over two payloads. HLauncher adds an experimental
+i-MID audio-switch record to that full diagnostic request. Outside diagnostics,
+it combines masks for active gauges and projection workers, including
+headlights, speed and optional GPS. Full diagnostics keeps its one-second
+interval. Receive timestamps establish actual cadence.
 
 The encrypted normal receive body follows `C1 00 02 sequence8 date32be time32be
 dataType8 bodySize24be`. Decrypt the body before reading its record count:

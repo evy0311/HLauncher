@@ -28,7 +28,8 @@ def public_key(private, output):
 
 def contract(app):
     # Bundles cannot silently alter immutable system services/dependencies/updater.
-    patterns=('packaging/*.service','packaging/*.conf','scripts/install*.sh','scripts/configure_phone_identity.py',
+    # Application-owned units are installed and rolled back with the bundle.
+    patterns=('packaging/hlauncher-updater.service','packaging/*.conf','scripts/install*.sh','scripts/configure_phone_identity.py',
               'hlauncher/updater.py','hlauncher/update_service.py','scripts/trim_runtime.py')
     paths=sorted({path for pattern in patterns for path in app.glob(pattern) if path.is_file()})
     digest=hashlib.sha256()
@@ -68,7 +69,7 @@ def local_container(output, version, archive):
     """One portable signed file for authenticated local upload, with no GitHub dependency."""
     output=Path(output)
     path=output/f'HLauncher-{version}-local-update.hlu'
-    with tarfile.open(path,'w') as container:
+    with tarfile.open(path,'w',format=tarfile.USTAR_FORMAT) as container:
         for name,source in (('manifest.json',output/'hlauncher-release.json'),
                             ('manifest.sig',output/'hlauncher-release.sig'),('package.tar.xz',Path(archive))):
             info=container.gettarinfo(str(source),arcname=name)

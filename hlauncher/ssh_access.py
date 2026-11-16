@@ -1,13 +1,13 @@
 """Managed password SSH and cached status for the local network settings UI."""
 import json
-import os
 from pathlib import Path
 import shutil
 import subprocess
+from .config import RUNTIME_DIR
 from .setup_state import atomic_json
 
-USERNAME='pi'
-DEFAULT_PASSWORD='raspberry'
+USERNAME='hlauncher'
+DEFAULT_PASSWORD='ilovevtec1234'
 MANAGED=Path('/etc/hlauncher-ssh-managed')
 
 
@@ -15,21 +15,21 @@ def execute(args, **kwargs):
     return subprocess.run(args,check=kwargs.pop('check',True),text=True,capture_output=True,timeout=15,**kwargs)
 
 
-def status(folder):
+def status(runtime=None):
     try:
-        value=json.loads((Path(folder)/'ssh-status.json').read_text())
+        value=json.loads(((runtime or RUNTIME_DIR)/'ssh-status.json').read_text())
         return dict(available=value.get('available') is True,enabled=value.get('enabled') is True,
                     username=USERNAME,password=DEFAULT_PASSWORD)
     except (OSError,ValueError,TypeError,AttributeError):
         return dict(available=False,enabled=False,username=USERNAME,password=DEFAULT_PASSWORD)
 
 
-def refresh(folder,run=execute):
-    available=bool(shutil.which('sshd',path='/usr/sbin:/usr/bin:/sbin:/bin'))
+def refresh(run=execute, *, runtime=None):
+    available=MANAGED.is_file() and bool(shutil.which('sshd',path='/usr/sbin:/usr/bin:/sbin:/bin'))
     try: enabled=run(['systemctl','is-active','ssh.service'],check=False).returncode==0 if available else False
     except (OSError,subprocess.SubprocessError):enabled=False
     value=dict(available=available,enabled=enabled,username=USERNAME,password=DEFAULT_PASSWORD)
-    atomic_json(Path(folder)/'ssh-status.json',value)
+    atomic_json((runtime or RUNTIME_DIR)/'ssh-status.json', value, durable=False)
     return value
 
 
@@ -37,44 +37,54 @@ def initialize(folder,run=execute,system=Path('/')):
     """Configure only an explicitly managed image; never reset a later password."""
     folder=Path(folder);system=Path(system)
     marker=folder/'ssh-initialized.json'
-    if marker.exists():return
+    if marker.exists():
+        try:
+            if json.loads(marker.read_text()).get('username') == USERNAME:return
+        except (OSError, ValueError, AttributeError):pass
     if not (system/'etc/hlauncher-ssh-managed').exists():return
     users=(system/'etc/passwd').read_text().splitlines()
     if not any(line.startswith(USERNAME+':') for line in users):
         run(['useradd','-m','-s','/bin/bash','-G','sudo',USERNAME])
     else:run(['usermod','-aG','sudo','-s','/bin/bash',USERNAME])
+    if any(line.startswith('pi:') for line in users):
+        run(['passwd','-l','pi'])
     # Passwords never enter process arguments or logs.
-    run(['chpasswd'],input=USERNAME+':'+DEFAULT_PASSWORD+'\n')
     dropin=system/'etc/ssh/sshd_config.d';dropin.mkdir(parents=True,exist_ok=True)
-    (dropin/'00-hlauncher.conf').write_text('PasswordAuthentication yes\nKbdInteractiveAuthentication no\nPermitRootLogin no\nPubkeyAuthentication yes\n')
-    (dropin/'00-hlauncher-local-test.conf').unlink(missing_ok=True)
+    if not (system/'etc/hlauncher-ssh-autostart').is_file():
+        run(['chpasswd'],input=USERNAME+':'+DEFAULT_PASSWORD+'\n')
+        (dropin/'00-hlauncher.conf').write_text(
+            'PasswordAuthentication yes\nKbdInteractiveAuthentication no\nPermitRootLogin no\n'
+            'PubkeyAuthentication yes\nAllowUsers hlauncher\n')
+        (dropin/'00-hlauncher-local-test.conf').unlink(missing_ok=True)
     (dropin/'rename_user.conf').unlink(missing_ok=True)
     (system/'run/sshd').mkdir(mode=0o755,parents=True,exist_ok=True)
     run(['ssh-keygen','-A'])
     run(['/usr/sbin/sshd','-t'])
-    # The persistent ssh-disabled marker gates boot even with an overlay OS.
-    run(['systemctl','enable','ssh.service'])
-    run(['systemctl','disable','ssh.socket'],check=False)
     atomic_json(marker,dict(username=USERNAME,configured=True))
 
 
-def apply(enabled,folder,run=execute,boot=False):
+def apply(enabled,folder,run=execute,boot=False, *, runtime=None):
     if type(enabled) is not bool:raise ValueError('Choose SSH On or Off')
     from .config import Preferences
     folder=Path(folder)
     if not shutil.which('sshd',path='/usr/sbin:/usr/bin:/sbin:/bin'):
         raise ValueError('SSH server is not installed')
+    if not MANAGED.is_file():raise ValueError('SSH controls require a managed HLauncher image')
     initialize(folder,run)
-    marker=folder/'ssh-disabled'
+    marker=folder/'ssh-enabled'
     if enabled:
-        marker.unlink(missing_ok=True)
+        atomic_json(marker, dict(enabled=True))
         command=['systemctl','start']+(['--no-block'] if boot else [])+['ssh.service']
-        run(command)
-        if not boot:run(['systemctl','reload','ssh.service'])
+        try:
+            run(command)
+        except (OSError, subprocess.SubprocessError):
+            marker.unlink(missing_ok=True)
+            raise
     else:
-        atomic_json(marker,dict(disabled=True))
+        marker.unlink(missing_ok=True)
         command=['systemctl','stop']+(['--no-block'] if boot else [])
         run([*command,'ssh.socket'],check=False)
         run([*command,'ssh.service'])
-    prefs=Preferences(folder/'settings.json');prefs.data['ssh_enabled']=enabled;prefs.save()
-    return refresh(folder,run)
+    if not boot:
+        prefs=Preferences(folder/'settings.json');prefs.data['ssh_enabled']=enabled;prefs.save(force=('ssh_enabled',))
+    return refresh(run, runtime=runtime)

@@ -10,6 +10,7 @@ import tempfile
 
 ROOT = Path(__file__).resolve().parents[1]
 STATE_DIR = Path(os.environ.get("HLAUNCHER_STATE_DIR", "/var/lib/hlauncher"))
+RUNTIME_DIR = Path(os.environ.get("HLAUNCHER_RUNTIME_DIR", "/run/hlauncher"))
 LOG_DIR = Path(os.environ.get("HLAUNCHER_LOG_DIR", "/var/log/hlauncher"))
 RADIO_ADDRESS = os.environ.get("HLAUNCHER_RADIO_ADDRESS", "00:00:00:00:00:00").upper()
 if not re.fullmatch(r"(?:[0-9A-F]{2}:){5}[0-9A-F]{2}", RADIO_ADDRESS):
@@ -46,7 +47,7 @@ class Preferences:
         self.path = Path(path) if path else STATE_DIR / "settings.json"
         self.data = {"enabled": {}, "background": {}, "default_plugin": None, "tile_color": "Red", "custom_color": "#198B96",
                      "setup_complete": False, "setup_step": 0, "safety_notice_version": 0,
-                     "debug_mode": False, "show_clock": False, "ssh_enabled": True, "wifi_power": "on",
+                     "debug_mode": False, "show_clock": False, "ssh_enabled": False, "wifi_power": "on",
                      "wifi_delay_boot": False,
                      "home_pages": [], "carplay_fps": CARPLAY_FRAME_RATES[0],
                      "carplay_auto_night": True, "android_auto_auto_night": True,
@@ -64,7 +65,7 @@ class Preferences:
                 self.data['safety_notice_version'] = version
             self.data['debug_mode'] = loaded.get('debug_mode', False) is True
             self.data['show_clock'] = loaded.get('show_clock', False) is True
-            self.data['ssh_enabled'] = loaded.get('ssh_enabled', True) is True
+            self.data['ssh_enabled'] = loaded.get('ssh_enabled', False) is True
             if loaded.get('wifi_power') in WIFI_POWER_MODES:
                 self.data['wifi_power'] = loaded['wifi_power']
             self.data['wifi_delay_boot'] = loaded.get('wifi_delay_boot') is True

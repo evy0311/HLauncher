@@ -258,8 +258,9 @@ class Manager:
             page.text((24, 196), 'Requests ' + (', '.join(sorted(manifest.permissions | manifest.capabilities)) or 'no launcher features'), 18)
             if installed:
                 page.text((24, 236), f'Currently installed {installed.version} · {installed.origin[:55]}', 18)
-            page.text((24, 276), 'Plugins run with full system access. Install only trusted code.', 18)
-            page.text((24, 311), 'SHA-256  ' + digest[:24] + '…', 17)
+            page.text((24, 276), 'Runs as root with full access to your Pi and its data.', 19)
+            page.text((24, 300), 'Install only code you trust.', 18)
+            page.text((24, 329), 'SHA-256  ' + digest[:24] + '…', 17)
             page.button((24, 360, 696, 414), 'Install update' if installed else 'Install plugin', self.install)
         elif self.view == 'remove':
             page.label((24, 120), ui.manifests[self.target].name, 27)

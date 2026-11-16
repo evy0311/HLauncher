@@ -3,7 +3,6 @@ import argparse
 from pathlib import Path
 import shutil
 import time
-import tarfile
 try:
     from . import updater
 except ImportError:
@@ -83,18 +82,20 @@ class Service:
         if staging.exists():shutil.rmtree(staging)
         staging.mkdir()
         try:
-            if uploaded.stat().st_size>updater.MAX_PACKAGE+262144:raise ValueError('Local update file is too large')
+            if uploaded.stat().st_size > updater.MAX_LOCAL_UPDATE:
+                raise ValueError('Local update file is too large')
             self.report('installing','Verifying local update file')
-            allowed={'manifest.json':65536,'manifest.sig':1024,'package.tar.xz':updater.MAX_PACKAGE}
-            seen=set()
-            with tarfile.open(uploaded,'r:') as container:
-                for member in container:
-                    if (member.name not in allowed or member.name in seen or not member.isfile() or
-                            not 0<member.size<=allowed[member.name]):raise ValueError('Invalid local update container')
-                    seen.add(member.name)
-                    with container.extractfile(member) as source,(staging/member.name).open('xb') as output:
-                        shutil.copyfileobj(source,output)
-            if seen!=set(allowed):raise ValueError('Incomplete local update file')
+            with uploaded.open('rb') as source:
+                for name, size in updater.local_members(source):
+                    if name == 'package.tar.xz':
+                        manifest = staging/'manifest.json'
+                        updater.verify_signature(manifest, staging/'manifest.sig', self.config['public_key'])
+                        info = updater.validate_manifest(updater.read(manifest), self.config)
+                        if size != info['size']:
+                            raise ValueError('Local package differs from signed metadata')
+                    with (staging/name).open('xb') as output:
+                        for data in updater.local_blocks(source, size):
+                            output.write(data)
             self.installer.install(staging/'manifest.json',staging/'manifest.sig',staging/'package.tar.xz')
             (self.cache/'offer.json').unlink(missing_ok=True)
             self.report('idle','Local update installed')

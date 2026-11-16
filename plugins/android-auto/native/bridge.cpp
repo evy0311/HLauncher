@@ -37,6 +37,7 @@
 #include <csignal>
 #include <set>
 #include <algorithm>
+#include <time.h>
 
 namespace oa = f1x::openauto::autoapp;
 namespace media = aap_protobuf::service::media::sink::message;
@@ -244,7 +245,7 @@ public:
           services.emplace_back(std::make_shared<ProjectionPhoneStatus>(io, messenger, out));
           services.emplace_back(std::make_shared<ProjectionMediaStatus>(io, messenger, out));
       }
-      auto sessionSensors=std::make_shared<SessionSensors>(io,messenger,nightMode,vehicle,carGps,gps,extendedServices);
+      auto sessionSensors=std::make_shared<SessionSensors>(io,messenger,nightMode,vehicle,carGps,gps);
       sensors=sessionSensors;
       services.emplace_back(std::move(sessionSensors));
       services.emplace_back(std::make_shared<oa::service::inputsource::InputSourceService>(io,messenger,input));
@@ -283,11 +284,15 @@ int main(int argc,char** argv){
     }
 
     if(argc>1&&std::string(argv[1])=="--check-driving-policy"){
+      VehicleState stale{0, true};
+      stale.brakeUntil = VehicleState::Clock::now();
+      stale.expire();
       std::cout<<"{\"driving_status\":"<<SessionSensors::drivingPolicy({})<<",\"parked_status\":"
                <<SessionSensors::drivingPolicy({0, true})<<",\"moving_status\":"
                <<SessionSensors::drivingPolicy({5000, true})<<"}\n";
       return SessionSensors::drivingPolicy({0,true}) != 0 ||
              SessionSensors::drivingPolicy({5000,true}) == 0 ||
+             SessionSensors::drivingPolicy(stale) == 0 ||
              SessionSensors::drivingPolicy({}) == 0;
     }
 
@@ -310,8 +315,10 @@ int main(int argc,char** argv){
         }
         if(channel.has_sensor_source_service()){
           std::set<int> types;for(const auto& sensor:channel.sensor_source_service().sensors())types.insert(sensor.sensor_type());
-          auto expected = std::set<int>{10,13};
-          if (gps) expected.insert(1);
+          using Type = aap_protobuf::service::sensorsource::message::SensorType;
+          auto expected = std::set<int>{Type::SENSOR_DRIVING_STATUS_DATA, Type::SENSOR_NIGHT_MODE,
+                                        Type::SENSOR_SPEED, Type::SENSOR_PARKING_BRAKE};
+          if (gps) expected.insert(Type::SENSOR_LOCATION);
           sensors = types == expected;
         }
         if(channel.has_input_source_service()){
@@ -393,10 +400,24 @@ int main(int argc,char** argv){
       }
       if (obj["type"].toString() == "projection.vehicle") {
         VehicleState state;
+        // Python's monotonic timestamps survive pipe and worker queue delays.
+        timespec monotonic{};
+        const bool haveClock = clock_gettime(CLOCK_MONOTONIC, &monotonic) == 0;
+        const double now = monotonic.tv_sec + monotonic.tv_nsec / 1e9;
+        const auto arrival = VehicleState::Clock::now();
+        const double speedRemaining = obj["speed_until"].toDouble() - now;
         const auto speed = obj["speed_kph"];
-        if (speed.isDouble() && speed.toDouble() >= 0 && speed.toDouble() <= 400)
-          state.speedMmPerSecond = static_cast<int>(std::lround(speed.toDouble() * (1000.0 / 3.6)));
-        if (obj["parking_brake"].isBool()) state.parkingBrake = obj["parking_brake"].toBool();
+        if (haveClock && speedRemaining > 0 && speedRemaining <= 2 &&
+            speed.isDouble() && speed.toDouble() >= 0 && speed.toDouble() <= 400) {
+          const auto converted = static_cast<int>(std::lround(speed.toDouble() * (1000.0 / 3.6)));
+          state.speedMmPerSecond = speed.toDouble() == 0 ? 0 : std::max(1, converted);
+          state.speedUntil = arrival + std::chrono::milliseconds(static_cast<int>(speedRemaining * 1000));
+        }
+        const double brakeRemaining = obj["brake_until"].toDouble() - now;
+        if (haveClock && brakeRemaining > 0 && brakeRemaining <= 2 && obj["parking_brake"].isBool()) {
+          state.parkingBrake = obj["parking_brake"].toBool();
+          state.brakeUntil = arrival + std::chrono::milliseconds(static_cast<int>(brakeRemaining * 1000));
+        }
         io.post([&services, state] { services.setVehicle(state); });
       }
       if(obj["type"].toString()=="projection.appearance" && obj["night_mode"].isBool()){

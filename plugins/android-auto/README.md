@@ -44,14 +44,13 @@ the call and navigation; the Pi bridges the audio and controls.
 
 Auto day/night mode uses HLauncher's HondaLink illumination signal. Android Auto
 also gets speed and the parking brake state when the radio reports them. Driving
-restrictions stay on unless the brake is set and fresh speed reads zero.
+restrictions stay on unless a fresh parking-brake reading says engaged and fresh speed reads zero. Both readings expire after two seconds.
 Enable **Use car built-in GPS** on the Android Auto plugin page to advertise
 location and send fresh HondaLink coordinates when the phone subscribes.
 The phone still decides how to use those coordinates. Wireless Android Auto
 is outside this integration.
 The default discovery profile uses the original seven channels for phone
-compatibility. The optional extended telephony, media status and driving sensor
-profile is available for testing with `HLAUNCHER_AA_EXTENDED_SERVICES=1`.
+compatibility. The optional extended telephony and media status profile is available for testing with `HLAUNCHER_AA_EXTENDED_SERVICES=1`.
 
 CarPlay and Android Auto share an exclusive projection lease. Selecting the other
 plugin stops the previous session and waits for USB release; automatic CarPlay

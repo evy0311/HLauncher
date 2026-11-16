@@ -141,24 +141,36 @@ class ProtocolDiagnostics:
                 for row in rows if row['received']}
             return dict(connected=self.connected,monotonic=now,readings=readings)
 
-    def projection_gps(self):
+    def projection_speed(self, now):
+        speed, = self.vehicle.signals.snapshot(now, {152})
+        if speed['received'] and 0 <= speed['age_seconds'] < 2 and 0 <= speed['value'] <= 400:
+            return speed['value'], speed['at'] + 2
+        return None, None
+
+    def projection_gps(self, *, include_speed=False):
+        now = time.monotonic()
         with self.lock:
-            gps = self.vehicle.snapshot_gps()
+            gps = self.vehicle.snapshot_gps(now)
             if not self.connected or not gps or gps['stale'] or gps['fix'] is None:
                 return None
             latitude, longitude = gps['fix']
-            return dict(latitude=latitude, longitude=longitude, at=gps['at'])
+            fix = dict(latitude=latitude, longitude=longitude, at=gps['at'])
+            if include_speed:
+                speed, until = self.projection_speed(now)
+                if until is not None and abs(gps['at'] - (until - 2)) <= 1:
+                    fix.update(speed_kph=speed, speed_until=until)
+            return fix
 
     def projection_vehicle_state(self, now=None):
         now = time.monotonic() if now is None else now
+        state = dict(speed_kph=None, parking_brake=None, speed_until=None, brake_until=None)
         with self.lock:
-            if not self.connected:
-                return dict(speed_kph=None, parking_brake=None)
-            speed, = self.vehicle.signals.snapshot(now, {152})
-            return dict(
-                speed_kph=speed['value'] if speed['received'] and speed['age_seconds'] <= 2 else None,
-                parking_brake=self.vehicle.status.get('parking_brake_engaged'),
-            )
+            if self.connected:
+                state['speed_kph'], state['speed_until'] = self.projection_speed(now)
+                brake = self.vehicle.status
+                if 'at' in brake and 0 <= now - brake['at'] < 2:
+                    state.update(parking_brake=brake['parking_brake_engaged'], brake_until=brake['at'] + 2)
+        return state
 
     def illumination_night_mode(self, now=None):
         now = time.monotonic() if now is None else now

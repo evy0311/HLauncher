@@ -56,12 +56,25 @@ For testing, enable Debug and use the HondaLink Calls/mic diagnostics described
 in [recording a drive test](../../docs/setup.md#record-a-hondalink-drive-test).
 [Radio controls](../../docs/radio-buttons.md) documents button forwarding.
 
-## Frame rate and picture controls
+## Vehicle data
 
 **Use car built-in GPS** on the CarPlay plugin page enables GPS reporting on
 the adapter and forwards live HondaLink coordinates as NMEA. The adapter must
-support the host GPS capability. The iPhone decides how it uses the coordinates.
+support the host GPS capability. When a fresh HondaLink speed sample accompanies
+the position, HLauncher includes it in the NMEA speed field. The iPhone decides
+how to use those readings.
 Changing the switch reconnects an active projection.
+
+**Parking brake.** HLauncher reads the parking brake through HondaLink. Forwarding
+to CarPlay is unverified on our test adapter (USB `1314:1520`, firmware
+`2020.10.27.1239CAY`). The newer CPC200-CCPA firmware `2025.10.15.1127` has a
+documented GPS and speed path, but the published USB captures and firmware analysis
+give no message format for a host to send the parking brake. The plan is to add
+forwarding for compatible adapter firmware once a bench capture confirms how to
+send engaged and released states and how to handle a lost HondaLink feed.
+[CPC200-CCPA USB protocol research](https://github.com/lvalen91/CPC200-CCPA_resources/blob/main/documentation/02_Protocol_Reference/usb_protocol.md)
+
+## Frame rate and picture controls
 
 Open **Settings → Plugins → CarPlay → Frame rate** to switch between 30 and 60 FPS.
 The setting is saved and an active CarPlay connection briefly reconnects to request

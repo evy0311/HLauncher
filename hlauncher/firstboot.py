@@ -24,8 +24,8 @@ def write_recovery_card(credentials, boot):
     boot = Path(boot)
     text = ('HLauncher setup\n\nRadio pairing: Settings > Phone > Connect a phone > Add Bluetooth device.\nSelect HLauncher.\n\nConnect to Wi-Fi: '+credentials['ssid']+
             '\nWi-Fi password: '+credentials['password']+
-            '\nOpen: http://192.168.4.1:8080\nNo page login is required.\n'
-            '\nSSH username: pi\nDefault SSH password: raspberry\nSSH can be switched on or off in Wi-Fi & pairing.\n')
+            '\nOpen: http://192.168.4.1:8080\nSetup username: hlauncher\nUse the Wi-Fi password above to sign in.\n'
+            '\nSSH is off by default. Turn it on from Wi-Fi & pairing on the radio.\n')
     import tempfile
     fd,name=tempfile.mkstemp(prefix='.hlauncher-setup-',dir=boot)
     try:
@@ -44,12 +44,12 @@ def main():
     state = SetupState()
     credentials = state.credentials()
     marker = state.folder/'initialized.json'
-    if not marker.exists():
-        # No default account/password or shared SSH host keys are shipped by our image.
+    first_boot = not marker.exists()
+    if first_boot:
+        # Device identity is generated on first boot.
         subprocess.run(['systemd-machine-id-setup'],check=True,timeout=10)
         boot = Path('/boot/firmware') if Path('/boot/firmware/config.txt').exists() else Path('/boot')
         write_recovery_card(credentials, boot)
-        atomic_json(marker, {'initialized':True, 'schema':1})
     country = os.environ.get('HLAUNCHER_WIFI_COUNTRY','')
     from .config import Preferences
     prefs = Preferences(state.folder/'settings.json')
@@ -58,7 +58,12 @@ def main():
         subprocess.run(['rfkill','unblock','wifi'],check=False,timeout=5)
     from .ssh_access import MANAGED,apply
     if MANAGED.exists():
-        apply(prefs.data['ssh_enabled'],state.folder,boot=True)
+        # A positive marker represents an owner opt-in. Old preference defaults do not enable SSH.
+        opted_in = (state.folder/'ssh-enabled').is_file()
+        development_image = first_boot and Path('/etc/hlauncher-ssh-autostart').is_file()
+        apply(opted_in or development_image,state.folder,boot=True)
+    if first_boot:
+        atomic_json(marker, {'initialized':True, 'schema':1})
     from .storage import finish_transition
     finish_transition()
 

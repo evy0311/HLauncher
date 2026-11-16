@@ -3,9 +3,9 @@
 Every built-in launcher page now uses the shared stock-era header, typography,
 backgrounds and controls, including System, network setup, storage, plugins,
 picture calibration, diagnostics, hardware tests, shutdown and first pairing.
-Phone-provided projection video remains unchanged.
+Phone-provided projection keeps its full-screen viewport. The global Picture controls also apply to projection video.
 
-- `hlauncher/ui/home.py` lays out the header, clock, enabled apps, Audio and
+- `hlauncher/ui/home.py` lays out the header, clock, enabled apps and
   Settings, and returns touch regions to the existing input handler.
 - `hlauncher/ui/home_art.py` owns fading mirror reflections, gradient surfaces,
   fine bevels and themed background illumination. `home_icons.py` draws the
@@ -31,19 +31,19 @@ Touch regions scale with the displayed image on other framebuffer dimensions.
 On a fresh layout, CarPlay appears first, then the remaining enabled plugins and
 Settings. Each page has six slots. Hold a tile to edit Home. Drag tiles into
 empty slots or onto another tile to swap positions. Hold a dragged tile at either
-edge to turn the page. Use **+ Page** to add a page, up to three, and **Done** to
-leave edit mode. Layout changes are saved as you make them. Settings can move to
+edge to turn the page. Use **+ Page** to add an empty page when fewer than three pages are shown.
+Use **Done** to leave edit mode. Layout changes are saved as you make them. Settings can move to
 any slot. Use a plugin's corner button to disable it or uninstall a plugin you
 installed yourself.
 Long external-plugin labels shrink and ellipsize rather than overlap.
 
-The existing Settings → Tile color preference selects Blue, Red, Green, Amber,
+Settings → Appearance → Background color offers Blue, Red, Green, Amber,
 Purple or Graphite. The migrated screens map these names to the shared stock-style accent palette. All tile gradients, edges, tab
 color and background illumination derive from that accent. Icon colors stay
 consistent when switching themes: CarPlay stays green, Android Auto
 stays blue, and the gauge/EQ retain their instrument colors. There is no Bluetooth
-icon in the header. The clock follows the Pi's configured local timezone and
-updates once per minute on the migrated launcher pages. The OBD dashboard
+icon in the header. When enabled under Settings → Appearance → Show clock, the clock follows the
+Pi's configured local timezone and updates once per minute. The OBD dashboard
 refreshes its own cached header when the minute changes.
 
 To capture the actual active RGB565 HDMI0 scanout on the Pi:
@@ -105,10 +105,11 @@ use temporary preferences and demonstration Wi-Fi credentials.
 
 ## Secondary settings and diagnostics
 
-`ui/pages.py` owns the System menu, network/hotspot pages, storage confirmation,
-plugin management, theme picker, picture controls, HDMI calibration, shutdown
-and generic app waiting screen. `ui/diagnostics.py` owns System/HondaLink reports,
-packet-capture controls and hardware tests. Raw calibration patches retain exact
+`ui/pages.py` owns the System menu, network and hotspot pages, storage confirmation,
+picture and HDMI controls, shutdown and the generic app waiting screen.
+`ui/plugins.py` handles external plugin installation and management.
+`ui/color_picker.py` renders the custom theme picker. `ui/diagnostics.py`
+renders system diagnostics and delegates the Vehicle data and Integration tabs. Raw calibration patches retain exact
 RGB values while their header uses the normal shared rendering.
 
 The completed setup wizard can be reopened without clearing setup completion.
@@ -116,16 +117,15 @@ It has Exit on every step when opened from Settings. Choices remain saved and
 Exit returns to System. First-time setup still requires completion. Network
 setup is a separate child flow and Back returns to the wizard's Network step.
 
-The network landing page shows the Pi's current LAN setup address and login;
-the optional setup hotspot has a separate page. NetworkManager sampling happens
+The network landing page shows the Pi's current LAN setup address. The hotspot
+page shows the device password, which also signs in to the web setup page.
+The radio has a separate SSH access page. NetworkManager sampling happens
 in the recovery worker, not in the UI/audio loop. The authenticated recovery
 website shares the theme and separates Wi-Fi, local update, pairing and support.
 Storage restart is offered only after the protection job has completed.
 
 
 ## Settings categories and early welcome
-
-Home fits four app tiles per page. Swipe left or right or tap a page arrow to see the other apps. Audio and Settings appear on every page.
 
 Settings uses two columns of rectangular category bars: Plugins, Appearance,
 Audio & EQ, About, Startup and System. Child lists use the shared horizontal

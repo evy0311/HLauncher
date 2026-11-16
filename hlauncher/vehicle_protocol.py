@@ -101,7 +101,7 @@ class VehicleTraffic:
                         changes=(old['changes'] if old else 0)+int(old is not None and old['data'] != record['data']),
                         interval_seconds=max(0, at-old['at']) if old else None)
             if normal:
-                for reading in self.signals.snapshot(event.get('monotonic',time.monotonic())):
+                for reading in self.signals.snapshot(event.get('monotonic',time.monotonic()), ALIASES.keys()):
                     alias = ALIASES.get(reading['api_id'])
                     if alias and reading['received']:
                         self.readings[alias] = dict(value=reading['value'],session=reading['session'],
@@ -141,6 +141,11 @@ class VehicleTraffic:
         key = (event.get('session'), message)
         if key not in self.previous and len(self.previous) >= 512:
             return []
+        protocol = event.get('protocol')
+        name = protocol[1] if isinstance(protocol, (list, tuple)) and len(protocol) == 2 else None
+        fields = radio_status(raw) if message == 0x61 and name == 'jp.co.honda.rd.dispaudio.app.generals' else None
+        if fields:
+            self.status = dict(session=key[0], at=event.get('monotonic', time.monotonic()), **fields)
         preview = raw[:256]
         digest = hashlib.sha256(raw).digest()
         old = self.previous.get(key)
@@ -160,12 +165,7 @@ class VehicleTraffic:
                        preview=preview.hex(), changed_bytes=changed[:64],
                        changed_bytes_truncated=len(changed)>64 or len(raw)>256,
                        source_sequence=event.get('capture_sequence'))]
-        protocol = event.get('protocol')
-        name = protocol[1] if isinstance(protocol,(list,tuple)) and len(protocol)==2 else None
-        if message == 0x61 and name == 'jp.co.honda.rd.dispaudio.app.generals':
-            fields = radio_status(raw)
-            if fields:
-                self.status = dict(session=key[0], **fields)
-                result.append(dict(state='honda_radio_status', **self.status,
-                                   physical_meaning='parking_brake_test_mapping', source_sequence=event.get('capture_sequence')))
+        if fields:
+            result.append(dict(state='honda_radio_status', **self.status,
+                               physical_meaning='parking_brake_test_mapping', source_sequence=event.get('capture_sequence')))
         return result

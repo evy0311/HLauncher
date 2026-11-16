@@ -9,6 +9,10 @@ import threading
 from types import SimpleNamespace
 from .audio_settings import AudioSettings
 
+class MixerExited(RuntimeError):
+    pass
+
+
 class AudioProcess:
     def __init__(self,event,test_device=None,test_capture_file=None):
         if test_capture_file is not None and test_device != 'null':
@@ -26,6 +30,10 @@ class AudioProcess:
             stderr=None,start_new_session=True)
         child.close()
         threading.Thread(target=self.receive,daemon=True).start()
+
+    def check(self):
+        if not self.closed and self.proc.poll() is not None:
+            raise MixerExited('Audio mixer exited; restarting HLauncher')
 
     def send(self,message,fd=None):
         raw=json.dumps(message,separators=(',',':')).encode()
@@ -188,6 +196,8 @@ def main():
                     if flags&socket.MSG_TRUNC:continue
                     if enabled.get(name):
                         try:
+                            if raw[:1] not in (b'P', b'C'):
+                                raise ValueError('Expected binary PCM')
                             message=decode(raw)
                             if message['type'] in ('audio.playback.pcm','audio.voice.pcm'):
                                 if message['type']=='audio.voice.pcm' and name!=voice_owner:continue

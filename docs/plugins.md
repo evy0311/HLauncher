@@ -1,16 +1,16 @@
 # Plugins
 
-CarPlay, Android Auto, and OBD Gauges come with HLauncher. User-installed plugins appear in **Settings → Plugins**. Enable a plugin to add its tile to Home. Swipe left or right to move between pages when there are more than four apps. Audio and Settings appear on every page.
+CarPlay, Android Auto, and OBD Gauges come with HLauncher. User-installed plugins appear in **Settings → Plugins**. Enable a plugin to add its tile to Home. Home fits six tiles per page, including the movable Settings tile. Swipe or tap a page indicator to change pages. Open Audio & EQ from Settings.
 
 ## Install on the radio
 
 - **USB.** Copy the `.hlp` file to the root of a FAT32 or exFAT USB drive, or to a folder named `HLauncher` at its root. Connect it to the Pi and open **Settings → Plugins → Add plugin → Scan USB drive**. Select the package and review its source, version, and permissions. Install it, then enable it and choose any camera or TCP endpoint it asks you to configure. The drive can be removed after installation. This works offline.
 - **GitHub.** In **Add plugin → Add GitHub repository**, enter `owner/repo`. The repository needs a public stable GitHub Release with one or more `.hlp` assets. Select a package and review it before installing. Use **Check GitHub for update** in the plugin’s settings to check the same repository again. For a private repo, package a local checkout and use USB or SSH.
-- **SSH.** Copy a package or source directory to the Pi and use the commands below. Installed and enabled plugins appear on the radio without a launcher restart.
+- **SSH.** On a managed image, enable SSH from the radio first. Copy a package or source directory to the Pi. Installed and enabled plugins appear on the radio without a launcher restart. [SSH setup](onboarding.md#phone-recovery-and-network-setup)
 
 ```bash
-scp hello.hlp pi@PI_ADDRESS:/tmp/hello.hlp
-ssh pi@PI_ADDRESS
+scp hello.hlp hlauncher@PI_ADDRESS:/tmp/hello.hlp
+ssh hlauncher@PI_ADDRESS
 cd /opt/hlauncher
 sudo python3 -m hlauncher plugins list
 sudo python3 -m hlauncher plugins install /tmp/hello.hlp
@@ -97,15 +97,22 @@ Plugin to host:
 
 Display data does not travel through JSON. `HLAUNCHER_FRAME_FD` maps three full RGB565LE frames. The plugin writes a free slot, then sends `frame.ready`. It must not modify that slot until `frame.release`. The host copies the newest pending frame, releases the slot and presents it. The SDK drops an incoming frame if all slots are busy; there is no unbounded video queue. Only the foreground plugin can display or receive touch. The core presents complete frames through DRM/KMS offscreen buffers and synchronized page flips; plugins must not write the scanout buffer directly.
 
-Use `Client.present(frame)`, `Client.receive()`, `Client.status(text, video_available=...)` and `Client.home()` from the Python SDK. Continue draining incoming messages even when not displaying, to process slot releases and lifecycle events. A plugin that exits, violates the transport or stops responding for ten seconds is stopped; its foreground screen returns to the launcher. Plugin stdout/stderr are captured separately.
+Use `Client.present(frame)`, `Client.receive()`, `Client.status(text, video_available=...)` and `Client.home()` from the Python SDK. Continue draining incoming messages even when not displaying, to process slot releases and lifecycle events. A plugin that exits, violates the transport or stops responding for ten seconds is stopped; its foreground screen returns to the launcher. The host merges plugin stdout and stderr into a rotating worker log.
 
 The core passes both decoded touch contacts with stable `id`/`slot` values. Each contact retains `x_raw`/`y_raw` in the 0–32767 range and adds normalized `x`/`y` plus `x_px`/`y_px` for the current viewport. Release coordinates are null in these added fields; plugins should retain the last active position when needed. `host.hello` advertises `max_contacts: 2`.
 
 CarPlay uses node-CarPlay's `SendMultiTouch` for both one- and two-finger input. Adding a second finger does not synthesize a release or restart the first contact. Both fixed slots remain in each packet, including released slots, so lifting the first finger does not renumber the second. A two-contact start is introduced as pointer zero down followed by pointer one down with pointer zero moving, even when both arrive together. Leaving the app releases active contacts.
 
-`audio.status` exposes current support. `audio.capture` is opt-in, only allowed for the foreground plugin, and ends on deactivation. Capture sends `audio.format` followed by signed 16-bit little-endian PCM packets. Queues are bounded; PCM may be dropped if the plugin cannot keep up. The radio can produce digital silence outside hands-free voice mode. Call simulation is not part of this API, and CarPlay does not consume microphone PCM yet. Plugins with `audio.playback` can use `Client.playback(pcm, rate, channels, stream)` for signed 16-bit little-endian output. The core owns PCM mixing/resampling and HDMI playback. Submission is nonblocking and can drop PCM under backpressure. Keep-alive plugins can continue audio on the launcher; stopping the plugin releases playback. Capture still stops on deactivation.
+Plugins with `audio.playback` can call `Client.playback(pcm, rate, channels, stream)`
+to submit signed 16-bit little-endian PCM over the dedicated
+`HLAUNCHER_PLAYBACK_FD` socket. Raw clients send a `P` byte, a big-endian
+32-bit sample rate, one byte each for channel count and stream ID, and then
+PCM. The core handles mixing, resampling and HDMI playback. Submission is
+nonblocking and can drop PCM under backpressure. See
+[Projection voice and microphone](#projection-voice-and-microphone) for the
+bundled plugins' radio capture and voice output.
 
-External plugins run as separate processes under the HLauncher service account with full access to launcher code, installed packages, and the system. Install and run only code you trust. Manifest options configure launcher features and do not enforce system access restrictions.
+External plugins run as root on the Pi, with full access to the system and its data. The project plans to isolate external plugins in a later version. Install and run only code you trust. Manifest options configure launcher features and do not enforce system access restrictions.
 
 ## Now-playing reports
 
@@ -120,8 +127,8 @@ client.now_playing(clear=True)        # phone disconnected / source ended
 
 Fields are `title`, `artist`, `album`, `app`, `position_ms`, `duration_ms` and
 `playback_state` (`unknown`, `playing`, `paused`, `stopped`). Times are milliseconds;
-`None` clears a field. A different title clears the previous track's fields before
-merging the patch. Every field retains its own update timestamp. Plugins should
+`None` clears a field. A different title clears the previous track's fields
+except for app and playback state, then applies the patch. Every field retains its own update timestamp. Plugins should
 use `clear=True` for a track change with the same title. `False` from the SDK means
 backpressure: keep the latest patch and try it again without blocking video/audio.
 
@@ -133,13 +140,11 @@ failures are logged and do not interrupt playback.
 
 Read `/run/hlauncher/now-playing.json` or call the host's `media.snapshot()` for the
 latest state. This volatile snapshot is written atomically at most five times per
-second. It is a local observation interface, not a radio protocol. Actual song fields
-are not forwarded to the radio, Bluetooth or iMID. The radio metadata helper
-exports only the selected source label and HLauncher as artist. A future
-vehicle-output integration can consume the local contract without adding
-dongle-specific code to the host. See the
-[i-MID Apps audio investigation](imid-audio.md) for the current source-label
-exception and why AVRCP support does not establish Apps-mode song display.
+second. The Bluetooth AVRCP target serves track details from the selected
+projection audio source when available. It falls back to the source name and
+`HLauncher` as artist when there is no valid current title. Whether the radio
+uses those fields on the i-MID Apps page remains unverified.
+[i-MID Apps audio investigation](imid-audio.md)
 
 CarPlay forwards `MediaData` subtype 1 (title/artist/album/player/duration/position).
 Album artwork is not forwarded through this text interface. Unknown play-state
@@ -170,9 +175,9 @@ Foreground/background lifecycle: `host.activate` enables rendering and input.
 `host.deactivate` includes `background: true` for a retained worker. It must stop
 producing display frames and release touch contacts while continuing only its
 background work. HLauncher accepts PCM output from the active plugin or a worker
-whose background setting is enabled. Microphone capture remains foreground-only.
-The SDK/API version remains 1; these changes add a preference to the existing
-keep-alive lifecycle. See OBD Gauges for a foreground-only, simulated plugin.
+whose background lifecycle is enabled. CarPlay and Android Auto retain their
+sessions in the background. External workers and OBD Gauges run in the
+foreground only. OBD Gauges shows live data when the vehicle supplies it.
 
 ## Projection engines
 
@@ -190,8 +195,7 @@ Plugins with `input.buttons` explicitly request controls with
 equivalent `input.buttons.subscribe` message with a `buttons` array. An empty
 array unsubscribes; a new valid list replaces the previous one. Subscriptions
 belong to a worker instance and disappear when it stops. The capability alone
-does not subscribe a plugin. CarPlay is the initial subscriber; Android Auto
-button forwarding is not enabled by this contract yet.
+does not subscribe a plugin. The bundled CarPlay and Android Auto workers both subscribe.
 
 Subscribed plugins receive `radio.button` with `button`, `action`,
 `source`, `sequence` and monotonic time. Buttons include `next`, `previous`,
@@ -239,9 +243,12 @@ enabled background plugin. `audio.capture.stop` releases capture only.
 
 Use `client.playback(pcm, rate, channels, stream, voice=True)` for a stream identified
 by the projection engine as call/Siri output. This uses a separate bounded PCM
-path and voice route; ordinary playback continues to use HDMI. Send
-`audio.voice.stop` when the voice stream ends. CarPlay maps its explicit audio
-control stream IDs and microphone start/stop commands to this contract.
+path and voice route. On the wire, voice uses the same PCM header with a `C`
+prefix. Ordinary playback continues to use HDMI. Send `audio.voice.stop`
+when the voice stream ends. CarPlay maps its audio control stream IDs and
+microphone commands to this contract. Android Auto requests capture when the
+phone starts its microphone channel. The radio can return silence outside
+hands-free voice mode.
 
 ## HondaLink extensions
 

@@ -1,4 +1,5 @@
 """Durable setup identity and pairing admission policy, independent of the UI."""
+import fcntl
 import json
 import os
 from pathlib import Path
@@ -21,18 +22,22 @@ def address(value):
     return value
 
 
-def atomic_json(path, value):
+def atomic_json(path, value, *, durable=True):
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, name = tempfile.mkstemp(prefix='.'+path.name, dir=path.parent)
     try:
         with os.fdopen(fd, 'w') as f:
             json.dump(value, f, indent=2)
-            f.write('\n'); f.flush(); os.fsync(f.fileno())
+            f.write('\n')
+            if durable:
+                f.flush()
+                os.fsync(f.fileno())
         os.replace(name, path)
-        fd = os.open(path.parent, os.O_RDONLY)
-        try: os.fsync(fd)
-        finally: os.close(fd)
+        if durable:
+            fd = os.open(path.parent, os.O_RDONLY)
+            try: os.fsync(fd)
+            finally: os.close(fd)
     finally:
         if os.path.exists(name): os.unlink(name)
 
@@ -122,11 +127,21 @@ class SetupState:
 
     def credentials(self):
         path = self.folder/'recovery.json'
-        try:
-            item = json.loads(path.read_text())
-            if isinstance(item.get('password'),str) and len(item['password']) >= 8: return item
-        except (OSError, ValueError, KeyError, TypeError): pass
-        item = {'ssid': 'HLauncher-'+secrets.token_hex(2).upper(),
-                'password': 'raspberry'}
-        atomic_json(path, item)
-        return item
+        self.folder.mkdir(parents=True, exist_ok=True)
+        with (self.folder/'.recovery.lock').open('a') as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX)
+            try:
+                item = json.loads(path.read_text())
+            except (OSError, ValueError):
+                item = {}
+            if not isinstance(item, dict):
+                item = {}
+            ssid = item.get('ssid')
+            if not isinstance(ssid, str) or not re.fullmatch(r'HLauncher-[0-9A-F]{4}', ssid):
+                ssid = 'HLauncher-'+secrets.token_hex(2).upper()
+            password = item.get('password')
+            if isinstance(password, str) and re.fullmatch(r'[A-Za-z0-9_-]{16}', password) and ssid == item.get('ssid'):
+                return {'ssid': ssid, 'password': password}
+            item = {'ssid': ssid, 'password': secrets.token_urlsafe(12)}
+            atomic_json(path, item)
+            return item

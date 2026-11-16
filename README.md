@@ -66,12 +66,15 @@ signed releases and can restore the previously installed application version.
 Checks and installation are manual. A signed **`.hlu`** file can also be uploaded
 from a phone/computer through the local setup page. See [updates](docs/updates.md).
 
-**Settings → System → Wi-Fi & pairing** shows network/setup access. On the setup
-hotspot, connect to **HLauncher-XXXX** (default password **`raspberry`**) and open
-[the setup page](http://192.168.4.1:8080). It can configure Wi-Fi, reopen radio
-pairing and install local updates. The page has no login; use a trusted local
-network. Image SSH defaults to **`pi` / `raspberry`** and can be disabled there.
-See [first boot and recovery](docs/onboarding.md) for details.
+**Settings → System → Wi-Fi & pairing** shows network and setup access. Join the
+**HLauncher-XXXX** hotspot with the device's setup password, then open
+[the setup page](http://192.168.4.1:8080). Sign in as **`hlauncher`** with that
+same device password. The radio's hotspot screen and the SD card's
+`HLAUNCHER-SETUP.txt` show it.
+
+SSH starts off. Enable it from **Wi-Fi & pairing → SSH access** on the radio.
+The initial SSH credentials are **`hlauncher` / `ilovevtec1234`**. Use a trusted
+network and change the SSH password with `passwd`. See [first boot and recovery](docs/onboarding.md).
 
 ## Development and documentation
 

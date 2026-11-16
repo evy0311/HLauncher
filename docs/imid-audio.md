@@ -97,7 +97,7 @@ be used as evidence that song metadata reaches this audio page.
 ## Source selection and HLauncher metadata
 
 The CarPlay bridge handles dongle MediaData USB type `0x2A`, subtype `1`.
-The adapter requests dashboard reports via BoxSettings. Song, artist and album
+The host requests dashboard reports from the adapter via BoxSettings. Song, artist and album
 fields feed the host's now-playing broker when the adapter supplies them.
 The AVRCP target answers GetElementAttributes and sends subscribed track-change
 notifications. Its fallback is available even if the dongle reports no song.

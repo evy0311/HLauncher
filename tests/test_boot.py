@@ -84,6 +84,23 @@ class Boot(unittest.TestCase):
                 launcher.closing=True
             finally:release.set();launcher.close()
 
+    def test_hondalink_certificate_reply_waits_for_background_result(self):
+        from concurrent.futures import Future
+        from hlauncher.protocol.session import StartProbe, packet
+
+        complete = Future()
+        executor = SimpleNamespace(submit=lambda operation: complete)
+        parser = StartProbe(auth_executor=executor)
+        parser.identification = True
+        _, replies = parser.feed(packet(bytes.fromhex('0015800002000000') + b'fixture'))
+        self.assertEqual(replies, [])
+        self.assertEqual(parser.poll_auth(), ([], []))
+        complete.set_result((bytes(20), 7, 1))
+        events, replies = parser.poll_auth()
+        self.assertEqual(events[0]['state'], 'iap_signature_challenge_sent')
+        self.assertEqual(len(replies), 2)
+        self.assertEqual(parser.poll_auth(), ([], []))
+
     def test_home_art_can_be_prepared_without_starting_the_launcher(self):
         from hlauncher.bootstrap import BootstrapLauncher
         from hlauncher.setup_state import SetupState
@@ -91,6 +108,9 @@ class Boot(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             state=SetupState(Path(d))
             launcher=BootstrapLauncher(lambda **kw:None,SimpleNamespace(close=lambda:None),state)
+            from hlauncher.ui.home import tile_image
+            tile_image.cache_clear()
+            home_art.reflection.cache_clear()
             home_art.glyph.cache_clear()
             launcher.prewarm_home()
             self.assertIsNone(launcher.ui)

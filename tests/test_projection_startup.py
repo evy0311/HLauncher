@@ -15,7 +15,7 @@ from hlauncher.adapter_branding import BrandingRequests
 class Projection(unittest.TestCase):
     def setUp(self):
         self.temp=tempfile.TemporaryDirectory();self.root=Path(self.temp.name);self.made=[]
-        self.manifests={key:SimpleNamespace(id=key,name=key,keep_alive=True,capabilities=set()) for key in ('carplay','android-auto')}
+        self.manifests={key:SimpleNamespace(id=key,name=key,keep_alive=True,bundled=True,capabilities=set(),permissions=set()) for key in ('carplay','android-auto')}
         self.host=PluginHost(self.manifests,720,480,lambda **v:None,lambda *a:None,SimpleNamespace(stop=lambda _:None),state_dir=self.root)
         made=self.made;lock=self.root/'projection.lock'
         class Worker:

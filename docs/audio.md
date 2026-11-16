@@ -39,7 +39,9 @@ Plugin's dedicated PCM socket → separate audio process → float stereo mixer 
 SoXR VHQ converter → direct ALSA, or buffered PipeWire input → EQ → native ALSA
 HDMI sink.
 
-The UI, frame rendering and Bluetooth control loop do not carry playback PCM.
+The dedicated PCM socket keeps playback traffic off the UI and Bluetooth control
+loop. The mixer rejects malformed packets. On a mixer process exit, the installed
+systemd service restarts HLauncher.
 The CarPlay USB bridge sends PCM and voice controls over a dedicated socket.
 Voice controls apply in wire order before the next PCM packet. A separate
 pipe carries H.264 video at the requested CarPlay frame rate (30 FPS by default). If that pipe backs up, the bridge sheds video
@@ -85,8 +87,8 @@ was within 0.0011 dB of unity; do not describe the filtered path as bit-exact.
 
 Each stream reports its discrete `source_peak`, `source_full_scale_samples`, and
 post-conversion `converted_peak`. The mixer separately reports `peak` and
-`clip_samples` before EQ. These cumulative values are available in journal
-progress records and saved System diagnostics reports. They distinguish source
+`clip_samples` before EQ. These cumulative values are available in the Debug log
+and saved System diagnostics reports. They distinguish source
 saturation risk, reconstruction overshoot and overload from summing streams.
 Full-scale source samples alone are not proof that the original recording clipped.
 
@@ -115,7 +117,7 @@ libsamplerate0 remains a benchmark/reference dependency. For an existing install
 sudo apt-get install libsoxr0 libpipewire-0.3-dev build-essential pkg-config
 cd /opt/hlauncher
 bash scripts/build_pipewire_pcm.sh
-sudo systemctl restart hlauncher-pipewire hlauncher
+sudo systemctl restart hlauncher
 ```
 
 The private PipeWire service uses `/run/hlauncher-pipewire` (0700), enumerates no
@@ -160,9 +162,10 @@ Phone-call routing and microphone support remain separate checks.
 
 ## Clean shutdown
 
-System diagnostics → Shutdown opens the existing confirmation page and requests
-`systemctl poweroff --no-block`. It allows normal systemd shutdown; tests mock
-this action and never actually power off the development Pi.
+Settings → System → Shut down opens a confirmation page and requests
+`systemctl poweroff --no-block`. Diagnostics also links to that confirmation.
+See the [optional Arduino Nano power controller](../firmware/power-controller/README.md)
+for the separate ignition and shutdown hardware experiment.
 
 ## Verifying the connected HDMI receiver
 
@@ -172,7 +175,7 @@ With the Honda radio powered on and music playing, inspect
 Expect the HDMI playback endpoint to be stereo, 48000 Hz and S32_LE; a closed
 endpoint does not establish an active format. ELD describes advertised receiver
 capabilities, not the source recording or radio DAC's effective resolution.
-Compare journal `audio_stream_format` events (adapter PCM rate/channels) with
+Compare Debug log `audio_stream_format` events (adapter PCM rate/channels) with
 `audio_hdmi_open`, playback errors/drops and stage peak meters during repeated
 CarPlay app-grid / Now Playing transitions.
 

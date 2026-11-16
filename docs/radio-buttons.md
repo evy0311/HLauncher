@@ -2,7 +2,7 @@
 
 HLauncher receives iAP Simple Remote and AVRCP track controls and HFP phone/voice commands from the
 configured paired radio and forwards each action to one running projection app.
-HDMI remains the media output. Settings → System diagnostics → Hardware tests →
+HDMI remains the media output. Enable Debug mode, then open Settings → System → Diagnostics → Hardware tests →
 Radio buttons shows transport status, received counts, source and forwarding
 results. The six Test controls test the projection side even when the radio sends
 nothing. A USB or Android Auto send result confirms submission, not that the
@@ -36,8 +36,7 @@ saved in-car logs; the meaning of that value has not been established.
 
 CarPlay explicitly subscribes to next/previous, play/pause, play, pause, stop
 (pause), assistant, answer and end/reject and maps them to dongle commands.
-Android Auto has an engine key mapping, but is not subscribed to host button
-events yet. Held presses and duplicate commands within 180 ms are suppressed;
+Android Auto subscribes to the same set and submits the corresponding engine key codes. Held presses and duplicate commands within 180 ms are suppressed;
 queued controls expire after one second. Releases never trigger a second action.
 The pinned dongle has Siri activation only; voice deactivation clears held state.
 Diagnostics distinguish plugin queueing, USB submission, failure and acknowledgement
@@ -127,7 +126,7 @@ this classification. This is protocol compatibility, not complete iPhone emulati
 
 ## Experimental native volume
 
-Settings → System diagnostics → Hardware tests → Radio volume (experimental)
+Settings → System → Diagnostics → Hardware tests → Radio volume (experimental)
 provides Volume down and Volume up. Each tap sends one AVRCP pass-through
 press/release pair (`0x42` / `0x41`) to the paired head unit over its existing
 control channel, with a two-second cooldown and no automatic retries. It does

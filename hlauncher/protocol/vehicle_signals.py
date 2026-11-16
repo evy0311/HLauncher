@@ -105,8 +105,8 @@ class SignalCache:
 
     def snapshot(self, now, api_ids=None):
         result = []
-        for info in (SIGNALS if api_ids is None else (*SIGNALS,*EXTRA_SIGNALS)):
-            if api_ids is not None and info['api_id'] not in api_ids:continue
+        selected_infos = SIGNALS if api_ids is None else (BY_ID[ident] for ident in sorted(api_ids) if ident in BY_ID)
+        for info in selected_infos:
             selected = None
             for source in info['sources']:
                 record = self.records.get(source['message_id'])

@@ -15,6 +15,7 @@ class SSHAccess(unittest.TestCase):
         (self.system/'etc/ssh/sshd_config.d').mkdir(parents=True)
         (self.system/'etc/passwd').write_text('pi:x:1000:1000::/home/pi:/bin/bash\n')
         self.commands=[];self.fake_running=False
+        self.runtime=self.root/'runtime'
     def tearDown(self):self.temp.cleanup()
     def fake_run(self,args,**kwargs):
         self.commands.append((args,kwargs))
@@ -27,7 +28,7 @@ class SSHAccess(unittest.TestCase):
         (self.system/'etc/hlauncher-ssh-managed').write_text('1\n')
         old=self.system/'etc/ssh/sshd_config.d/00-hlauncher-local-test.conf';old.write_text('PasswordAuthentication no\n')
         ssh_access.initialize(self.folder,self.fake_run,self.system)
-        self.assertEqual(next(kw['input'] for args,kw in self.commands if args==['chpasswd']),'pi:raspberry\n')
+        self.assertEqual(next(kw['input'] for args,kw in self.commands if args==['chpasswd']),'hlauncher:ilovevtec1234\n')
         self.assertFalse(old.exists())
         self.assertTrue((self.system/'run/sshd').is_dir())
         calls=[a for a,_ in self.commands]
@@ -38,19 +39,25 @@ class SSHAccess(unittest.TestCase):
         self.assertEqual(len(self.commands),count)
     def test_toggle_persists_choice_and_boot_marker(self):
         self.folder.mkdir();(self.folder/'ssh-initialized.json').write_text('{}')
-        with patch('hlauncher.ssh_access.shutil.which',return_value='/usr/sbin/sshd'):
+        managed = self.system/'etc/hlauncher-ssh-managed'
+        managed.touch()
+        with (patch('hlauncher.ssh_access.shutil.which',return_value='/usr/sbin/sshd'),
+              patch.object(ssh_access, 'MANAGED', managed),
+              patch.object(ssh_access, 'RUNTIME_DIR', self.runtime),
+              patch.object(ssh_access, 'initialize')):
+            self.assertFalse(Preferences(self.folder/'settings.json').data['ssh_enabled'])
             result=ssh_access.apply(True,self.folder,self.fake_run)
             self.assertTrue(result['enabled']);self.assertTrue(Preferences(self.folder/'settings.json').data['ssh_enabled'])
             result=ssh_access.apply(False,self.folder,self.fake_run)
-            self.assertFalse(result['enabled']);self.assertTrue((self.folder/'ssh-disabled').exists())
+            self.assertFalse(result['enabled']);self.assertFalse((self.folder/'ssh-enabled').exists())
             self.assertFalse(Preferences(self.folder/'settings.json').data['ssh_enabled'])
             ssh_access.apply(False,self.folder,self.fake_run,boot=True)
             self.assertIn((['systemctl','stop','--no-block','ssh.service'],{}),self.commands)
             ssh_access.apply(True,self.folder,self.fake_run)
-            self.assertFalse((self.folder/'ssh-disabled').exists())
-            self.assertEqual(ssh_access.status(self.folder)['username'],'pi')
+            self.assertTrue((self.folder/'ssh-enabled').exists())
+            self.assertEqual(ssh_access.status()['username'],'hlauncher')
     def test_missing_server_and_bad_values(self):
         with self.assertRaises(ValueError):ssh_access.apply('yes',self.folder,self.fake_run)
         with patch('hlauncher.ssh_access.shutil.which',return_value=None):
             with self.assertRaisesRegex(ValueError,'not installed'):ssh_access.apply(True,self.folder,self.fake_run)
-        self.assertTrue(Preferences(self.folder/'settings.json').data['ssh_enabled'])
+        self.assertFalse(Preferences(self.folder/'settings.json').data['ssh_enabled'])

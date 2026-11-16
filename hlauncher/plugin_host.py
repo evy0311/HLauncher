@@ -92,9 +92,10 @@ class Worker:
             sys.executable if manifest.entrypoint[0] == "python3" else "/usr/bin/node",
             manifest.entrypoint[1],
         ]
-        audio_socket = playback.open_plugin(manifest) if playback and hasattr(playback,'open_plugin') else None
-        if audio_socket:env['HLAUNCHER_PLAYBACK_FD']=str(audio_socket.fileno())
+        audio_socket = None
         try:
+            audio_socket = playback.open_plugin(manifest) if playback and hasattr(playback,'open_plugin') else None
+            if audio_socket:env['HLAUNCHER_PLAYBACK_FD']=str(audio_socket.fileno())
             if not manifest.bundled and manifest.endpoint:
                 from .plugin_network import Network
                 self.network = Network(manifest.endpoint)
@@ -462,13 +463,16 @@ class PluginHost:
             return worker.send(type='vehicle.gauges',snapshot=snapshot)
         return False
 
-    def sync_projection_gps(self, fix):
+    def sync_projection_gps(self, fix, carplay_fix):
         for ident in PROJECTIONS:
             worker = self.workers.get(ident)
-            if not getattr(worker, 'car_gps', False) or worker.last_gps == fix:
+            payload = carplay_fix if ident == 'carplay' else fix
+            if not getattr(worker, 'car_gps', False) or worker.last_gps == payload:
                 continue
-            if worker.send(type='projection.gps', fix=fix):
-                worker.last_gps = fix
+            if payload and worker.last_gps and payload['at'] == worker.last_gps['at']:
+                continue
+            if worker.send(type='projection.gps', fix=payload):
+                worker.last_gps = payload
 
     def sync_projection_vehicle(self, state):
         worker = self.workers.get('android-auto')

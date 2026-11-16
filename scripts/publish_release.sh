@@ -12,5 +12,5 @@ gh release create "v$version" --repo evy0311/HLauncher --target "$commit" --draf
   --title "HLauncher $version" --notes-file "$folder/RELEASE-NOTES.md" \
   "$folder/HLauncher-$version-pi4.img.xz" "$folder/HLauncher-$version-pi4-arm64.tar.xz" \
   "$folder/HLauncher-$version-local-update.hlu" "$folder/HLauncher-$version-sources.tar.xz" "$folder"/hlauncher-release.json "$folder"/hlauncher-release.sig \
-  "$folder"/release.pub "$folder"/os-packages.txt "$folder"/SHA256SUMS "$folder"/RELEASE-NOTES.md
+  "$folder"/release.pub "$folder"/os-packages.txt "$folder"/SHA256SUMS "$folder"/SHA256SUMS.sig "$folder"/RELEASE-NOTES.md
 echo 'Draft uploaded. Review/test the release before publishing it on GitHub.'

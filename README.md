@@ -109,3 +109,9 @@ To the extent permitted by applicable law, the authors and contributors accept
 no liability for distracted driving, misuse, accidents, injury, property damage
 or other loss arising from use of this software. This notice does not exclude
 rights or liabilities that cannot legally be excluded.
+
+## Support HLauncher
+
+If HLauncher has been useful and you'd like to chip in for development and test
+hardware, you can [leave an optional tip on Ko-fi](https://ko-fi.com/evy0311).
+Thanks for supporting the project!

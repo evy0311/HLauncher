@@ -31,6 +31,7 @@ def validate(folder, version):
     if item.get('local_test') is not False:
         raise ValueError('Publish a production image without developer SSH access')
     if item.get('version')!=version:raise ValueError('Release version mismatch')
+    if item.get('channel', 'stable') not in ('stable', 'beta'):raise ValueError('Invalid release channel')
     if not re.fullmatch('[0-9a-f]{64}',str(item.get('system_contract',''))):
         raise ValueError('Missing system compatibility contract')
     if not re.fullmatch('[0-9a-f]{40}',str(item.get('commit',''))):

@@ -274,9 +274,23 @@ class Launcher:
         self.press = None
         self.draw()
 
-    def install_update(self):
+    def toggle_beta_updates(self):
+        previous = self.prefs.data['include_beta_updates']
+        self.prefs.data['include_beta_updates'] = not previous
+        try:
+            self.prefs.save(force={'include_beta_updates'})
+            self.banner = ''
+        except OSError:
+            self.prefs.data['include_beta_updates'] = previous
+            self.banner = 'Could not save the beta preference'
+        self.draw()
+
+    def install_update(self, target=None):
         from .update_client import offered_plugin_api, status
-        self.confirm_update_version = status(self.prefs.path.parent).get('available')
+        offer = status(self.prefs.path.parent)
+        self.confirm_update_version = target or offer.get('available')
+        self.confirm_stable_return = (offer.get('stable_return') is True
+                                      and self.confirm_update_version == offer.get('stable_available'))
         api = offered_plugin_api(self.confirm_update_version)
         self.update_incompatible_plugins = [
             manifest.name for manifest in self.manifests.values()
@@ -290,19 +304,23 @@ class Launcher:
         from .update_client import status
         offer = status(self.prefs.path.parent)
         self.updates_page()
-        if not self.confirm_update_version or self.confirm_update_version != offer.get('available'):
+        if not self.confirm_update_version or self.confirm_update_version not in (
+                offer.get('available'), offer.get('stable_available')):
             self.banner = 'The update offer changed. Check for updates again.'
             self.draw()
             return
-        self.update_request('install')
+        self.update_request('install', self.confirm_update_version if offer.get('available_channel') else None)
 
-    def update_request(self, operation):
-        from .update_client import request
+    def update_request(self, operation, target=None):
+        from .update_client import request, request_channel
         try:
-            request(operation,self.prefs.path.parent)
+            if operation == 'check' or target is not None:
+                request_channel(operation, target)
+            else:
+                request(operation,self.prefs.path.parent)
             self.banner = 'Requested'
         except FileExistsError:self.banner = 'An update operation is already queued'
-        except (OSError,ValueError):self.banner = 'Could not request the update operation'
+        except (OSError,ValueError,subprocess.TimeoutExpired):self.banner = 'Could not request the update operation'
         self.draw()
 
     def toggle_clock(self):

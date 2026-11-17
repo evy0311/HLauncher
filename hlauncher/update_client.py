@@ -2,6 +2,7 @@
 import json
 import os
 from pathlib import Path
+import subprocess
 from .config import STATE_DIR
 
 
@@ -16,12 +17,29 @@ def status(folder=STATE_DIR):
 def offered_plugin_api(version):
     from .updater import read
     # The updater creates this offer only after verifying signed release metadata.
-    offer = read('/persist/hlauncher/download/offer.json').get('manifest')
+    channel_offer = read('/persist/hlauncher/channel-download/offers.json').get(version, {})
+    offer = channel_offer.get('manifest') or read('/persist/hlauncher/download/offer.json').get('manifest')
     if version and isinstance(offer, dict) and offer.get('version') == version:
         api = offer.get('plugin_api')
         if type(api) is int and 1 <= api <= 65535:
             return api
     return None
+
+
+def request_channel(operation, target=None):
+    from .updater import version
+    if operation == 'install':
+        version(target)
+    elif operation != 'check' or target is not None:
+        raise ValueError('Unknown channel update operation')
+    command = ['systemd-run', '--quiet', '--no-block', '--collect', '--unit=hlauncher-channel-update',
+               '--property=WorkingDirectory=/opt/hlauncher', '--property=UMask=0077',
+               '/usr/bin/python3', '-m', 'hlauncher.channel_updates', operation]
+    if target is not None:
+        command.append(target)
+    result = subprocess.run(command, capture_output=True, timeout=3)
+    if result.returncode:
+        raise OSError('Could not start the update operation')
 
 
 def request(operation, folder=STATE_DIR):

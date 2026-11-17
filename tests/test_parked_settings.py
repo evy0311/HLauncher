@@ -152,7 +152,7 @@ class ParkedSettings(unittest.TestCase):
                                         parking_brake=True, safely_parked=True)
             bootstrap = BootstrapLauncher.__new__(BootstrapLauncher)
             bootstrap.ui = self.ui
-            self.assertEqual(bootstrap.vehicle_scope(), 'driving')
+            self.assertEqual(bootstrap.vehicle_scope(), 'vehicle')
 
             self.speed(5, time.monotonic())
             self.ui.host.touch({'contacts': []})

@@ -67,6 +67,22 @@ class ReleaseAssets(unittest.TestCase):
         self.assertEqual(uploaded, assets(self.version))
         self.assertNotIn(notes.name, uploaded)
         self.assertNotIn('os-packages.txt', uploaded)
+        self.assertNotIn('--prerelease', command)
+
+        self.info['channel'] = 'beta'
+        self.sign()
+        local_container(self.folder, self.version, self.folder/self.info['archive'])
+        self.sums()
+        git = self.folder/'git'
+        git.write_text('#!/bin/sh\n[ "$1" = merge-base ] && [ "$2" = --is-ancestor ] && '
+                       '[ "$4" = refs/remotes/origin/develop ]\n')
+        git.chmod(0o755)
+        result = subprocess.run(['bash', str(script), self.version, str(self.folder)],
+                                env=env, check=True, capture_output=True, text=True)
+        command = json.loads(result.stdout.splitlines()[0])
+        self.assertIn('--draft', command)
+        self.assertIn('--prerelease', command)
+        self.assertIn('--latest=false', command)
     def test_local_image_and_missing_compatibility_are_rejected(self):
         for field,value in [('local_test',True),('local_test',None),('system_contract',None),('commit','')]:
             original=dict(self.info);self.info[field]=value;self.sign()

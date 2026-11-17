@@ -11,6 +11,7 @@ import unittest
 from unittest.mock import patch
 
 from hlauncher import updater, update_client
+from hlauncher.channel_updates import ASSETS, RELEASES, ChannelInstaller, ChannelService
 from hlauncher.update_service import Service
 
 ROOT=Path(__file__).resolve().parents[1]
@@ -71,6 +72,79 @@ class Updates(unittest.TestCase):
         return dict(dict(format=1,updater=1,state_schema=1,platform=updater.PLATFORM,system_contract='baseline',
                          version=version,archive=f'HLauncher-{version}-pi4-arm64.tar.xz',size=1,
                          unpacked_size=1,sha256='a'*64),**changes)
+
+    def test_beta_opt_in_and_signed_stable_return(self):
+        stable = self.bundle('1.1.0')
+        beta = self.bundle('1.3.0', channel='beta')
+        newer_stable = self.bundle('1.4.0')
+        downloads = {}
+        checks = []
+
+        def release(version, bundle, prerelease=False):
+            manifest, signature, archive = bundle
+            tag = 'v'+version
+            files = {'hlauncher-release.json': manifest, 'hlauncher-release.sig': signature,
+                     updater.read(manifest)['archive']: archive}
+            assets = []
+            for name, path in files.items():
+                url = ASSETS + tag + '/' + name
+                downloads[url] = path.read_bytes()
+                assets.append(dict(name=name, browser_download_url=url))
+            return dict(tag_name=tag, prerelease=prerelease, draft=False, assets=assets)
+
+        stable_release = release('1.1.0', stable)
+        beta_release = release('1.3.0', beta, True)
+        newer_release = release('1.4.0', newer_stable)
+        downloads[RELEASES+'/latest'] = json.dumps(stable_release).encode()
+        downloads[RELEASES+'?per_page=50'] = json.dumps([
+            dict(tag_name='v1.9.0', prerelease=True, draft=True), beta_release,
+        ]).encode()
+
+        def fetch(url, output, maximum, expected=None):
+            checks.append(url)
+            payload = downloads[url]
+            self.assertLessEqual(len(payload), maximum)
+            if expected is not None:
+                self.assertEqual(len(payload), expected)
+            output.write_bytes(payload)
+
+        installer = ChannelInstaller(self.config, run=self.installer.run, health=lambda *_: None)
+        service = ChannelService(self.config, state=self.state, fetch=fetch, installer=installer)
+        service.check()
+        self.assertEqual(update_client.status(self.state)['available'], '1.1.0')
+        self.assertNotIn(RELEASES+'?per_page=50', checks)
+        settings = updater.read(self.state/'settings.json')
+        settings['include_beta_updates'] = True
+        updater.atomic(self.state/'settings.json', settings)
+        service.check()
+        status = update_client.status(self.state)
+        self.assertEqual((status['available'], status['stable_available']), ('1.3.0', '1.1.0'))
+        service.install_version('1.3.0')
+        self.assertEqual(installer.current_channel(), 'beta')
+        self.assertEqual(installer.current(), '1.3.0')
+
+        downloads[RELEASES+'/latest'] = json.dumps(newer_release).encode()
+        service.check()
+        self.assertEqual(update_client.status(self.state)['stable_available'], '1.4.0')
+        self.assertFalse(update_client.status(self.state)['stable_return'])
+        downloads[RELEASES+'/latest'] = json.dumps(stable_release).encode()
+        settings['include_beta_updates'] = False
+        updater.atomic(self.state/'settings.json', settings)
+        service.check()
+        self.assertTrue(update_client.status(self.state)['stable_return'])
+        service.install_version('1.1.0')
+        self.assertEqual(installer.current_channel(), 'stable')
+        self.assertEqual(installer.current(), '1.1.0')
+        self.assertEqual(updater.read(self.state/'settings.json'), settings)
+        installer.rollback()
+        self.assertEqual(installer.current(), '1.3.0')
+
+    def test_legacy_installer_accepts_first_signed_beta_and_can_restore(self):
+        beta = self.bundle('1.1.0', channel='beta')
+        self.installer.install(*beta)
+        self.assertEqual(self.installer.current(), '1.1.0')
+        self.installer.rollback()
+        self.assertEqual(self.installer.current(), '1.0.0')
 
     def bundle(self, version='1.1.0', **changes):
         boot_units=changes.pop('boot_units',False)
@@ -390,7 +464,10 @@ class ReleaseImage(unittest.TestCase):
             ui=Launcher(framebuffer=Display(),preferences=Preferences(folder/'settings.json'),manifests={})
             try:
                 ui.updates_page()
-                for index,operation in ((1,'check'),(2,'install'),(3,'rollback')):
+                with patch('hlauncher.update_client.request_channel') as check:
+                    ui.actions[1][1]()
+                    check.assert_called_once_with('check', None)
+                for index,operation in ((2,'install'),(3,'rollback')):
                     ui.actions[index][1]()
                     if operation == 'install':
                         self.assertEqual(ui.mode, 'update_confirm')
@@ -401,6 +478,35 @@ class ReleaseImage(unittest.TestCase):
                 self.assertEqual(ui.mode,'updates')
                 ui.actions[0][1]();self.assertEqual(ui.mode,'system_settings')
             finally:ui.close()
+
+    def test_ui_beta_checkbox_and_stable_return_target(self):
+        from hlauncher.launcher import Launcher
+        from hlauncher.config import Preferences
+        from test_architecture import Display
+        with tempfile.TemporaryDirectory() as folder:
+            folder = Path(folder)
+            prefs = Preferences(folder/'settings.json')
+            uploader = Launcher(framebuffer=Display(), preferences=prefs, manifests={})
+            try:
+                updater.atomic(folder/'update-status.json', dict(
+                    phase='available', current='1.2.0', current_channel='beta',
+                    available='1.3.0', available_channel='beta', stable_available='1.1.0',
+                    stable_return=True, message='Update available'))
+                uploader.updates_page()
+                self.assertFalse(prefs.data['include_beta_updates'])
+                uploader.actions[2][1]()
+                self.assertEqual(uploader.confirm_update_version, '1.1.0')
+                self.assertTrue(uploader.confirm_stable_return)
+                with patch('hlauncher.update_client.request_channel') as request:
+                    uploader.confirm_update()
+                    request.assert_called_once_with('install', '1.1.0')
+                next(callback for _, callback in uploader.actions if callback == uploader.toggle_beta_updates)()
+                self.assertTrue(Preferences(prefs.path).data['include_beta_updates'])
+                uploader.install_update()
+                self.assertEqual(uploader.confirm_update_version, '1.3.0')
+                self.assertFalse(uploader.confirm_stable_return)
+            finally:
+                uploader.close()
 
 
 @parked_radio

@@ -10,10 +10,23 @@ validated system migration.
 
 ## User operation
 
-Settings → System → Software updates offers **Check for updates**, **Restart and
-install VERSION**, and **Restore version VERSION** when a previous installation
-exists. Checks use stable releases from `evy0311/HLauncher`. They do not poll
-GitHub in the background or install updates automatically. Connect Wi-Fi first.
+Settings → System → Software updates offers **Check for updates**, installation,
+and **Restore version VERSION** when a previous installation exists. Stable
+releases from `evy0311/HLauncher` are the default. Check **Include beta builds**
+to include GitHub prereleases from `develop` in the next check. If both channels
+have an update, the page offers both. Connect Wi-Fi first.
+
+On a beta, **Check for updates** can also offer **Return to stable** if the
+latest stable is older than the installed beta and compatible with the image.
+Returning to stable keeps saved settings and plugins and retains the beta as
+the previous installed version. The checkbox controls discovery of newer
+betas. A check is manual and installation requires confirmation.
+
+An older update-enabled image needs one signed update that includes the beta
+checkbox. Install the first compatible beta with its local `.hlu` file through
+the recovery page, or install a newer stable release that includes the checkbox
+through the normal stable update check. The existing on-image updater verifies
+the first install and its boot recovery works with either channel.
 **Release notes** opens the notes from that GitHub release before installing.
 Long notes have Previous/Next pages; Markdown is simplified to display text,
 without executing HTML, loading images or opening external content.
@@ -114,9 +127,19 @@ all artifacts as a GitHub **draft** using authenticated GitHub CLI:
 bash scripts/publish_release.sh 0.2.0 /releases/hlauncher-0.2.0
 ```
 
-Publish that draft on GitHub after testing. Drafts/prereleases are not offered by
-the updater. The release tag, signed manifest version and artifact names must
-match. GitHub source archives alone are not installed as updates.
+Publish that draft on GitHub after testing. Use the same build and upload
+process for a beta, with `--beta` before the version when running
+`scripts/build_release.sh`. Build from a commit on `develop` and use a unique
+numeric version newer than the latest stable. The beta channel is part of the
+signed manifest. The publisher marks the draft as a GitHub prerelease and
+checks that its source commit is on the pushed `develop` branch. Beta assets
+include the same image, source, manual update and signatures as stable assets.
+Choose a new numeric version for each release, including stable releases.
+
+The updater checks the signed channel against GitHub's prerelease flag and
+offers published releases only. The release tag, signed manifest version
+and artifact names must match. GitHub source archives alone are not installed
+as updates.
 
 ## Validation before distribution
 

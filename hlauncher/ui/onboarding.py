@@ -86,6 +86,8 @@ def draw_launcher(launcher):
         if not choices:page.text((24,168),'No apps installed. You can add them later.',18)
         if total>1:
             page.button((480,364,696,400),'More apps',lambda:launcher.setup_more(total),size=17)
+    elif step == 3 and not launcher.layout_theme.supports_color_selection:
+        page.text((24, 144), 'This theme uses a fixed color palette.', 19)
     elif step==3:
         for i,name in enumerate(TILE_COLORS):
             x=24+(i%3)*228;y=144+(i//3)*92

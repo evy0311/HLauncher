@@ -5,7 +5,7 @@ import time
 from .home import remove_button_box, slot_box
 
 SLOTS = 6
-MAX_PAGES = 3
+EXTRA_PAGES = 2
 HOLD_SECONDS = .55
 EDGE_SECONDS = .55
 AUDIO = '@audio'
@@ -40,6 +40,25 @@ def layout(plugin_ids, saved):
         page = pending[start:start + SLOTS]
         pages.append(page + [None] * (SLOTS - len(page)))
     return pages
+
+
+def display_pages(ui, presentation):
+    pages = ui.home_pages()
+    if presentation not in ('featured', 'dock'):
+        return pages
+    entries = [entry for page in pages for entry in page]
+    primary = ui.prefs.data['default_plugin']
+    if primary is None or primary not in entries:
+        primary = next((entry for entry in entries if entry in ui.manifests), None)
+    if primary is not None:
+        page, slot = divmod(entries.index(primary), SLOTS)
+        pages[0][0], pages[page][slot] = pages[page][slot], pages[0][0]
+    return pages
+
+
+def minimum_pages(pages):
+    occupied = sum(entry is not None for page in pages for entry in page)
+    return max(1, (occupied + SLOTS - 1) // SLOTS)
 
 
 @dataclass
@@ -79,9 +98,37 @@ class Editor:
 
     def add_page(self):
         pages = self.ui.home_pages()
-        if len(pages) < MAX_PAGES and self.save(pages + [[None] * SLOTS]):
+        if self.can_add_page(pages) and self.save(pages + [[None] * SLOTS]):
             self.ui.page = len(pages)
         self.ui.draw()
+
+    @staticmethod
+    def can_add_page(pages):
+        return len(pages) < minimum_pages(pages) + EXTRA_PAGES
+
+    def begin_editing(self):
+        self.reset()
+        self.editing = True
+        self.ui.press = self.ui.pressed_box = self.ui.home_swipe = None
+        self.ui.draw()
+
+    def confirm_delete_page(self):
+        self.confirm(self.ui.page)
+
+    def delete_page(self):
+        ui = self.ui
+        pages = ui.home_pages()
+        index = self.confirmation
+        if not isinstance(index, int) or not 0 <= index < len(pages) or len(pages) <= minimum_pages(pages):
+            self.confirm(None)
+            return
+        entries = [entry for entry in pages[index] if entry is not None]
+        del pages[index]
+        self.confirmation = None
+        # Keep the surviving tiles in place and fill open slots in page order.
+        if self.save(layout([entry for page in pages for entry in page if entry is not None] + entries, pages)):
+            ui.page = min(index, len(pages) - 1)
+        ui.draw()
 
     def done(self):
         self.reset()
@@ -98,13 +145,23 @@ class Editor:
             return None
         if self.editing and ui.plugin_manager and ui.plugin_manager.job:
             return 'Plugin settings', 'Saving plugin settings…', []
+        cancel = lambda: self.confirm(None)
+        if isinstance(self.confirmation, int):
+            pages = ui.home_pages()
+            if not 0 <= self.confirmation < len(pages) or len(pages) < 2:
+                self.confirmation = None
+                return None
+            if len(pages) <= minimum_pages(pages):
+                return 'Page is needed', f'Your apps and Settings need all {len(pages)} pages.', [('OK', cancel)]
+            message = ('Apps on this page will move to open slots on other pages.'
+                       if any(pages[self.confirmation]) else 'Remove this empty Home page?')
+            return 'Delete Home page?', message, [('Cancel', cancel), ('Delete', self.delete_page)]
         plugin_id = self.confirmation
         manifest = ui.manifests.get(plugin_id)
         if manifest is None or not ui.prefs.enabled(manifest):
             self.confirmation = None
             return None
         disable = lambda: self.plugin_action(plugin_id, 'disable')
-        cancel = lambda: self.confirm(None)
         if manifest.bundled:
             return 'Disable plugin?', f'Disable {manifest.name}?', [('Yes', disable), ('No', cancel)]
         return ('Manage plugin', f'Disable or uninstall {manifest.name}?',
@@ -133,7 +190,7 @@ class Editor:
 
     def touch(self, action, point):
         ui = self.ui
-        if ui.mode != 'home' or ui.banner or self.confirmation or (ui.plugin_manager and ui.plugin_manager.job):
+        if ui.mode != 'home' or ui.banner or self.confirmation is not None or (ui.plugin_manager and ui.plugin_manager.job):
             self.gesture = None
             return False
         if point is not None:
@@ -143,12 +200,16 @@ class Editor:
             if point is None:
                 return False
             alternate = None if self.editing else ui.layout_theme.layouts.get('home')
-            for slot, plugin_id in enumerate(ui.home_pages()[ui.page]):
+            pages = display_pages(ui, alternate)
+            page = pages[min(ui.page, len(pages) - 1)]
+            if alternate:
+                from .theme_menu import occupied_slots, slot_box as alternate_slot_box
+                slots = occupied_slots(page)
+            for slot, plugin_id in enumerate(page):
                 if not plugin_id:
                     continue
                 if alternate:
-                    from .theme_menu import slot_box as alternate_slot_box
-                    x, y, right, bottom = alternate_slot_box(alternate, slot)
+                    x, y, right, bottom = alternate_slot_box(alternate, slot, slots)
                 else:
                     x, y, right, bottom = slot_box(slot)
                 if self.editing and plugin_id in ui.manifests:
@@ -215,7 +276,7 @@ class Editor:
 
     def tick(self, now):
         ui = self.ui
-        if ui.mode != 'home' or ui.banner or self.confirmation or (ui.plugin_manager and ui.plugin_manager.job):
+        if ui.mode != 'home' or ui.banner or self.confirmation is not None or (ui.plugin_manager and ui.plugin_manager.job):
             return
         if self.gesture and not self.editing and now - self.gesture.since >= HOLD_SECONDS:
             self.editing = True

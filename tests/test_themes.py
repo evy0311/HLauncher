@@ -10,7 +10,13 @@ from unittest.mock import Mock
 
 from hlauncher.recovery import handler_for
 from hlauncher.setup_state import SetupState
-from hlauncher.themes import OEM, RAIL, Themes
+from hlauncher.themes import OEM, Themes
+
+
+def theme_document(identifier='my-garage', name='My Garage', **layouts):
+    return dict(format=1, id=identifier, name=name, layouts=layouts,
+                colors=dict(background='#11191E', panel='#213139', accent='#82D4C4',
+                            text='#F4F8F6', muted='#A7BEC5'))
 
 
 class ThemeTests(unittest.TestCase):
@@ -19,8 +25,7 @@ class ThemeTests(unittest.TestCase):
         self.addCleanup(folder.cleanup)
         self.state = SetupState(Path(folder.name))
         self.themes = Themes(self.state.folder)
-        self.document = dict(RAIL.document(), id='my-rail', name='My Rail',
-                             layouts={'home': 'grid', 'settings': 'list'})
+        self.document = theme_document(home='grid', settings='list')
 
     def request(self, method, data=None, *, origin=None, authorized=True):
         handler_type = handler_for(self.state, Mock())
@@ -46,12 +51,19 @@ class ThemeTests(unittest.TestCase):
 
     def test_setup_site_imports_and_exports_validated_layouts(self):
         handler = self.request('POST', self.document, origin='http://192.168.4.1')
-        handler.send.assert_called_once_with(201, {'id': 'my-rail', 'name': 'My Rail'})
+        handler.send.assert_called_once_with(201, {'id': 'my-garage', 'name': 'My Garage'})
         self.themes.reload()
-        self.assertEqual(self.themes.get('my-rail').layouts, {'home': 'grid', 'settings': 'list'})
+        self.assertEqual(self.themes.get('my-garage').layouts, {'home': 'grid', 'settings': 'list'})
         response = self.request('GET').send.call_args.args[1]
         self.assertIn(self.document, response['themes'])
         self.assertIs(self.themes.get('missing'), OEM)
+        starter = response['templates']['touring']
+        self.request('POST', starter).send.assert_called_once_with(201, {
+            'id': 'touring-copy', 'name': 'Touring copy',
+        })
+        response = self.request('GET').send.call_args.args[1]
+        self.assertIn(starter, response['themes'])
+        self.assertEqual(response['templates']['touring']['id'], 'touring-copy-2')
 
     def test_import_respects_authentication_and_falls_back_on_corrupt_files(self):
         self.request('GET', authorized=False).send_response.assert_called_once_with(401)
@@ -59,13 +71,14 @@ class ThemeTests(unittest.TestCase):
         rejected.send.assert_called_once_with(403, {'error': 'Origin rejected'})
         for data in (dict(self.document, id='../main'),
                      dict(self.document, layouts={'home': 'python'}),
+                     dict(self.document, supports_color_selection='true'),
                      dict(self.document, id='oem')):
             response = self.request('POST', data)
             self.assertEqual(response.send.call_args.args[0], 400)
         self.themes.install_document(self.document)
-        (self.themes.folder/'my-rail.json').write_text('invalid')
+        (self.themes.folder/'my-garage.json').write_text('invalid')
         self.themes.reload()
-        self.assertIs(self.themes.get('my-rail'), OEM)
+        self.assertIs(self.themes.get('my-garage'), OEM)
 
 
 if __name__ == '__main__':

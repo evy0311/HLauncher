@@ -210,18 +210,32 @@ class Launcher:
 
     def preview_theme(self, identifier):
         self.theme_preview = self.themes.get(identifier)
+        self.theme_preview_color = None
+        self.resume_theme_preview()
+
+    def resume_theme_preview(self):
         self.mode = 'theme_preview'
         self.press = self.pressed_box = None
         self.banner = ''
         self.draw()
 
+    def preview_colors(self):
+        if self.theme_preview.supports_color_selection:
+            self.mode = 'preview_colors'
+            self.press = self.pressed_box = None
+            self.banner = ''
+            self.draw()
+
     def select_theme(self):
-        previous = self.prefs.data['layout_theme']
-        self.prefs.data['layout_theme'] = self.theme_preview.id
+        changes = {'layout_theme': self.theme_preview.id}
+        if self.theme_preview.supports_color_selection and self.theme_preview_color is not None:
+            changes.update(config.tile_color_values(self.theme_preview_color))
+        previous = {key: self.prefs.data[key] for key in changes}
+        self.prefs.data.update(changes)
         try:
-            self.prefs.save(force=('layout_theme',))
+            self.prefs.save(force=changes)
         except OSError:
-            self.prefs.data['layout_theme'] = previous
+            self.prefs.data.update(previous)
             self.banner = 'Could not save the theme'
             self.draw()
             return
@@ -790,6 +804,8 @@ class Launcher:
         self.draw()
 
     def tile_colors(self):
+        if not self.layout_theme.supports_color_selection:
+            return
         self.host.deactivate()
         self.mode = 'tile_colors'
         self.press = None
@@ -798,8 +814,13 @@ class Launcher:
 
     def custom_color(self):
         from .ui.color_picker import Picker
-        self.custom_color_return=self.setup_resume if self.mode=='onboarding' else self.tile_colors
-        self.color_picker=Picker(self.prefs.data['custom_color'])
+        if self.mode == 'preview_colors':
+            self.custom_color_return = self.preview_colors
+            staged = self.theme_preview_color
+        else:
+            self.custom_color_return = self.setup_resume if self.mode == 'onboarding' else self.tile_colors
+            staged = None
+        self.color_picker = Picker(staged if staged and staged.startswith('#') else self.prefs.data['custom_color'])
         self.host.deactivate()
         self.mode='custom_color'
         self.press=self.pressed_box=None
@@ -810,6 +831,10 @@ class Launcher:
         self.custom_color_return()
 
     def save_custom_color(self):
+        if self.custom_color_return == self.preview_colors:
+            self.theme_preview_color = self.color_picker.hex
+            self.preview_colors()
+            return
         try:self.prefs.set_tile_color(self.color_picker.hex)
         except (OSError,ValueError):
             self.banner='Could not save custom color'
@@ -822,6 +847,10 @@ class Launcher:
         self.draw()
 
     def set_tile_color(self, name):
+        if self.mode == 'preview_colors':
+            self.theme_preview_color = name
+            self.draw()
+            return
         try:
             self.prefs.set_tile_color(name)
             self.banner = ''
@@ -1111,15 +1140,16 @@ class Launcher:
             self.home_slide = 0.0
             self.home_settle = None
             return False
+        count = len(self.home_pages())
         if action == 'down':
-            self.home_swipe = point if len(self.home_pages()) > 1 else None
+            self.home_swipe = point if count > 1 else None
         elif self.home_swipe and action in ('move', 'up', 'unused'):
             end = point or self.last_xy or self.home_swipe
             dx = (end[0] - self.home_swipe[0]) / self.fb.w
             dy = (end[1] - self.home_swipe[1]) / self.fb.h
             horizontal = abs(dx) >= .025 and abs(dx) >= 1.5 * abs(dy)
             target = self.page + (1 if dx < 0 else -1)
-            available = 0 <= target < len(self.home_pages())
+            available = 0 <= target < count
             if action == 'move' and (horizontal or self.home_slide):
                 self.press = self.pressed_box = None
                 self.home_slide = dx if available else dx * .25

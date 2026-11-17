@@ -31,7 +31,11 @@ Touch regions scale with the displayed image on other framebuffer dimensions.
 On a fresh layout, CarPlay appears first, then the remaining enabled plugins and
 Settings. Each page has six slots. Hold a tile to edit Home. Drag tiles into
 empty slots or onto another tile to swap positions. Hold a dragged tile at either
-edge to turn the page. Use **+ Page** to add an empty page when fewer than three pages are shown.
+edge to turn the page. Every Home theme supports swiping and adds pages as needed
+for enabled apps. Use **+ Page** to keep up to two spare pages for arranging tiles.
+On the page you want to remove, choose **Delete page** in edit mode. Its apps move
+to open slots on other pages. A page can be deleted when all enabled apps fit
+on the remaining pages. On an empty page, tap **Edit Home** to open edit mode.
 Use **Done** to leave edit mode. Layout changes are saved as you make them. Settings can move to
 any slot. Use a plugin's corner button to disable it or uninstall a plugin you
 installed yourself.

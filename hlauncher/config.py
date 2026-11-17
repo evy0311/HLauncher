@@ -42,6 +42,12 @@ CARPLAY_FRAME_RATES = (30, 60)
 WIFI_POWER_MODES = ('on', 'off', 'sleep')
 
 
+def tile_color_values(name):
+    if not isinstance(name, str) or name not in TILE_COLORS:
+        name = normalize_color(name)
+    return {'tile_color': name, 'custom_color': name} if name.startswith('#') else {'tile_color': name}
+
+
 class Preferences:
     def __init__(self, path=None):
         self.path = Path(path) if path else STATE_DIR / "settings.json"
@@ -159,14 +165,13 @@ class Preferences:
             raise
 
     def set_tile_color(self, name):
-        if not isinstance(name,str) or name not in TILE_COLORS:name=normalize_color(name)
-        before = (self.data['tile_color'],self.data['custom_color'])
-        self.data['tile_color'] = name
-        if name.startswith('#'):self.data['custom_color']=name
+        changes = tile_color_values(name)
+        before = {key: self.data[key] for key in changes}
+        self.data.update(changes)
         try:
             self.save()
         except OSError:
-            self.data['tile_color'],self.data['custom_color'] = before
+            self.data.update(before)
             raise
 
     def save(self, force=()):

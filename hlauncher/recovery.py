@@ -253,7 +253,7 @@ PAGE = '''<!doctype html><html><head><meta charset="utf-8"><meta name="viewport"
 <summary>Layout themes</summary>
 <p>On the radio, open Settings → Appearance → Change theme to preview or switch themes. OEM is the original layout.</p>
 <div id="theme-downloads"></div>
-<p>To make your own theme, download a template, change its ID and name, and edit its layouts and colors.</p>
+<p>Download a starter, edit its JSON, then import it. You can also download and share an installed theme.</p>
 <label for="themefile">Theme JSON file</label><input type="file" id="themefile" accept=".json,application/json">
 <button class="secondary" onclick="uploadTheme()">Import theme</button><p id="themestatus" role="status"></p>
 </details>
@@ -273,19 +273,22 @@ async function uploadUpdate(){let file=document.getElementById('updatefile').fil
 function debug(){post('/api/debug',{})}
 async function loadThemeDownloads(){
     const response=await fetch('/api/layout-themes');
-    if(!response.ok)return;
+    if(!response.ok)throw new Error('Could not load themes. Reload the setup page to retry.');
     const data=await response.json();
+    const starters=new Map(Object.entries(data.templates));
     const list=document.getElementById('theme-downloads');
     list.replaceChildren();
     for(const theme of data.themes){
+        const starter=starters.get(theme.id);
+        const download=starter||theme;
         const button=document.createElement('button');
         button.className='secondary';
-        button.textContent='Download '+theme.name;
+        button.textContent='Download '+theme.name+(starter?' starter':'');
         button.onclick=()=>{
             const link=document.createElement('a');
-            const url=URL.createObjectURL(new Blob([JSON.stringify(theme,null,2)+'\\n'],{type:'application/json'}));
+            const url=URL.createObjectURL(new Blob([JSON.stringify(download,null,2)+'\\n'],{type:'application/json'}));
             link.href=url;
-            link.download=theme.id+'.json';
+            link.download=download.id+'.json';
             link.click();
             setTimeout(()=>URL.revokeObjectURL(url),1000);
         };
@@ -301,10 +304,10 @@ async function uploadTheme(){
         const data=await response.json();
         if(!response.ok)throw new Error(data.error||'Import failed');
         status.textContent='Imported '+data.name+'. Reopen Change theme on the radio.';
-        await loadThemeDownloads();
+        await loadThemeDownloads().catch(()=>{});
     }catch(error){status.textContent=error.message}
 }
-loadThemeDownloads().catch(()=>{})
+loadThemeDownloads().catch(error=>{document.getElementById('themestatus').textContent=error.message})
 async function refresh(){try{let r=await fetch('/api/status');let data=await r.json();document.body.style.setProperty('--accent',themes[data.theme]||(/^#[0-9A-Fa-f]{6}$/.test(data.theme||'')?[1,3,5].map(i=>parseInt(data.theme.slice(i,i+2),16)).join(','):themes.Red));document.getElementById('capture').hidden=!data.debug;let job=data.maintenance||{};if(job.status==='Working')document.getElementById('notice').textContent='Applying connection changes…';else if(job.status==='Failed')document.getElementById('notice').textContent=job.message||job.status;else if(job.status==='Done')document.getElementById('notice').textContent=''}catch{}}
 refresh();setInterval(refresh,3000)
 </script></main></body></html>'''
@@ -342,7 +345,7 @@ def handler_for(state, maintenance):
                 from .themes import OEM, Themes
                 themes = Themes(state.folder)
                 return self.send(200, {'themes': [theme.document() for theme in themes.choices.values()
-                                                  if theme is not OEM]})
+                                                  if theme is not OEM], 'templates': themes.templates()})
             if self.path == '/ui-font.ttf':
                 path=Path(__file__).parent/'ui/assets/fonts/NotoSansJP.ttf'
                 self.send_response(200);self.send_header('Content-Type','font/ttf')

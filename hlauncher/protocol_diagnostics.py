@@ -8,9 +8,10 @@ import queue
 import shutil
 import threading
 import time
-from .vehicle_protocol import VehicleTraffic
-
 from .config import STATE_DIR
+from .protocol.vehicle_can import DRIVING_API_IDS, PARKING_DIAGNOSTIC_API_IDS, SCOPED_API_IDS
+from .vehicle_last_known import VehicleLastKnown
+from .vehicle_protocol import VehicleTraffic
 
 NAMES = {0x01:'Session',0x09:'App information',0x11:'Connection status',0x43:'Touch',
          0x51:'Keyboard status',0x61:'Radio status',0x62:'Status request',0x63:'Status',0xb1:'Device information',
@@ -18,11 +19,13 @@ NAMES = {0x01:'Session',0x09:'App information',0x11:'Connection status',0x43:'To
 PREFIXES = ('iap_', 'honda_', 'radio_control_', 'radio_button', 'projection_',
             'audio_meter_', 'audio_capture_', 'audio_hfp_', 'audio_voice_', 'plugin_audio_', 'protocol_')
 TRANSPORT = {'rx','protocol_tx','connected','closed','released','registered','socket_error','tx_error'}
+SETUP_BRAKE_MAX_AGE = 6
+SPEED_MAX_AGE = 2
 
 
 class ProtocolDiagnostics:
     def __init__(self, folder=None, file_limit=8*1024*1024, total_limit=64*1024*1024,
-                 min_free=64*1024*1024):
+                 min_free=64*1024*1024, *, vehicle_path=None):
         self.folder=Path(folder) if folder else STATE_DIR/'protocol-captures'
         self.file_limit=file_limit;self.total_limit=total_limit;self.min_free=min_free
         self.lock=threading.RLock();self.pending=queue.Queue(1024)
@@ -32,6 +35,10 @@ class ProtocolDiagnostics:
         self.recent=deque(maxlen=12);self.voice={};self.mic={};self.connected=False
         self.last_marker='';self.sequence=0
         self.vehicle=VehicleTraffic()
+        self.last_reported_speed = None
+        self.last_reported_speed_at = None
+        self.last_reported_speed_session = None
+        self.last_vehicle = VehicleLastKnown(vehicle_path)
         self.app_keys = deque(maxlen=6)
         self.display_trials = deque(maxlen=4)
 
@@ -53,12 +60,32 @@ class ProtocolDiagnostics:
             if state=='iap_data_session_closed':
                 self.sessions.pop(str(item.get('session')),None)
                 self.vehicle.clear(item.get('session'))
-            if state=='connected' and str(item.get('uuid','')).endswith('cafe'):self.connected=True
+            if state == 'honda_can_data' and self.connected and event.get('data_type', 0) == 0:
+                speeds = [record.get('signals', {}).get('152', -1) for record in event['records']]
+                valid_speeds = [speed for speed in speeds if 0 <= speed <= 400]
+                if valid_speeds:
+                    self.last_reported_speed = max(valid_speeds)
+                    self.last_reported_speed_at = event['monotonic']
+                    self.last_reported_speed_session = event['session']
+            speed_session_closed = (state == 'iap_data_session_closed'
+                                    or (state == 'honda_can_authorization' and not event.get('authorized')))
+            if speed_session_closed and item.get('session') in (None, self.last_reported_speed_session):
+                self.last_reported_speed_at = None
+            if state=='connected' and str(item.get('uuid','')).endswith('cafe'):
+                self.connected = True
+                self.last_vehicle.select_device(item.get('device'))
             if state in ('closed','released') and str(item.get('uuid','')).endswith('cafe'):
                 self.connected=False;self.sessions.clear();self.vehicle.clear()
+                self.last_reported_speed = None
+                self.last_reported_speed_at = self.last_reported_speed_session = None
+                self.last_vehicle.flush_requested = True
             if state=='iap_remote_reset':
                 self.advertised.clear();self.sessions.clear();self.vehicle.clear()
-            if state=='honda_app_disconnect_received':self.vehicle.clear()
+                self.last_reported_speed_at = None
+            if state=='honda_app_disconnect_received':
+                self.vehicle.clear()
+                self.last_reported_speed_at = None
+            self.remember_vehicle(event)
             if state=='honda_display_test_result':
                 self.display_trials.appendleft(dict(event))
             if state in ('projection_voice_state','projection_voice_route'):self.voice={k:v for k,v in item.items() if k!='state'}
@@ -85,11 +112,15 @@ class ProtocolDiagnostics:
             if state=='honda_frame':
                 for detail in self.vehicle.observe(event):self.observe(detail)
 
+    def ensure_writer(self):
+        if not self.thread and not self.closed:
+            self.thread = threading.Thread(target=self._write, daemon=True)
+            self.thread.start()
+
     def start(self):
         with self.lock:
             if self.recording or self.closed:return
-            if not self.thread:
-                self.thread=threading.Thread(target=self._write,daemon=True);self.thread.start()
+            self.ensure_writer()
             try:self.pending.put_nowait(('start',None))
             except queue.Full:self.status='Capture queue full';return
             self.recording=True;self.status='Recording';self.revision+=1
@@ -130,6 +161,62 @@ class ProtocolDiagnostics:
                 vehicle_can_records=self.vehicle.snapshot_can_records(),
                 vehicle_subscription=dict(self.vehicle.subscription))
 
+    def remember_vehicle(self, event):
+        state = event['state']
+        saved = self.last_vehicle
+        active = self.vehicle.subscription.get('scope') == 'vehicle'
+        now = event['monotonic']
+        if state == 'honda_can_data' and active and self.connected and event.get('scope') == 'vehicle':
+            if event['data_type']:
+                saved.update_report(event['data_type'], event['records'], now)
+            else:
+                saved.update(self.vehicle_readings_from(event), now)
+        elif state == 'honda_radio_status' and active and self.connected:
+            saved.update({'brake': event['parking_brake_engaged']}, now)
+        elif ((state == 'honda_can_subscription_queued' and event.get('scope') != 'vehicle') or
+              state in ('iap_data_session_closed', 'iap_remote_reset', 'honda_app_disconnect_received')):
+            saved.flush_requested = True
+        if saved.path and saved.revision != saved.written:
+            self.ensure_writer()
+
+    def vehicle_readings_from(self, event):
+        now = event['monotonic']
+        readings = {str(row['api_id']): row['value']
+                    for row in self.vehicle.signals.snapshot(now, SCOPED_API_IDS['vehicle'])
+                    if row['received'] and row['at'] == now}
+        identity = {0x99f00006: 'head-unit', 0x99f00007: 'vin'}
+        for record in event['records']:
+            if label := identity.get(record['can_id']):
+                raw = bytes.fromhex(record['data'])
+                value = raw.rstrip(b'\x00').decode('ascii', errors='replace')
+                if value:
+                    readings[label] = value if value.isascii() and value.isprintable() else raw.hex().upper()
+        gps = self.vehicle.gps
+        if gps.get('at') == now and gps['fix'] is not None:
+            readings['latitude'], readings['longitude'] = gps['fix']
+        return readings
+
+    def vehicle_plugin_snapshot(self, now):
+        with self.lock:
+            saved = self.last_vehicle
+            snapshot = dict(last_updated=saved.updated_text(now), readings=dict(saved.readings))
+            return snapshot, saved.report_revision, saved.report_view()
+
+    def save_last_vehicle(self, *, force=False):
+        saved = self.last_vehicle
+        with self.lock:
+            update = saved.pending_write(time.monotonic(), force=force)
+        if update is None:
+            return
+        revision, payload = update
+        try:
+            saved.write(payload)
+        except OSError:
+            # Keep the pending readings in memory and retry on the next interval.
+            return
+        with self.lock:
+            saved.written = revision
+
     def gauge_snapshot(self, now=None):
         """Small in-memory handoff; no recorder or persistent-file dependency."""
         now=time.monotonic() if now is None else now
@@ -143,8 +230,8 @@ class ProtocolDiagnostics:
 
     def projection_speed(self, now):
         speed, = self.vehicle.signals.snapshot(now, {152})
-        if speed['received'] and 0 <= speed['age_seconds'] < 2 and 0 <= speed['value'] <= 400:
-            return speed['value'], speed['at'] + 2
+        if speed['received'] and 0 <= speed['age_seconds'] < SPEED_MAX_AGE and 0 <= speed['value'] <= 400:
+            return speed['value'], speed['at'] + SPEED_MAX_AGE
         return None, None
 
     def projection_gps(self, *, include_speed=False):
@@ -173,18 +260,63 @@ class ProtocolDiagnostics:
         return state
 
     def parked_for_setup(self, now=None):
-        """Require live zero speed and an engaged brake from the radio."""
+        """Use the radio brake when speed is missing, with reported motion taking priority."""
+        speed, brake = self.parked_setup_readings(now)
+        return brake is True and speed in (None, 0)
+
+    def plugin_parking_state(self, now=None):
+        """Publish only live readings and the stricter parked check for plugins."""
+        now = time.monotonic() if now is None else now
+        with self.lock:
+            speed = brake = None
+            if self.connected:
+                brake = self._setup_brake(now)
+                # Keep the original expiry when a plugin switches CAN subscriptions.
+                at = self.last_reported_speed_at
+                if at is not None and 0 <= now - at < SPEED_MAX_AGE:
+                    speed = self.last_reported_speed
+            return dict(connected=self.connected, speed_kph=speed, parking_brake=brake,
+                        safely_parked=speed == 0 and brake is True)
+
+    def _setup_brake(self, now):
+        brake = self.vehicle.status
+        # Civic 0x61 reports brake changes promptly and repeats about every 5 s.
+        if 'at' in brake and 0 <= now - brake['at'] < SETUP_BRAKE_MAX_AGE:
+            return brake['parking_brake_engaged']
+        return None
+
+    def parked_setup_readings(self, now=None):
         now = time.monotonic() if now is None else now
         with self.lock:
             if not self.connected:
-                return False
-            brake = self.vehicle.status
-            # Civic 0x61 reports brake changes promptly and repeats about every 5 s.
-            if (brake.get('parking_brake_engaged') is not True
-                    or not 0 <= now - brake['at'] < 6):
-                return False
+                return None, None
             speed, _ = self.projection_speed(now)
-            return speed == 0
+            # Losing the speed feed or changing subscriptions must not erase reported motion.
+            if self.last_reported_speed:
+                speed = self.last_reported_speed
+            return speed, self._setup_brake(now)
+
+    def parking_snapshot(self, now=None):
+        """Read the gate and candidate signals together for the support screen."""
+        now = time.monotonic() if now is None else now
+        with self.lock:
+            brake = self.vehicle.status
+            speed, engaged = self.parked_setup_readings(now)
+            return dict(connected=self.connected, parked=self.parked_for_setup(now),
+                        brake_only=engaged is True and speed is None,
+                        radio_brake=brake.get('parking_brake_engaged'),
+                        radio_flags=brake.get('flags'),
+                        radio_age=now - brake['at'] if 'at' in brake else None,
+                        can_signals=self.vehicle.signals.snapshot(
+                            now, set(DRIVING_API_IDS + PARKING_DIAGNOSTIC_API_IDS)))
+
+    def parked_setup_refresh_pending(self):
+        """Allow the overlay to wait briefly while a parked page awaits fresh data."""
+        with self.lock:
+            if not self.connected or self.vehicle.status.get('parking_brake_engaged') is not True:
+                return False
+            speed, _ = self.parked_setup_readings()
+            return speed in (0, None)
 
     def illumination_night_mode(self, now=None):
         now = time.monotonic() if now is None else now
@@ -243,11 +375,17 @@ class ProtocolDiagnostics:
                         self.status='Capture error: '+str(exc)[:80];self.recording=False;self.revision+=1
                 finally:
                     if kind!='flush':self.pending.task_done()
-        finally:finish()
+                self.save_last_vehicle()
+        finally:
+            finish()
+            self.save_last_vehicle(force=True)
 
     def close(self):
+        with self.lock:
+            if self.closed:
+                return
+            self.closed = True
         self.stop()
-        with self.lock:self.closed=True
         if self.thread:
             # Called during shutdown, not from a display callback.
             try:self.pending.put(('close',None),timeout=1)

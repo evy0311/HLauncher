@@ -57,6 +57,7 @@ def draw_launcher(launcher):
     if index<pages-1:page.button((200,416,360,460),'Next',lambda:launcher.release_notes_move(1),size=20,secondary=True)
     current=status(launcher.prefs.path.parent)
     if (info.get('notes_version') and current.get('available')==info['notes_version'] and
+            (current.get('available_channel') != 'beta' or launcher.prefs.data['include_beta_updates']) and
             current.get('phase') not in ('checking','downloading','installing')):
         page.button((392,416,696,460),'Restart and install',launcher.install_update,size=21,selected=True)
     present(launcher,page)

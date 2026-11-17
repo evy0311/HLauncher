@@ -941,6 +941,7 @@ class StartProbe:
             return
         scope=self.vehicle_scope()
         if scope not in SCOPES:scope='off'
+        now = time.monotonic()
         # Firmware C80C4 checks the specific app connection, not a global flag.
         # One owner per app connection; a bootstrap channel cannot borrow auth.
         for sid, auth in self.vehicle_auth_sessions.items():
@@ -951,14 +952,13 @@ class StartProbe:
                 continue
             if self.vehicle_session is not None and self.vehicle_session != sid:
                 continue
-            existing=self.vehicle_subscription.requests.get(sid)
-            if (existing and existing['scope']==scope) or (scope=='off' and existing is None):
+            if not self.vehicle_subscription.needs_request(sid, scope, now):
                 continue
-            if existing and time.monotonic()-existing['at']<.35:continue
             self.vehicle_session = sid
             events.append(dict(state='honda_can_session_selected', session=sid,
                                protocol=name, authorization_session=sid, **auth))
-            self.vehicle_subscription.request(sid, self.send_honda, events, replies, protocol=name,scope=scope)
+            self.vehicle_subscription.request(sid, self.send_honda, events, replies, now=now,
+                                              protocol=name, scope=scope)
             return
 
     def sync_vehicle_scope(self):

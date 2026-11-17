@@ -107,7 +107,7 @@ def tile_image(theme, text, icon_name, corner, active):
 
 def render(layout, *, theme='Red', size=(720,480), page=0, clock=None,
            message='', dismiss=None, change_page=None, pressed=None, show_clock=False,
-           editor=None, confirmation=None, slide=0.0):
+           editor=None, confirmation=None, slide=0.0, edit_empty=None):
     """Render from a canonical 720×480 layout and return matching touch regions.
 
     The ordinary three-plugin setup matches the approved five-tile mockup.
@@ -158,7 +158,15 @@ def render(layout, *, theme='Red', size=(720,480), page=0, clock=None,
             x = round(min(720-tw, max(0, origin[0] + gesture.point[0] - gesture.start[0])))
             y = round(min(480-th, max(55, origin[1] + gesture.point[1] - gesture.start[1])))
             draw_tile(dragged, x, y, active=True)
-    if pages > 1:
+    if pages > 7:
+        d.text((360, 467), f'{page + 1} / {pages}', font=interface_font(16), fill='#f4edf2', anchor='mm')
+        for label, box, delta in (('‹', (220, 456, 300, 480), -1), ('›', (420, 456, 500, 480), 1)):
+            if 0 <= page + delta < pages:
+                d.text(((box[0] + box[2]) // 2, 467), label, font=interface_font(22),
+                       fill='#f4edf2', anchor='mm')
+                if change_page is not None:
+                    actions.append((bounds(box), lambda delta=delta: change_page(delta)))
+    elif pages > 1:
         for index in range(pages):
             center = 360 + (2 * index - pages + 1) * 22
             color = '#f4edf2' if index == page else '#827982'
@@ -166,14 +174,18 @@ def render(layout, *, theme='Red', size=(720,480), page=0, clock=None,
             if change_page is not None:
                 actions.append((bounds((center - 21, 458, center + 21, 480)),
                                 lambda delta=index-page: change_page(delta)))
-    if editing:
+    if editing or (edit_empty and not offset and not any(layout[page])):
         from .controls import Page
-        from .home_edit import MAX_PAGES
         header = Page('', None, theme, size, pressed)
         header.image, header.draw = image, d
-        if pages < MAX_PAGES:
-            header.button((552, 6, 624, 46), '+ Page', editor.add_page, size=16, secondary=True)
-        header.button((634, 6, 704, 46), 'Done', editor.done, size=19)
+        if editing:
+            if pages > 1:
+                header.button((428, 6, 540, 46), 'Delete page', editor.confirm_delete_page, size=16, secondary=True)
+            if editor.can_add_page(layout):
+                header.button((552, 6, 624, 46), '+ Page', editor.add_page, size=16, secondary=True)
+            header.button((634, 6, 704, 46), 'Done', editor.done, size=19)
+        else:
+            header.button((240, 204, 480, 268), 'Edit Home', edit_empty, size=22)
         actions += header.actions
     if confirmation is not None or (message and dismiss is not None):
         from .controls import Page
@@ -200,22 +212,45 @@ def render(layout, *, theme='Red', size=(720,480), page=0, clock=None,
     return Frame(image,actions,page)
 
 
-def draw_launcher(launcher):
-    """Thin adapter; callbacks and enabled/default plugin policy remain core-owned."""
-    from .home_edit import SETTINGS
+def launcher_layout(launcher, presentation=None):
+    from .home_edit import SETTINGS, display_pages
 
     entries=[Entry(m.name,m.icon or m.id,lambda pid=m.id:launcher.open_plugin(pid),m.id)
              for m in launcher.home_manifests()]
     # entries.append(Entry('Audio', 'audio', launcher.audio_page, AUDIO))
     entries.append(Entry('Settings', 'settings', launcher.settings, SETTINGS))
     by_id = {entry.id: entry for entry in entries}
+    return [[by_id.get(pid) for pid in page] for page in display_pages(launcher, presentation)]
+
+
+def draw_launcher(launcher):
+    """Thin adapter; callbacks and enabled/default plugin policy remain core-owned."""
     editor = launcher.home_editor
-    layout = [[by_id.get(pid) for pid in page] for page in launcher.home_pages()]
     confirmation = editor.dialog()
+    theme = launcher.layout_theme
+    alternate = theme.layouts.get('home')
+    if alternate and not (editor.editing or confirmation or launcher.banner):
+        from . import theme_menu
+
+        layout = launcher_layout(launcher, alternate)
+        frame = theme_menu.render(
+            theme, alternate, 'Home', theme_menu.home_items(layout),
+            size=(launcher.fb.w, launcher.fb.h), page=launcher.page,
+            change_page=launcher.change_page, slide=launcher.home_slide,
+            edit_empty=editor.begin_editing,
+            pressed=launcher.pressed_box if launcher.press is not None else None,
+            clock=datetime.now().strftime('%-I:%M') if launcher.prefs.data['show_clock'] else None,
+            color=launcher.prefs.data['tile_color'],
+        )
+        launcher.page = frame.page
+        theme_menu.present(launcher, frame)
+        return
+    layout = launcher_layout(launcher)
     frame=render(layout,theme=launcher.prefs.data['tile_color'],size=(launcher.fb.w,launcher.fb.h),
                  page=launcher.page,message=launcher.banner,dismiss=launcher.dismiss_home_notice,
                  change_page=launcher.change_page,
                  slide=launcher.home_slide,
+                 edit_empty=editor.begin_editing,
                  editor=editor if editor.editing else None, confirmation=confirmation,
                  pressed=launcher.pressed_box if launcher.press is not None else None,show_clock=launcher.prefs.data['show_clock'])
     launcher.actions=frame.actions;launcher.page=frame.page

@@ -5,14 +5,15 @@
 <p align="center">
   <a href="https://github.com/evy0311/HLauncher/releases"><img src="https://img.shields.io/github/v/release/evy0311/HLauncher?style=flat-square&amp;color=b42326" alt="Latest release"></a>
   <a href="docs/install.md"><img src="https://img.shields.io/badge/Raspberry_Pi-4_Model_B-9d174d?style=flat-square&amp;logo=raspberrypi" alt="Raspberry Pi 4 Model B installation guide"></a>
-  <a href="https://github.com/evy0311/HLauncher/blob/docs/readme-refresh/docs/vehicle-compatibility.md"><img src="https://img.shields.io/badge/HondaLink-Vehicle_compatibility-285c83?style=flat-square" alt="HondaLink vehicle compatibility"></a>
+  <a href="docs/vehicle-compatibility.md"><img src="https://img.shields.io/badge/HondaLink-Vehicle_compatibility-285c83?style=flat-square" alt="HondaLink vehicle compatibility"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-GPL--3.0-3c5c49?style=flat-square" alt="GPL-3.0 license"></a>
   <a href="https://ko-fi.com/evy0311"><img src="https://img.shields.io/badge/Sponsor-Ko--fi-9f1239?style=flat-square&amp;logo=kofi&amp;logoColor=white" alt="Sponsor HLauncher on Ko-fi"></a>
 </p>
 
 A Raspberry Pi launcher for factory Honda radios with the legacy HDMI-based
-HondaLink phone-app integration, tested on my 2014 Civic Si. It adds CarPlay and
-Android Auto through plugins. OBD Gauges is coming soon.
+HondaLink phone-app integration, tested on my 2014 Civic Si. It adds CarPlay
+and wired Android Auto through plugins, plus a Vehicle maintenance dashboard
+available while parked. OBD Gauges is coming soon.
 
 ![The dashboard of a 2014 Honda Civic Si with the HLauncher tile visible in CarPlay on the factory radio](docs/images/hlauncher-in-car.jpg)
 
@@ -31,7 +32,7 @@ progress and future native-radio experiments are on [my blog](https://www.evanho
 
 ## Vehicle compatibility
 
-[See vehicle compatibility](https://github.com/evy0311/HLauncher/blob/docs/readme-refresh/docs/vehicle-compatibility.md).
+[See vehicle compatibility](docs/vehicle-compatibility.md).
 
 ## Hardware
 
@@ -44,6 +45,7 @@ progress and future native-radio experiments are on [my blog](https://www.evanho
 | --- | --- | --- |
 | CarPlay | iPhone and compatible Carlinkit USB adapter connected to the Pi | [CarPlay](plugins/carplay/README.md) |
 | Android Auto | Android phone connected directly to a Pi USB host port | [Android Auto](plugins/android-auto/README.md) |
+| Vehicle | HondaLink maintenance, health and fault data from the factory radio | [Vehicle](plugins/vehicle/README.md) |
 
 Power currently comes from a cigarette-lighter USB plug supplying **3 A**. The Pi
 loses power whenever the car cuts power to the socket, without a clean shutdown.
@@ -78,6 +80,18 @@ The image uses the tested **720×480 HDMI input**; forcing the panel's 800×480
 resolution cropped the picture. See [display setup](docs/setup.md#hdmi) for other
 hardware. To install from source instead, use the [source setup guide](docs/setup.md).
 
+## Home themes
+
+Open **Settings → Appearance → Change theme** to preview and apply a theme:
+
+- **OEM** uses the original factory-style grid and your choice of background color.
+- **Touring** uses large app tiles, a two-column Settings menu, and cool graphite colors.
+- **Drive** puts your startup app above a row of shortcuts, with a black and deep-gray palette.
+
+All three support Home pages you can swipe between. To make your own theme,
+download an editable Touring or Drive starter from the Pi's local setup page,
+make your changes, and import it. See the [theme guide](docs/themes.md).
+
 ## Updates and recovery
 
 On update-enabled images, **Settings → System → Software updates** checks for
@@ -85,20 +99,22 @@ signed releases and can restore the previously installed application version.
 Checks and installation are manual. A signed **`.hlu`** file can also be uploaded
 from a phone/computer through the local setup page. See [updates](docs/updates.md).
 
-**Settings → System → Wi-Fi & pairing** shows network and setup access. Join the
+Wi-Fi starts off on a fresh install. To set it up, open **Settings → System →
+Wi-Fi → Setup hotspot** and select **Start setup hotspot**. Join the
 **HLauncher-XXXX** hotspot with the device's setup password, then open
 [the setup page](http://192.168.4.1:8080). Sign in as **`hlauncher`** with that
 same device password. The radio's hotspot screen and the SD card's
 `HLAUNCHER-SETUP.txt` show it.
 
-SSH starts off. Enable it from **Wi-Fi & pairing → SSH access** on the radio.
+SSH starts off. Enable it from **Wi-Fi → SSH access** on the radio.
 The initial SSH credentials are **`hlauncher` / `ilovevtec1234`**. Use a trusted
 network and change the SSH password with `passwd`. See [first boot and recovery](docs/onboarding.md).
 
 ## Development and documentation
 
 - [Source installation and troubleshooting](docs/setup.md)
-- [Plugin installation, API and example](docs/plugins.md)
+- [Contributing to HLauncher](CONTRIBUTING.md)
+- [Installing plugins](docs/plugins.md#install-on-the-radio) · [Creating a plugin](docs/plugins.md#author-and-package-a-plugin) · [Building with an AI agent](docs/plugins.md#build-a-plugin-with-an-ai-agent)
 - [Audio and EQ](docs/audio.md) · [Radio controls](docs/radio-buttons.md)
 - [Development and checks](docs/development.md)
 - [Building images and signed releases](docs/updates.md#build-a-complete-release)

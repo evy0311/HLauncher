@@ -53,7 +53,8 @@ class Projection(unittest.TestCase):
         self.assertEqual(self.host.active,'android-auto')
     def test_disconnected_projection_discards_and_releases_queued_frame(self):
         from unittest.mock import Mock
-        worker=SimpleNamespace(video_available=False,take_frame=Mock(return_value=b'stale'))
+        worker=SimpleNamespace(manifest=self.manifests['carplay'], video_available=False,
+                               take_frame=Mock(return_value=b'stale'))
         with patch.object(self.host,'workers',{'carplay':worker}):
             self.host.active='carplay'
             self.assertIsNone(self.host.frame())

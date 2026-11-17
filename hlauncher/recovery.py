@@ -240,7 +240,7 @@ PAGE = '''<!doctype html><html><head><meta charset="utf-8"><meta name="viewport"
 <style>
 @font-face{font-family:Radio;src:url('/ui-font.ttf');font-weight:700}*{box-sizing:border-box}[hidden]{display:none!important}body{margin:0;background:#09090d;color:#f5f4fb;font:16px system-ui,sans-serif;--accent:112,12,29}header{height:64px;border-bottom:1px solid rgba(var(--accent),.8);display:flex;align-items:center;gap:12px;padding:0 20px;background:linear-gradient(#25232d,#111017)}header b{font-size:24px;font-weight:500}header small{font-size:12px;color:#a5a0ae}header time{margin-left:auto;font-size:26px}.grid{display:grid;grid-template-columns:repeat(3,5px);gap:3px;margin-right:12px}.grid i{height:5px;background:#eee}main{max-width:640px;padding:24px 20px 48px;margin:auto}h1,h2,button,summary{font-family:Radio,system-ui,sans-serif;font-weight:700}h1{font-size:28px;margin:0 0 12px}h2{font-size:23px;margin:0 0 12px}section,details{margin:28px 0}p{line-height:1.5;margin:8px 0 16px;color:#c2c0cc}.status{padding:12px 0;border-bottom:1px solid #38333f;color:#ddd8e8}label{display:block;color:#c2c0cc;font-size:14px;margin:14px 0 6px}input::file-selector-button{background:#302a39;color:#f5f4fb;border:1px solid #756a82;border-radius:4px;padding:8px 12px;margin-right:12px;font:inherit}input{width:100%;padding:13px 12px;background:#17151d;color:#f4f2fa;border:1px solid #61586b;border-radius:5px;font:inherit}button{display:block;width:100%;min-height:46px;padding:10px 14px;margin:14px 0;background:linear-gradient(rgba(var(--accent),.22),rgba(var(--accent),.10) 50%,rgba(var(--accent),.28)),#161419;border:1px solid rgba(var(--accent),.95);border-radius:6px;color:#f5f4fb;font-size:20px;cursor:pointer}button.secondary{background:#27242e;border-color:#6d6479}button:disabled{opacity:.55;cursor:wait}button:focus-visible,input:focus-visible,summary:focus-visible{outline:2px solid #e5dcef;outline-offset:3px}.row{display:flex;gap:12px}.row>*{flex:1}summary{font-size:22px;cursor:pointer}small{color:#a9a2b4}#notice{color:#e3c397}footer{border-top:1px solid #38333f;padding-top:16px;color:#a9a2b4;font-size:13px}
 </style></head><body><header><span class="grid" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></span><b>HLauncher</b><small>by Evan Horsley</small></header><main>
-<h1>Wi-Fi &amp; pairing</h1><p id="notice" role="status"></p>
+<h1>Wi-Fi</h1><p id="notice" role="status"></p>
 <section><h2>Connect the Pi to Wi-Fi</h2><p>Choose the network the Pi should use. After connecting, join that same network on your phone or computer.</p>
 <label for="ssid">Wi-Fi name</label><input id="ssid" autocomplete="off" placeholder="Network name">
 <label for="password">Wi-Fi password</label><input id="password" type="password" autocomplete="new-password">
@@ -248,6 +248,15 @@ PAGE = '''<!doctype html><html><head><meta charset="utf-8"><meta name="viewport"
 <button onclick="wifi()">Connect to Wi-Fi</button></section>
 <section><h2>Local update</h2><p>Install a signed .hlu file from your computer. Your settings stay saved; HLauncher restarts after verification.</p>
 <label for="updatefile">Update file</label><input type="file" id="updatefile" accept=".hlu"><button id="uploadbutton" onclick="uploadUpdate()">Install local update</button><p id="uploadstatus" role="status"></p></section>
+
+<details>
+<summary>Layout themes</summary>
+<p>On the radio, open Settings → Appearance → Change theme to preview or switch themes. OEM is the original layout.</p>
+<div id="theme-downloads"></div>
+<p>Download a starter, edit its JSON, then import it. You can also download and share an installed theme.</p>
+<label for="themefile">Theme JSON file</label><input type="file" id="themefile" accept=".json,application/json">
+<button class="secondary" onclick="uploadTheme()">Import theme</button><p id="themestatus" role="status"></p>
+</details>
 
 <details><summary>Radio pairing</summary><p>On the radio, open Settings → Phone → Connect a phone → Add Bluetooth device. Select HLauncher and confirm the pairing code. To replace the saved radio, reopen pairing below.</p>
 <button class="secondary" onclick="act('pair')">Forget radio and reopen pairing</button>
@@ -262,6 +271,43 @@ function manual(){post('/api/manual',{address:document.getElementById('peer').va
 async function wifi(){if(!document.getElementById('ssid').value)return;let queued=await post('/api/job',{operation:'wifi',ssid:document.getElementById('ssid').value,password:document.getElementById('password').value,country:document.getElementById('country').value.toUpperCase()});if(queued){document.getElementById('password').value='';document.getElementById('notice').textContent='The Pi is switching networks. Reconnect this device to the same Wi-Fi afterward.'}}
 async function uploadUpdate(){let file=document.getElementById('updatefile').files[0];if(!file){document.getElementById('uploadstatus').textContent='Choose a .hlu file';return}if(!confirm('Install this signed update and restart HLauncher? Your plugins and their data will be kept. Some plugins may stop working after this update.'))return;let button=document.getElementById('uploadbutton');button.disabled=true;document.getElementById('uploadstatus').textContent='Uploading…';try{let response=await fetch('/api/update-file',{method:'POST',headers:{'Content-Type':'application/octet-stream'},body:file});let data=await response.json();if(!response.ok)throw new Error(data.error||'Upload failed');document.getElementById('uploadstatus').textContent='Uploaded. Verifying and installing; HLauncher will restart.'}catch(error){document.getElementById('uploadstatus').textContent=error.message}finally{button.disabled=false}}
 function debug(){post('/api/debug',{})}
+async function loadThemeDownloads(){
+    const response=await fetch('/api/layout-themes');
+    if(!response.ok)throw new Error('Could not load themes. Reload the setup page to retry.');
+    const data=await response.json();
+    const starters=new Map(Object.entries(data.templates));
+    const list=document.getElementById('theme-downloads');
+    list.replaceChildren();
+    for(const theme of data.themes){
+        const starter=starters.get(theme.id);
+        const download=starter||theme;
+        const button=document.createElement('button');
+        button.className='secondary';
+        button.textContent='Download '+theme.name+(starter?' starter':'');
+        button.onclick=()=>{
+            const link=document.createElement('a');
+            const url=URL.createObjectURL(new Blob([JSON.stringify(download,null,2)+'\\n'],{type:'application/json'}));
+            link.href=url;
+            link.download=download.id+'.json';
+            link.click();
+            setTimeout(()=>URL.revokeObjectURL(url),1000);
+        };
+        list.append(button);
+    }
+}
+async function uploadTheme(){
+    const file=document.getElementById('themefile').files[0];
+    const status=document.getElementById('themestatus');
+    if(!file||file.size>8192){status.textContent='Choose a theme JSON file no larger than 8 KiB.';return}
+    try{
+        const response=await fetch('/api/layout-themes',{method:'POST',headers:{'Content-Type':'application/json'},body:file});
+        const data=await response.json();
+        if(!response.ok)throw new Error(data.error||'Import failed');
+        status.textContent='Imported '+data.name+'. Reopen Change theme on the radio.';
+        await loadThemeDownloads().catch(()=>{});
+    }catch(error){status.textContent=error.message}
+}
+loadThemeDownloads().catch(error=>{document.getElementById('themestatus').textContent=error.message})
 async function refresh(){try{let r=await fetch('/api/status');let data=await r.json();document.body.style.setProperty('--accent',themes[data.theme]||(/^#[0-9A-Fa-f]{6}$/.test(data.theme||'')?[1,3,5].map(i=>parseInt(data.theme.slice(i,i+2),16)).join(','):themes.Red));document.getElementById('capture').hidden=!data.debug;let job=data.maintenance||{};if(job.status==='Working')document.getElementById('notice').textContent='Applying connection changes…';else if(job.status==='Failed')document.getElementById('notice').textContent=job.message||job.status;else if(job.status==='Done')document.getElementById('notice').textContent=''}catch{}}
 refresh();setInterval(refresh,3000)
 </script></main></body></html>'''
@@ -295,6 +341,11 @@ def handler_for(state, maintenance):
             if not self.authorized():
                 return
             if self.path == '/': return self.send(200,PAGE,'text/html; charset=utf-8')
+            if self.path == '/api/layout-themes':
+                from .themes import OEM, Themes
+                themes = Themes(state.folder)
+                return self.send(200, {'themes': [theme.document() for theme in themes.choices.values()
+                                                  if theme is not OEM], 'templates': themes.templates()})
             if self.path == '/ui-font.ttf':
                 path=Path(__file__).parent/'ui/assets/fonts/NotoSansJP.ttf'
                 self.send_response(200);self.send_header('Content-Type','font/ttf')
@@ -382,10 +433,19 @@ def handler_for(state, maintenance):
                 return self.send(415,{'error':'JSON required'})
             try:
                 size = int(self.headers.get('Content-Length','0'))
-                if not 0 < size <= 4096: raise ValueError('Invalid request size')
+                from .themes import MAX_BYTES
+                limit = MAX_BYTES if self.path == '/api/layout-themes' else 4096
+                if not 0 < size <= limit: raise ValueError('Invalid request size')
                 data = json.loads(self.rfile.read(size))
                 if not isinstance(data,dict): raise ValueError('Invalid request')
-                if self.path == '/api/debug':
+                if self.path == '/api/layout-themes':
+                    from .themes import Themes
+                    try:
+                        theme = Themes(state.folder).install_document(data)
+                    except ValueError as exc:
+                        return self.send(400, {'error': str(exc)})
+                    return self.send(201, {'id': theme.id, 'name': theme.name})
+                elif self.path == '/api/debug':
                     prefs = Preferences(state.folder/'settings.json'); prefs.data['debug_mode'] = not prefs.data['debug_mode']; prefs.save()
                 elif self.path == '/api/manual':
                     peer = address(data.get('address',''))

@@ -77,7 +77,8 @@ python3 "$source_root/scripts/prepare_image.py" --root "$work/root" --persist "$
 if [[ -n ${HLAUNCHER_RELEASE_VERSION:-} ]]; then
   python3 "$source_root/scripts/package_release.py" --root "$work/root" --persist "$work/persist" \
     --version "$HLAUNCHER_RELEASE_VERSION" --key "$HLAUNCHER_RELEASE_KEY" \
-    --output "$HLAUNCHER_RELEASE_OUTPUT" --commit "$HLAUNCHER_RELEASE_COMMIT"
+    --output "$HLAUNCHER_RELEASE_OUTPUT" --commit "$HLAUNCHER_RELEASE_COMMIT" \
+    --channel "${HLAUNCHER_RELEASE_CHANNEL:-stable}"
   systemctl --root "$work/root" enable hlauncher-updater.service
 fi
 if [[ -n ${HLAUNCHER_LOCAL_TEST_SSH_KEY:-} ]]; then

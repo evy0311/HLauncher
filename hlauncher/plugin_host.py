@@ -14,11 +14,16 @@ import tempfile
 import threading
 import time
 from .config import ROOT, LOG_DIR, STATE_DIR, Preferences
+from .catalog import PARKING_CAPABILITY
 from .projection import PROJECTIONS, ProjectionLease, ProjectionBusy
 from sdk.hlauncher_sdk.buttons import BUTTONS, ACTIONS
 
 sys.path.insert(0, str(ROOT / "sdk"))
 from hlauncher_sdk import encode, decode, SLOTS, MAX_PACKET
+
+
+class PluginParkingRequired(ValueError):
+    pass
 
 
 def channel():
@@ -35,6 +40,7 @@ class Worker:
         self.manifest = manifest
         self.car_gps = car_gps
         self.last_gps = None
+        self.last_parking_state = None
         self.event = event
         self.width, self.height = width, height
         self.frame_bytes = width * height * 2
@@ -301,6 +307,8 @@ class PluginHost:
         self.projection_retry=0
         self.projection_notice=''
         self.projection_night_mode = lambda plugin_id: False
+        self.parking_state = lambda: dict(connected=False, speed_kph=None, parking_brake=None,
+                                          safely_parked=False)
         from .adapter_branding import BrandingRequests
         self.state_dir = Path(state_dir) if state_dir else STATE_DIR
         self.branding=BrandingRequests(self.state_dir/'adapter-branding.json')
@@ -315,9 +323,12 @@ class PluginHost:
         self.voice = ProjectionVoice(event)
 
     def _start(self,plugin_id,foreground):
+        manifest = self.manifests[plugin_id]
+        parking = self.parking_state() if PARKING_CAPABILITY in manifest.capabilities else None
+        if getattr(manifest, 'requires_parked', False) is True and (not parking or not parking['safely_parked']):
+            raise PluginParkingRequired(f'Park safely to open {manifest.name}.')
         worker=self.workers.get(plugin_id)
         if worker is None:
-            manifest = self.manifests[plugin_id]
             height = self.height
             if not manifest.bundled and 'camera' in manifest.permissions:
                 from .ui.plugin_overlay import camera_top
@@ -340,6 +351,8 @@ class PluginHost:
             worker.send(type='radio.session',**self.session)
         if plugin_id in PROJECTIONS:
             self.sync_projection_appearance(plugin_id)
+        if parking is not None:
+            self._send_parking_state(worker, parking)
         worker.send(type='host.activate' if foreground else 'host.start',visible=foreground)
         self.event(state='plugin_activated' if foreground else 'plugin_background_started',plugin=plugin_id)
         return worker
@@ -364,6 +377,9 @@ class PluginHost:
             if time.monotonic()>self.projection_deadline:
                 self.projection_request=None
                 self.failed(plugin_id,'Previous projection session has not released USB; retry after disconnecting the adapter')
+            return
+        except PluginParkingRequired as exc:
+            self.failed(plugin_id, exc)
             return
         self.projection_request=None;self.projection_notice=''
 
@@ -433,11 +449,14 @@ class PluginHost:
 
     def session_changed(self, **values):
         self.session.update(values)
+        if values.get('connected') is False:
+            for worker in list(self.workers.values()):
+                self._enforce_parking(worker, {'safely_parked': False})
         for worker in self.workers.values():
             if "session" in worker.manifest.capabilities:
                 worker.send(type="radio.session", **self.session)
         if values.get("connected") is False:
-            if self.active in PROJECTIONS:
+            if self.active in (*PROJECTIONS, 'vehicle'):
                 if worker := self.workers.get(self.active):
                     worker.send(type="touch.cancel")
             else:
@@ -445,7 +464,7 @@ class PluginHost:
 
     def touch(self, touch):
         if worker := self.workers.get(self.active):
-            if "touch" in worker.manifest.capabilities:
+            if "touch" in worker.manifest.capabilities and self._enforce_parking(worker):
                 if not worker.manifest.bundled and 'camera' in worker.manifest.permissions:
                     top = self.height - worker.height
                     touch = dict(touch, height=worker.height, contacts=[
@@ -456,12 +475,46 @@ class PluginHost:
                 if not worker.send(type="touch", **touch):
                     self.failed(worker.manifest.id, "Input queue full")
 
+    def _send_parking_state(self, worker, state):
+        if worker.last_parking_state != state and worker.send(type=PARKING_CAPABILITY, **state):
+            worker.last_parking_state = state
+
+    def _enforce_parking(self, worker, state=None):
+        if getattr(worker.manifest, 'requires_parked', False) is not True:
+            return True
+        if (self.parking_state() if state is None else state)['safely_parked']:
+            return True
+        plugin_id = worker.manifest.id
+        foreground = self.active == plugin_id
+        self.stop(plugin_id)
+        self.event(state='plugin_parking_required', plugin=plugin_id)
+        if foreground:
+            self.home(f'Park safely to open {worker.manifest.name}.')
+        return False
+
     def vehicle_gauges(self, snapshot):
         # Only the bundled gauge worker receives this narrow read-only view.
         worker=self.workers.get('obd')
         if self.active=='obd' and worker is not None and worker.manifest.bundled:
             return worker.send(type='vehicle.gauges',snapshot=snapshot)
         return False
+
+    def vehicle_dashboard(self, snapshot, revision, reports, colors, layout, hidden, *, oem_color=None):
+        worker = self.workers.get('vehicle')
+        if self.active != 'vehicle' or worker is None or not worker.manifest.bundled or not worker.ready:
+            return
+        if not worker.send(type='vehicle.dashboard', snapshot=snapshot, colors=colors,
+                           layout=layout, hidden=hidden, revision=revision, oem_color=oem_color):
+            return
+        if getattr(worker, 'vehicle_revision', None) != revision:
+            # Keep each message under the SDK packet limit, even at the maximum record size.
+            for kind, (records, total) in reports.items():
+                for start in range(0, max(len(records), 1), 28):
+                    batch = records[start:start+28]
+                    if not worker.send(type='vehicle.report', revision=revision, kind=kind,
+                                       start=start, total=total, records=batch, complete=start+len(batch) == len(records)):
+                        return
+            worker.vehicle_revision = revision
 
     def sync_projection_gps(self, fix, carplay_fix):
         for ident in PROJECTIONS:
@@ -511,7 +564,7 @@ class PluginHost:
             candidates = [self.workers.get(self.button_owners[key])]
         for worker in candidates:
             if (worker and worker.ready and 'input.buttons' in worker.manifest.capabilities
-                    and name in worker.button_subscription):
+                    and name in worker.button_subscription and self._enforce_parking(worker)):
                 sent=worker.send(type='radio.button', **message)
                 record=dict(button=name, action=action, sequence=message['sequence'],plugin=worker.manifest.id,
                     result='Sent to plugin' if sent else 'Plugin input queue full')
@@ -574,7 +627,12 @@ class PluginHost:
                 self.event(state='radio_button_result', **record)
                 self.button_pending.pop(sequence, None)
         for plugin_id, worker in list(self.workers.items()):
+            parking = self.parking_state() if PARKING_CAPABILITY in worker.manifest.capabilities else None
+            if not self._enforce_parking(worker, parking):
+                continue
             try:
+                if parking is not None:
+                    self._send_parking_state(worker, parking)
                 if worker.proc.poll() is not None:
                     raise RuntimeError(worker.manifest.name + " closed unexpectedly")
                 worker.drain()
@@ -655,7 +713,7 @@ class PluginHost:
 
     def frame(self):
         worker = self.workers.get(self.active)
-        frame=worker.take_frame() if worker else None
+        frame=worker.take_frame() if worker and self._enforce_parking(worker) else None
         # Consume/release queued leases, but never display a disconnected phone.
         if self.active in PROJECTIONS and worker and not worker.video_available:return None
         return frame

@@ -306,7 +306,7 @@ class Architecture(unittest.TestCase):
         ui=Launcher(framebuffer=Display(),preferences=self.preferences(),manifests={'carplay':self.carplay})
         try:
             ui.settings()
-            self.assertEqual(len(ui.actions),6)
+            self.assertEqual(len(ui.actions),8)
             ui.actions[4][1]()
             self.assertEqual(ui.mode,'startup_settings')
             ui.actions[1][1]()
@@ -325,7 +325,7 @@ class Architecture(unittest.TestCase):
             ui.settings()
             saved = ui.prefs.path.read_bytes()
             about_box, open_about = ui.actions[3]
-            self.assertEqual(about_box, (24,232,352,308))
+            self.assertEqual(about_box, (24,220,352,284))
             open_about()
             self.assertEqual(ui.mode, 'about_settings')
             ui.actions[1][1]()

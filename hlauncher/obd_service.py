@@ -141,7 +141,7 @@ class Service:
             await asyncio.sleep(4)
         rows=[dict(address=d.address.upper(),name=self.names.get(d.address.upper()) or d.name or 'Unnamed BLE device') for d in self.devices.values()]
         rows.sort(key=lambda row:(not any(word in row['name'].lower() for word in ('obd','elm','vlink','veepeak')),row['name']))
-        self.publish(state='disconnected',message='Select your ELM327 BLE dongle' if rows else 'No BLE devices found',devices=rows)
+        self.publish(state='disconnected',message='Select your adapter' if rows else 'No BLE devices found',devices=rows)
         log.info('Discovery complete: %d devices',len(rows))
 
     async def connect(self):
@@ -160,7 +160,7 @@ class Service:
             tx,rx = select_uart(services)
             elm=Elm(self.client,tx,rx)
             await asyncio.wait_for(self.client.start_notify(rx,elm.notify),3)
-            self.publish(state='initializing',message='Checking ELM327 and vehicle…',device_name=device.name or self.target)
+            self.publish(state='initializing',message='Checking the adapter and vehicle…',device_name=device.name or self.target)
             identity = await elm.command('ATI')
             if not any(x in identity.upper() for x in ('ELM','STN','OBD')):
                 raise RuntimeError('Device did not identify as an ELM-compatible adapter')

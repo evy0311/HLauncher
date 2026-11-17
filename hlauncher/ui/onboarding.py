@@ -2,7 +2,7 @@
 import math
 from PIL import ImageDraw
 from sdk.hlauncher_sdk.fonts import font
-from ..onboarding import STEPS
+from ..onboarding import REQUIREMENTS, STEPS
 from ..config import TILE_COLORS
 from .controls import Page, present
 from .scroll_list import scrollbar, viewport
@@ -124,7 +124,7 @@ def draw_launcher(launcher):
                 y=144+i*68
                 page.button((24,y,696,y+56),'',action,selected)
                 page.label((42,y+7),title,23)
-                requirement={'carplay':'USB adapter','android-auto':'USB phone connection','obd':'BLE ELM327 adapter'}.get(pid,'')
+                requirement=REQUIREMENTS.get(pid,'')
                 page.text((42,y+34),requirement,14)
                 page.text((676,y+28),'Enabled' if selected else 'Disabled',17,anchor='rm')
             else:
@@ -135,6 +135,8 @@ def draw_launcher(launcher):
         if not choices:page.text((24,168),'No apps installed. You can add them later.',18)
         if total>1:
             page.button((480,364,696,400),'More apps',lambda:launcher.setup_more(total),size=17)
+    elif step == 3 and not launcher.layout_theme.supports_color_selection:
+        page.text((24, 144), 'This theme uses a fixed color palette.', 19)
     elif step==3:
         for i,name in enumerate(TILE_COLORS):
             x=24+(i%3)*228;y=144+(i//3)*92
@@ -145,11 +147,11 @@ def draw_launcher(launcher):
             page.theme=theme
         page.button((24,332,696,384),'Custom color',launcher.custom_color,selected=launcher.prefs.data['tile_color'].startswith('#'),size=23)
     elif step==4:
-        for i,text in enumerate(('Wi-Fi is optional. Connect for software updates,',
-                                 'SSH access, debugging and custom features.')):
+        for i,text in enumerate(('Wi-Fi starts off. Set it up for software updates,',
+                                 'SSH access or troubleshooting.')):
             page.text((24,136+i*28),text,19)
         page.button((24,224,696,284),'Set up Wi-Fi',launcher.recovery_page,size=24)
-        page.text((24,324),'You can also do this later in System > Wi-Fi & pairing',17)
+        page.text((24,324),'You can also set it up later in System > Wi-Fi',17)
     else:
         if launcher.storage_info['available']:
             for i,text in enumerate(('Reduces the risk of corruption after sudden power loss.',

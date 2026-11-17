@@ -57,7 +57,7 @@ class Preferences:
                      "safety_notice_app_version": "",
                      "debug_mode": False, "show_clock": False, "ssh_enabled": False, "wifi_power": "off",
                      "wifi_delay_boot": True,
-                     "layout_theme": "oem",
+                     "layout_theme": "oem", "vehicle_hidden": [],
                      "home_pages": [], "carplay_fps": CARPLAY_FRAME_RATES[0],
                      "carplay_auto_night": True, "android_auto_auto_night": True,
                      "carplay_car_gps": False, "android_auto_car_gps": False}
@@ -86,6 +86,11 @@ class Preferences:
             layout_theme = loaded.get('layout_theme')
             if isinstance(layout_theme, str) and re.fullmatch(r'[a-z][a-z0-9-]{0,31}', layout_theme):
                 self.data['layout_theme'] = layout_theme
+            hidden = loaded.get('vehicle_hidden')
+            if isinstance(hidden, list):
+                self.data['vehicle_hidden'] = sorted({
+                    key for key in hidden[:512] if isinstance(key, str) and len(key) <= 32
+                })
             fps = loaded.get('carplay_fps')
             if type(fps) is int and fps in CARPLAY_FRAME_RATES:
                 self.data['carplay_fps'] = fps
@@ -168,6 +173,15 @@ class Preferences:
             self.save()
         except OSError:
             self.data['background'] = before
+            raise
+
+    def toggle_vehicle_field(self, key):
+        previous = self.data['vehicle_hidden']
+        self.data['vehicle_hidden'] = sorted(set(previous) ^ {key})
+        try:
+            self.save()
+        except OSError:
+            self.data['vehicle_hidden'] = previous
             raise
 
     def set_tile_color(self, name):

@@ -3,7 +3,7 @@ import base64
 import hashlib
 from itertools import combinations
 import time
-from .vehicle_signals import SUBSCRIPTIONS, SESSION_PREFIX, MESSAGES, record_signals, ALIASES, GAUGE_API_IDS, signal_subscriptions
+from .vehicle_signals import SUBSCRIPTIONS, SESSION_PREFIX, MESSAGES, record_signals, ALIASES, GAUGE_API_IDS, EXTRA_SIGNALS, signal_subscriptions
 from .aes import decrypt as decrypt_body
 
 HONDALINK = 'jp.co.honda.rd.dispaudio.app.hondalink'
@@ -30,7 +30,38 @@ for count in range(1, len(SCOPE_GROUPS) + 1):
     for groups in combinations(SCOPE_GROUPS, count):
         SCOPED_API_IDS['_'.join(name for name, _ in groups)] = tuple(
             api for _, ids in groups for api in ids)
+SCOPED_API_IDS['vehicle'] = tuple(range(1, 169)) + tuple(row['api_id'] for row in EXTRA_SIGNALS)
 SCOPES = (*SCOPED_API_IDS, 'diagnostics')
+DIAGNOSTIC_SCOPES = ('diagnostics', 'vehicle')
+
+# Optional CRM snapshot settings recovered from the original native serializer.
+# Selectors 3–5 address B-CAN, F-CAN and virtual records within diagnostics.
+CRM_CONTEXT = (
+    (
+        (0x158, 4, '00000000ffff0000'),
+        (0x335, 4, 'ffffffff00'),
+        (0x454, 4, '00ff000000000000'),
+        (0x12f85050, 3, '00ffff000000'),
+        (0x12f85150, 3, '000000ff00'),
+        (0x12f85351, 3, '000000000000ffc0'),
+        (0x12f96750, 3, 'f000000fff000000'),
+        (0x99f00006, 5, 'ffffffffffffffff'),
+    ),
+    (
+        (0x158, 4, '00000000ffff0000'),
+        (0x1c0, 4, '00000c00000000'),
+        (0x320, 4, '0000000000070000'),
+        (0x335, 4, 'ffffffff00'),
+        (0x35e, 4, '3000000000000000'),
+        (0x409, 4, '0000010000'),
+        (0x454, 4, '00ff000000000000'),
+        (0x12f85050, 3, '00ffff000000'),
+        (0x12f85150, 3, '000000ff00'),
+        (0x12f85351, 3, '000000000000ffc0'),
+        (0x12f96750, 3, 'f000000fff000000'),
+        (0x99f00006, 5, 'ffffffffffffffff'),
+    ),
+)
 
 
 def diagnostic_subscriptions():
@@ -40,6 +71,16 @@ def diagnostic_subscriptions():
 def subscription_rows(scope):
     if scope == 'diagnostics':
         return diagnostic_subscriptions()
+    if scope == 'vehicle':
+        rows = {row['message_id']: row for row in SUBSCRIPTIONS}
+        for extra in signal_subscriptions(row['api_id'] for row in EXTRA_SIGNALS):
+            mid = extra['message_id']
+            base = rows.get(mid)
+            if base:
+                mask = int(base['mask'], 16) | int(extra['mask'], 16)
+                extra = dict(extra, mask=mask.to_bytes(extra['length'], 'big').hex())
+            rows[mid] = extra
+        return tuple(rows[mid] for mid in sorted(rows))
     # Preserve the known full illumination mask, even in mixed subscriptions.
     api_ids = tuple(api for api in SCOPED_API_IDS[scope] if api not in ILLUMINATION_API_IDS)
     rows = signal_subscriptions(api_ids)
@@ -73,18 +114,29 @@ def subscription_ticks(scope):
 def subscription_payloads(scope='diagnostics'):
     if scope=='off':return (bytes.fromhex('0200000a0100'),)
     rows=subscription_rows(scope)
-    # Original ALL group, features=9. Tenths of seconds; 0 means cyclic.
-    normal = bytearray((0, len(rows)))
-    for row in rows:
-        normal.extend(row['message_id'].to_bytes(4, 'big'))
-        normal.extend((row['can_type'], row['length']))
-        normal.extend(bytes.fromhex(row['mask']))
-    if scope != 'diagnostics':
-        ticks = subscription_ticks(scope)
+    normal = serialize_setting(0, ((r['message_id'], r['can_type'], r['mask']) for r in rows))
+    ticks = subscription_ticks(scope)
+    if scope not in DIAGNOSTIC_SCOPES:
         return (bytes((2, 0, 0, ticks, 1, 1)) + normal,)
-    header = bytes.fromhex('0200000a0104')
-    # Three diagnostic receive presets, never clear-DTC or maintenance resets.
-    return (header+normal, header+bytes.fromhex('010000000002000000000300000000'))
+    settings = [normal]
+    for data_type in (1, 2, 3):
+        settings.append(bytes((data_type, 0, 0, 0, 0)))
+        if scope == 'vehicle':
+            settings.append(serialize_setting(data_type, CRM_CONTEXT[min(data_type-1, 1)]))
+    header = bytes((2, 0, 0, ticks, 1, len(settings)))
+    # The native serializer sends the normal list and diagnostic settings separately.
+    return (header + settings[0], header + b''.join(settings[1:]))
+
+
+def serialize_setting(data_type, rows):
+    rows = tuple(rows)
+    result = bytearray((data_type, len(rows)))
+    for mid, selector, mask_hex in rows:
+        mask = bytes.fromhex(mask_hex)
+        result.extend(mid.to_bytes(4, 'big'))
+        result.extend((selector, len(mask)))
+        result.extend(mask)
+    return bytes(result)
 
 
 def subscription_payload():
@@ -185,7 +237,7 @@ class VehicleSubscription:
             events[-1].update(can_ids=[r['message_id'] for r in rows], cycle=cycle,
                 interval_seconds=cycle/10,scope=scope,api_ids=api_ids,
                 can_classes=sorted({r['can_type'] for r in rows}),api_count=168 if api_ids is None else len(api_ids),
-                settings_count=4 if scope=='diagnostics' else int(bool(rows)),
+                settings_count=payloads[0][5],
                 part=index+1, parts=len(payloads), receive_only=True, status='pending', protocol=protocol,
                 authorization_session=sid, transport_status='pending', speed_retries=speed_retries)
             request['transactions'].append(events[-1]['transaction'])
@@ -221,9 +273,13 @@ class VehicleSubscription:
             try:
                 # Never fall back to guessed plaintext on a live session.
                 allowed=request['api_ids']
-                if request['scope']=='diagnostics' and request['status']=='pending':allowed=request['previous_api_ids']
+                if request['scope'] in DIAGNOSTIC_SCOPES and request['status']=='pending':
+                    allowed=request['previous_api_ids']
+                    if request['scope'] == 'vehicle' and allowed is None:
+                        # Until the new mask is accepted, decode only original API fields.
+                        allowed=range(1, 169)
                 records = decode_records(payload, self.keys[sid], allowed)
-                if request['scope'] != 'diagnostics':
+                if request['scope'] not in DIAGNOSTIC_SCOPES:
                     records=[r for r in records if r['data_type']==0 and r['can_id'] in request['can_ids']]
             except ValueError as exc:
                 events.append(dict(state='honda_can_data_invalid', session=sid,
@@ -234,13 +290,13 @@ class VehicleSubscription:
                 request['normal_received'] = True
                 if any(0 <= record['signals'].get('152', -1) <= 400 for record in records):
                     request['speed_received'] = True
-            events.append(dict(state='honda_can_data', session=sid, sequence=payload[2],
+            events.append(dict(state='honda_can_data', session=sid, sequence=payload[2], scope=request['scope'],
                 data_type=payload[11], vehicle_date=int.from_bytes(payload[3:7],'big'),
                 vehicle_time=int.from_bytes(payload[7:11],'big'), header=payload[3:11].hex(),
                 records=records, protocol=request['protocol'], settings_status=request['status'],
                 transport_status=request['transport_status']))
             # Normal cyclic frames need no application ACK; completed diagnostics do.
-            if payload[11] != 0 and send is not None and request['scope']=='diagnostics':
+            if payload[11] != 0 and send is not None and request['scope'] in DIAGNOSTIC_SCOPES:
                 send(sid, 0xc2, bytes((1,payload[2],1)), events, replies, 'honda_can_receipt_sent')
 
     def tick(self, now=None):

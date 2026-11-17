@@ -83,7 +83,8 @@ class Launcher:
         )
         self.diagnostics = Diagnostics()
         from .protocol_diagnostics import ProtocolDiagnostics
-        self.protocols = protocol_diagnostics or ProtocolDiagnostics(self.prefs.path.parent/'protocol-captures')
+        self.protocols = protocol_diagnostics or ProtocolDiagnostics(
+            self.prefs.path.parent/'protocol-captures', vehicle_path=self.prefs.path.parent/'vehicle-last-known.json')
         self.host.parking_state = self.protocols.plugin_parking_state
         self.host.projection_night_mode = self.projection_night_mode
         self.protocol_page = 0
@@ -593,8 +594,23 @@ class Launcher:
             return
         self.host.deactivate()
         self.mode='plugin_detail'
+        self.vehicle_field_group = None
         self.press=None
         self.banner=''
+        self.draw()
+
+    def vehicle_fields_page(self, group):
+        self.vehicle_field_group = group
+        self.press = None
+        self.banner = ''
+        self.draw()
+
+    def toggle_vehicle_field(self, key):
+        try:
+            self.prefs.toggle_vehicle_field(key)
+            self.banner = ''
+        except OSError:
+            self.banner = 'Could not save Vehicle settings'
         self.draw()
 
     def adapter_branding_page(self):
@@ -1423,6 +1439,17 @@ class Launcher:
                                           if getattr(carplay, 'car_gps', False) else None)
             if 'android-auto' in self.host.workers:
                 self.host.sync_projection_vehicle(self.protocols.projection_vehicle_state())
+        if self.host.active == 'vehicle' and now-getattr(self, 'vehicle_dashboard_sent', 0) >= .25:
+            from .ui.theme_menu import resolved_colors
+
+            self.vehicle_dashboard_sent = now
+            theme = self.layout_theme
+            layout = theme.layouts.get('vehicle', 'menu')
+            color = self.prefs.data['tile_color']
+            oem_color = color if theme.id == 'oem' else None
+            colors = resolved_colors(theme, layout, color) if theme.colors else {}
+            self.host.vehicle_dashboard(*self.protocols.vehicle_plugin_snapshot(now), colors,
+                                        layout, self.prefs.data['vehicle_hidden'], oem_color=oem_color)
         if self.host.active=='obd' and time.monotonic()-getattr(self,'vehicle_gauge_sent',0)>=1/30:
             self.vehicle_gauge_sent=time.monotonic()
             self.host.vehicle_gauges(self.protocols.gauge_snapshot())

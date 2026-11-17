@@ -17,7 +17,8 @@ title on the left and controls on the right. The bottom bar holds Back and the
 optional clock in consistent positions. Drive uses a fixed black and deep-gray palette.
 
 Both themes cover Home, Settings, Appearance, System, Wi-Fi, Startup, Plugins
-and individual plugin settings. Other screens use OEM. Your enabled apps and
+and individual plugin settings. Vehicle uses the theme palette and moves its
+tabs to the bottom in Drive. Other screens use OEM. Your enabled apps and
 saved Home arrangement carry over. Swipe Home or use the page controls to see
 more apps. Hold a Home item to open the shared editor, or tap **Edit Home** on an
 empty page. In the editor, **Delete page** removes the current page and moves its
@@ -79,8 +80,11 @@ radio and can contain up to 32 characters. Files can be up to 8 KiB.
 | Startup | `startup_settings` |
 | Plugins | `plugins_settings` |
 | Individual plugin settings | `plugin_detail` |
+| Vehicle tabs | `vehicle` |
 
-Choose at least one screen to customize. Omitted screens use OEM.
+Choose at least one screen to customize. Omitted screens use OEM. Vehicle still
+uses the active theme palette, with tabs at the top by default and at the bottom
+when its layout is `console` or `dock`.
 Touring uses `tiles` for Home, `categories` for Settings, and `menu` for
 deeper pages. Drive uses `dock` for Home and `console` for menus.
 You can also use `grid` for compact cards, `featured` for a large card with

@@ -28,6 +28,28 @@ class RadioUI(unittest.TestCase):
         self.ui=Launcher(framebuffer=Display(),preferences=prefs,manifests=manifests)
     def tearDown(self):self.ui.close();self.temp.cleanup()
 
+    def test_vehicle_plugin_visibility_persists_without_disabling_it(self):
+        from hlauncher.vehicle_fields import visible
+
+        ui = self.ui
+        manifest = Manifest.load(ROOT/'plugins/vehicle', bundled=True)
+        ui.manifests[manifest.id] = manifest
+        self.assertTrue(ui.prefs.enabled(manifest))
+        ui.settings()
+        ui.plugin_settings()
+        ui.plugin_detail('vehicle')
+        ui.vehicle_fields_page('tires')
+        ui.toggle_vehicle_field('126')
+        ui.toggle_vehicle_field('tires')
+        hidden = set(Preferences(ui.prefs.path).data['vehicle_hidden'])
+        self.assertFalse(visible('127', hidden))
+        self.assertTrue(visible('42', hidden))
+        ui.toggle_vehicle_field('tires')
+        hidden = set(Preferences(ui.prefs.path).data['vehicle_hidden'])
+        self.assertFalse(visible('126', hidden))
+        self.assertTrue(visible('127', hidden))
+        self.assertTrue(ui.prefs.enabled(manifest))
+
     def test_revisit_wizard_exit_is_available_every_step_and_does_not_reset_setup(self):
         ui=self.ui;ui.system_settings();ui.setup_page(True)
         self.assertTrue(ui.setup_can_exit)

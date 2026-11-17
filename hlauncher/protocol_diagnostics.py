@@ -8,10 +8,10 @@ import queue
 import shutil
 import threading
 import time
-from .vehicle_protocol import VehicleTraffic
-from .protocol.vehicle_can import DRIVING_API_IDS, PARKING_DIAGNOSTIC_API_IDS
-
 from .config import STATE_DIR
+from .protocol.vehicle_can import DRIVING_API_IDS, PARKING_DIAGNOSTIC_API_IDS, SCOPED_API_IDS
+from .vehicle_last_known import VehicleLastKnown
+from .vehicle_protocol import VehicleTraffic
 
 NAMES = {0x01:'Session',0x09:'App information',0x11:'Connection status',0x43:'Touch',
          0x51:'Keyboard status',0x61:'Radio status',0x62:'Status request',0x63:'Status',0xb1:'Device information',
@@ -25,7 +25,7 @@ SPEED_MAX_AGE = 2
 
 class ProtocolDiagnostics:
     def __init__(self, folder=None, file_limit=8*1024*1024, total_limit=64*1024*1024,
-                 min_free=64*1024*1024):
+                 min_free=64*1024*1024, *, vehicle_path=None):
         self.folder=Path(folder) if folder else STATE_DIR/'protocol-captures'
         self.file_limit=file_limit;self.total_limit=total_limit;self.min_free=min_free
         self.lock=threading.RLock();self.pending=queue.Queue(1024)
@@ -38,6 +38,7 @@ class ProtocolDiagnostics:
         self.last_reported_speed = None
         self.last_reported_speed_at = None
         self.last_reported_speed_session = None
+        self.last_vehicle = VehicleLastKnown(vehicle_path)
         self.app_keys = deque(maxlen=6)
         self.display_trials = deque(maxlen=4)
 
@@ -70,17 +71,21 @@ class ProtocolDiagnostics:
                                     or (state == 'honda_can_authorization' and not event.get('authorized')))
             if speed_session_closed and item.get('session') in (None, self.last_reported_speed_session):
                 self.last_reported_speed_at = None
-            if state=='connected' and str(item.get('uuid','')).endswith('cafe'):self.connected=True
+            if state=='connected' and str(item.get('uuid','')).endswith('cafe'):
+                self.connected = True
+                self.last_vehicle.select_device(item.get('device'))
             if state in ('closed','released') and str(item.get('uuid','')).endswith('cafe'):
                 self.connected=False;self.sessions.clear();self.vehicle.clear()
                 self.last_reported_speed = None
                 self.last_reported_speed_at = self.last_reported_speed_session = None
+                self.last_vehicle.flush_requested = True
             if state=='iap_remote_reset':
                 self.advertised.clear();self.sessions.clear();self.vehicle.clear()
                 self.last_reported_speed_at = None
             if state=='honda_app_disconnect_received':
                 self.vehicle.clear()
                 self.last_reported_speed_at = None
+            self.remember_vehicle(event)
             if state=='honda_display_test_result':
                 self.display_trials.appendleft(dict(event))
             if state in ('projection_voice_state','projection_voice_route'):self.voice={k:v for k,v in item.items() if k!='state'}
@@ -107,11 +112,15 @@ class ProtocolDiagnostics:
             if state=='honda_frame':
                 for detail in self.vehicle.observe(event):self.observe(detail)
 
+    def ensure_writer(self):
+        if not self.thread and not self.closed:
+            self.thread = threading.Thread(target=self._write, daemon=True)
+            self.thread.start()
+
     def start(self):
         with self.lock:
             if self.recording or self.closed:return
-            if not self.thread:
-                self.thread=threading.Thread(target=self._write,daemon=True);self.thread.start()
+            self.ensure_writer()
             try:self.pending.put_nowait(('start',None))
             except queue.Full:self.status='Capture queue full';return
             self.recording=True;self.status='Recording';self.revision+=1
@@ -151,6 +160,62 @@ class ProtocolDiagnostics:
                 vehicle_signals=self.vehicle.snapshot_signals(),
                 vehicle_can_records=self.vehicle.snapshot_can_records(),
                 vehicle_subscription=dict(self.vehicle.subscription))
+
+    def remember_vehicle(self, event):
+        state = event['state']
+        saved = self.last_vehicle
+        active = self.vehicle.subscription.get('scope') == 'vehicle'
+        now = event['monotonic']
+        if state == 'honda_can_data' and active and self.connected and event.get('scope') == 'vehicle':
+            if event['data_type']:
+                saved.update_report(event['data_type'], event['records'], now)
+            else:
+                saved.update(self.vehicle_readings_from(event), now)
+        elif state == 'honda_radio_status' and active and self.connected:
+            saved.update({'brake': event['parking_brake_engaged']}, now)
+        elif ((state == 'honda_can_subscription_queued' and event.get('scope') != 'vehicle') or
+              state in ('iap_data_session_closed', 'iap_remote_reset', 'honda_app_disconnect_received')):
+            saved.flush_requested = True
+        if saved.path and saved.revision != saved.written:
+            self.ensure_writer()
+
+    def vehicle_readings_from(self, event):
+        now = event['monotonic']
+        readings = {str(row['api_id']): row['value']
+                    for row in self.vehicle.signals.snapshot(now, SCOPED_API_IDS['vehicle'])
+                    if row['received'] and row['at'] == now}
+        identity = {0x99f00006: 'head-unit', 0x99f00007: 'vin'}
+        for record in event['records']:
+            if label := identity.get(record['can_id']):
+                raw = bytes.fromhex(record['data'])
+                value = raw.rstrip(b'\x00').decode('ascii', errors='replace')
+                if value:
+                    readings[label] = value if value.isascii() and value.isprintable() else raw.hex().upper()
+        gps = self.vehicle.gps
+        if gps.get('at') == now and gps['fix'] is not None:
+            readings['latitude'], readings['longitude'] = gps['fix']
+        return readings
+
+    def vehicle_plugin_snapshot(self, now):
+        with self.lock:
+            saved = self.last_vehicle
+            snapshot = dict(last_updated=saved.updated_text(now), readings=dict(saved.readings))
+            return snapshot, saved.report_revision, saved.report_view()
+
+    def save_last_vehicle(self, *, force=False):
+        saved = self.last_vehicle
+        with self.lock:
+            update = saved.pending_write(time.monotonic(), force=force)
+        if update is None:
+            return
+        revision, payload = update
+        try:
+            saved.write(payload)
+        except OSError:
+            # Keep the pending readings in memory and retry on the next interval.
+            return
+        with self.lock:
+            saved.written = revision
 
     def gauge_snapshot(self, now=None):
         """Small in-memory handoff; no recorder or persistent-file dependency."""
@@ -310,11 +375,17 @@ class ProtocolDiagnostics:
                         self.status='Capture error: '+str(exc)[:80];self.recording=False;self.revision+=1
                 finally:
                     if kind!='flush':self.pending.task_done()
-        finally:finish()
+                self.save_last_vehicle()
+        finally:
+            finish()
+            self.save_last_vehicle(force=True)
 
     def close(self):
+        with self.lock:
+            if self.closed:
+                return
+            self.closed = True
         self.stop()
-        with self.lock:self.closed=True
         if self.thread:
             # Called during shutdown, not from a display callback.
             try:self.pending.put(('close',None),timeout=1)

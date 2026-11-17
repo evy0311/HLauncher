@@ -85,9 +85,7 @@ def slot_box(layout, index, slots=SLOTS):
     return (250 if layout == 'rail' else 24), y, 696, y + 51
 
 
-def render(theme, layout, title, pages, *, size=(720, 480), page=0, back=None,
-           change_page=None, pressed=None, clock=None, footer='', slide=0.0, color=None, edit_empty=None):
-    page = min(max(page, 0), len(pages) - 1)
+def resolved_colors(theme, layout, color):
     colors = {key: ImageColor.getrgb(value) for key, value in theme.colors.items()}
     if theme.supports_color_selection and color is not None:
         tint = ImageColor.getrgb(PALETTE.get(color, color))
@@ -96,6 +94,13 @@ def render(theme, layout, title, pages, *, size=(720, 480), page=0, back=None,
         else:
             colors['accent'] = blend(tint, colors['text'], .55)
             colors['panel'] = blend(colors['panel'], tint, .35)
+    return colors
+
+
+def render(theme, layout, title, pages, *, size=(720, 480), page=0, back=None,
+           change_page=None, pressed=None, clock=None, footer='', slide=0.0, color=None, edit_empty=None):
+    page = min(max(page, 0), len(pages) - 1)
+    colors = resolved_colors(theme, layout, color)
     image = Image.new('RGB', (720, 480), colors['background'])
     draw = ImageDraw.Draw(image)
     actions = []
@@ -305,14 +310,14 @@ def present(ui, frame):
     ui.fb.image(dither_rgb565(frame.image))
 
 
-def settings_menu(ui, title, back, items, *, footer=''):
+def settings_menu(ui, title, back, items, *, footer='', key=None):
     theme = ui.layout_theme
     layout = theme.layouts.get(ui.mode)
     if layout is None:
         return False
     items = list(items)
     pages = [items[i:i + SLOTS] for i in range(0, len(items), SLOTS)] or [[]]
-    key = ui.mode
+    key = key or ui.mode
 
     def change_page(delta):
         ui.theme_menu_pages[key] = frame.page + delta

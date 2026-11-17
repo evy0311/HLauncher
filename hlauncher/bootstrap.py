@@ -62,6 +62,8 @@ class BootstrapLauncher:
         if self.ui.mode=='protocol_tests' and self.ui.protocol_page==1:return 'diagnostics'
         from .projection import PROJECTIONS
         host = self.ui.host
+        if self.ui.mode == 'plugin' and host.active == 'vehicle':
+            return 'vehicle'
         illumination = any(ident in PROJECTIONS and getattr(worker.manifest, 'bundled', False) and
                            self.ui.prefs.auto_night(ident)
                            for ident, worker in getattr(host, 'workers', {}).copy().items())

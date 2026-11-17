@@ -1,8 +1,8 @@
 # HLauncher
 
 A Raspberry Pi launcher for factory Honda radios with the legacy HDMI-based
-HondaLink phone-app integration, tested on my 2014 Civic Si. It adds CarPlay,
-wired Android Auto and live OBD gauges through plugins.
+HondaLink phone-app integration, tested on my 2014 Civic Si. It adds CarPlay
+and wired Android Auto through plugins. OBD Gauges is coming soon.
 
 HLauncher implements the phone side of the Civic's legacy HondaLink connection.
 HDMI carries video and media audio, and Bluetooth carries the handshake and
@@ -30,7 +30,6 @@ progress and future native-radio experiments are on [my blog](https://www.evanho
 | --- | --- | --- |
 | CarPlay | iPhone and compatible Carlinkit USB adapter connected to the Pi | [CarPlay](plugins/carplay/README.md) |
 | Android Auto | Android phone connected directly to a Pi USB host port | [Android Auto](plugins/android-auto/README.md) |
-| OBD Gauges | HondaLink vehicle data from the factory radio | [OBD Gauges](plugins/obd/README.md) |
 
 Power currently comes from a cigarette-lighter USB plug supplying **3 A**. The Pi
 loses power whenever the car cuts power to the socket, without a clean shutdown.
@@ -56,7 +55,8 @@ method is planned.
    needed by your plugin, then power on the Pi.
 5. Within five minutes of booting, open **Settings → Phone → Connect a phone →
    Add Bluetooth device** on the radio. Select **HLauncher** and confirm pairing.
-6. Open **HondaLink** on the radio and follow the setup wizard to choose your
+6. Park safely, engage the parking brake, and open **HondaLink** on the radio.
+   Acknowledge the safety agreement and follow the setup wizard to choose your
    apps, startup app and appearance. Enable **Storage protection** for the
    power setup above, then restart when prompted. Wi-Fi setup is optional.
 
@@ -116,3 +116,9 @@ To the extent permitted by applicable law, the authors and contributors accept
 no liability for distracted driving, misuse, accidents, injury, property damage
 or other loss arising from use of this software. This notice does not exclude
 rights or liabilities that cannot legally be excluded.
+
+## Support HLauncher
+
+If HLauncher has been useful and you'd like to chip in for development and test
+hardware, you can [leave an optional tip on Ko-fi](https://ko-fi.com/evy0311).
+Thanks for supporting the project!

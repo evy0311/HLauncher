@@ -68,7 +68,8 @@ class BootstrapLauncher:
         gauges = self.ui.mode == 'plugin' and host.active == 'obd'
         android = getattr(host, 'workers', {}).get('android-auto')
         carplay = getattr(host, 'workers', {}).get('carplay')
-        driving = ((android is not None and getattr(android.manifest, 'bundled', False))
+        driving = (getattr(self.ui, 'parked_only_screen', False)
+                   or (android is not None and getattr(android.manifest, 'bundled', False))
                    or getattr(carplay, 'car_gps', False))
         gps = any(getattr(worker, 'car_gps', False) for worker in getattr(host, 'workers', {}).copy().values())
         return '_'.join(name for enabled, name in (

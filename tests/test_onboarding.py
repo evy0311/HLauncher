@@ -18,14 +18,16 @@ from hlauncher.bootstrap import BootstrapLauncher
 from hlauncher.event_log import EventLog
 from hlauncher.protocol_diagnostics import ProtocolDiagnostics
 from hlauncher.launcher import Launcher
+from hlauncher.ui.scroll_list import move
 from hlauncher.recovery import handler_for, Maintenance
 from hlauncher import storage
-from test_architecture import Display
+from test_architecture import Display, parked_radio
 
 PEER='02:00:00:00:00:11'
 OTHER='AA:BB:CC:DD:EE:FF'
 
 
+@parked_radio
 class Setup(unittest.TestCase):
     def setUp(self):
         self.temp=tempfile.TemporaryDirectory(); self.root=Path(self.temp.name)
@@ -62,7 +64,7 @@ class Setup(unittest.TestCase):
     def test_upgrade_gates_startup_until_current_notice_is_saved(self):
         self.prefs.path.write_text(json.dumps({
             'setup_complete': True, 'default_plugin': 'carplay',
-            'safety_notice_version': True,
+            'safety_notice_version': SAFETY_NOTICE_VERSION - 1,
         }))
         prefs = Preferences(self.prefs.path)
         ui = Launcher(framebuffer=Display(), preferences=prefs, manifests=self.manifests)
@@ -76,6 +78,7 @@ class Setup(unittest.TestCase):
             self.assertEqual(ui.mode, 'recovery_settings')
             ui.actions[0][1]()
             self.assertEqual(ui.mode, 'safety_notice')
+            move(ui, ui.scroll_view['maximum'])
             with patch.object(prefs, 'save', side_effect=OSError):
                 ui.actions[-1][1]()
             self.assertEqual(ui.mode, 'safety_notice')
@@ -86,6 +89,8 @@ class Setup(unittest.TestCase):
             reloaded = Preferences(prefs.path)
             self.assertTrue(reloaded.safety_notice_accepted)
             self.assertEqual(reloaded.data['safety_notice_version'], SAFETY_NOTICE_VERSION)
+            from hlauncher import __version__
+            self.assertEqual(reloaded.data['safety_notice_app_version'], __version__)
             self.assertEqual(reloaded.data['default_plugin'], 'carplay')
             with patch('hlauncher.config.SAFETY_NOTICE_VERSION', SAFETY_NOTICE_VERSION + 1):
                 self.assertFalse(Preferences(prefs.path).safety_notice_accepted)
@@ -237,6 +242,7 @@ class Setup(unittest.TestCase):
         try:
             self.assertTrue(ui.launch('com.honda.hondalink.launcher'))
             self.assertEqual(ui.mode, 'safety_notice')
+            move(ui, ui.scroll_view['maximum'])
             ui.actions[-1][1]()
             self.assertEqual(ui.mode,'onboarding')
             for step in range(6):

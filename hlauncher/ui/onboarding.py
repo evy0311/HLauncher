@@ -1,8 +1,11 @@
 """Resumable setup presented in the shared stock-radio theme."""
 import math
+from PIL import ImageDraw
+from sdk.hlauncher_sdk.fonts import font
 from ..onboarding import REQUIREMENTS, STEPS
 from ..config import TILE_COLORS
 from .controls import Page, present
+from .scroll_list import scrollbar, viewport
 
 
 WELCOME_TITLE = 'Welcome to HLauncher'
@@ -15,31 +18,77 @@ def welcome(page):
     page.text((24,296),'Next, choose your apps, startup screen and color theme',17)
 
 
+SAFETY_NOTICE_LINES = (
+    'Stay attentive, follow traffic laws, and keep control of the vehicle.',
+    'Set up, change settings, or watch video only while safely parked',
+    'with the parking brake engaged. Use the vehicle’s own instruments.',
+    'Distraction can injure drivers, passengers, pedestrians, and others.',
+)
+SAFETY_AGREEMENT_LINES = (
+    'I will follow this notice and explain it to other drivers.',
+    'I will keep passengers from using HLauncher in ways that distract me.',
+    'The driver is responsible for operating the vehicle safely, staying',
+    'attentive, and exercising due care toward passengers, pedestrians,',
+    'and other road users. The driver may be liable under applicable law',
+    'for injury or damage caused by unsafe driving or distracted use of',
+    'HLauncher. HLauncher is provided as is, without warranty, under GPLv3.',
+    'The license’s liability limits apply to the extent permitted by law.',
+)
+
+
 def safety_notice_text(page):
-    lines = (
-        'The driver is responsible for operating the vehicle safely,',
-        'staying attentive, and following applicable laws.',
-        'Set up, adjust, or watch video only while safely parked.',
-        'Use the vehicle’s instruments for safety-critical information.',
-        'HLauncher is provided as is, without warranty, under the GPL.',
-        'To the extent permitted by law, HLauncher’s authors and',
-        'contributors are not liable for accidents, injuries, property',
-        'damage, or other losses arising from use or misuse.',
-    )
-    for index, line in enumerate(lines):
-        page.text((24, 140 + index * 24), line, 20)
+    for index, line in enumerate(SAFETY_NOTICE_LINES):
+        page.text((24, 132 + index * 21), line, 18)
+
+
+def safety_agreement_text(launcher, page, *, top, bottom, include_notice=False):
+    rows = []
+    if include_notice:
+        rows.extend((line, 18, 23) for line in SAFETY_NOTICE_LINES)
+        rows.append(('Safety agreement', 22, 32))
+    rows.extend((line, 18, 23) for line in SAFETY_AGREEMENT_LINES)
+
+    # Use the same text width whether or not the scrollbar is visible.
+    width = 612
+    lines = []
+    for text, size, height in rows:
+        face = font(size)
+        line = ''
+        for word in text.split():
+            candidate = f'{line} {word}' if line else word
+            if line and page.draw.textlength(candidate, font=face) > width:
+                lines.append((line, face, height))
+                line = word
+            else:
+                line = candidate
+        if line:
+            lines.append((line, face, height))
+
+    view = viewport(launcher, top, bottom, sum(height for _, _, height in lines), launcher.mode)
+    clip = page.image.crop(view['bounds'])
+    draw = ImageDraw.Draw(clip)
+    y = -round(view['offset'])
+    for line, face, height in lines:
+        draw.text((0, y), line, font=face, fill='#e3e0ea', anchor='lt')
+        y += height
+    page.image.paste(clip, view['bounds'][:2])
+    scrollbar(launcher, page, view, step=bottom - top - 24, draggable=False)
+    return view['offset'] >= view['maximum']
 
 
 def draw_safety_notice(launcher):
     page = Page('Safety notice', None, launcher.prefs.data['tile_color'],
                 (launcher.fb.w, launcher.fb.h), launcher.pressed_box,
                 heading_y=88, show_clock=launcher.prefs.data['show_clock'])
-    safety_notice_text(page)
-    page.text((24, 336), 'Cancel opens Wi-Fi for recovery.', 17)
-    if launcher.banner:
-        page.text((24, 370), launcher.banner, 17, fill='#efbd82')
     page.button((24, 408, 240, 460), 'Cancel', launcher.recovery_page, secondary=True)
-    page.button((456, 408, 696, 460), 'I understand', launcher.accept_safety_notice, selected=True)
+    reviewed = safety_agreement_text(launcher, page, top=128, bottom=378, include_notice=True)
+    if launcher.banner:
+        page.notice(launcher.banner, 392)
+    if reviewed:
+        page.button((416, 408, 696, 460), 'I acknowledge and agree',
+                    launcher.accept_safety_notice, selected=True, size=20)
+    else:
+        page.text((556, 434), 'Scroll to the end to agree', 18, anchor='mm')
     present(launcher, page)
 
 

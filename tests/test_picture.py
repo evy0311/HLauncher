@@ -5,9 +5,10 @@ import unittest
 from sdk.hlauncher_sdk.picture import PictureSettings, DEFAULTS, validate
 from hlauncher.launcher import Launcher
 from hlauncher.config import Preferences
-from test_architecture import Display
+from test_architecture import Display, parked_radio
 
 
+@parked_radio
 class Picture(unittest.TestCase):
     def test_atomic_preferences_and_invalid_external_file(self):
         with tempfile.TemporaryDirectory() as folder:

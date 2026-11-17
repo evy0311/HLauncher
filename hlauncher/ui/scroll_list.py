@@ -20,30 +20,46 @@ def move(ui,delta):
     ui.draw()
 
 
-def draw(ui,page,rows, *, top=128,bottom=448,key=None,height=56,step=64,size=32):
-    rows=list(rows);key=key or ui.mode
+def viewport(ui, top, bottom, content, key):
     if not hasattr(ui,'list_offsets'):ui.list_offsets={}
-    content=max(0,len(rows)*step-(step-height));maximum=max(0,content-(bottom-top))
+    maximum=max(0,content-(bottom-top))
     offset=max(0,min(maximum,ui.list_offsets.get(key,0)));ui.list_offsets[key]=offset
     right=636 if maximum else 696
+    return dict(key=key,offset=offset,maximum=maximum,bounds=(24,top,right,bottom))
+
+
+def draw(ui,page,rows, *, top=128,bottom=448,key=None,height=56,step=64,size=32):
+    rows=list(rows)
+    view=viewport(ui,top,bottom,len(rows)*step-(step-height),key or ui.mode)
+    offset=view['offset']
+    _,_,right,_=view['bounds']
     base=page.image;layer=base.copy();page.image=layer;page.draw=ImageDraw.Draw(layer)
-    first=len(page.actions);viewport=scale_bounds((24,top,right,bottom),page.size)
+    first=len(page.actions);visible_bounds=scale_bounds(view['bounds'],page.size)
     for i,row in enumerate(rows):
         y=round(top+i*step-offset)
         if y+height<=top or y>=bottom:continue
         page.bar((24,y,right,y+height),row.title,row.action,value=row.value,toggle=row.toggle,size=size)
     visible=[]
     for (x,y,r,b),action in page.actions[first:]:
-        box=(max(x,viewport[0]),max(y,viewport[1]),min(r,viewport[2]),min(b,viewport[3]))
+        box=(max(x,visible_bounds[0]),max(y,visible_bounds[1]),min(r,visible_bounds[2]),min(b,visible_bounds[3]))
         if box[2]>box[0] and box[3]-box[1]>=8:visible.append((box,action))
     page.actions=page.actions[:first]+visible
     base.paste(layer.crop((24,top,right,bottom)),(24,top));page.image=base;page.draw=ImageDraw.Draw(base)
-    view=dict(key=key,offset=offset,maximum=maximum,bounds=(24,top,right,bottom))
+    scrollbar(ui,page,view,step)
+
+
+def scrollbar(ui,page,view,step, *, draggable=True):
+    _,top,_,bottom=view['bounds']
+    offset,maximum=view['offset'],view['maximum']
     if maximum:
         track_top=top+2;track_bottom=bottom-2;track_height=track_bottom-track_top
+        content=maximum+bottom-top
         thumb_height=max(32,round(track_height*(bottom-top)/content))
         thumb_top=track_top+round((track_height-thumb_height)*offset/maximum)
-        view.update(track=(646,track_top,662,track_bottom),thumb_height=thumb_height,thumb_top=thumb_top)
+        if draggable:
+            view.update(track=(646,track_top,662,track_bottom),thumb_height=thumb_height,thumb_top=thumb_top)
+        else:
+            view['max_drag']=bottom-top-24
         page.draw.rounded_rectangle((650,track_top,658,track_bottom),radius=4,fill='#201a22',outline='#77606c')
         page.draw.rounded_rectangle((651,thumb_top,657,thumb_top+thumb_height),radius=3,
                                     fill=art.blend(art.accent(page.theme),(245,228,238),.65))
@@ -66,8 +82,8 @@ def touch(ui,action,point):
     if not point:return False
     x,y=point[0]*720/ui.fb.w,point[1]*480/ui.fb.h
     if action=='down':
-        track=view['track']
-        if track[0]<=x<=track[2] and track[1]<=y<=track[3]:
+        track=view.get('track')
+        if track and track[0]<=x<=track[2] and track[1]<=y<=track[3]:
             anchor=y-view['thumb_top'] if view['thumb_top']<=y<=view['thumb_top']+view['thumb_height'] else view['thumb_height']/2
             gesture=ui.list_drag=dict(key=view['key'],kind='thumb',anchor=anchor,moved=True)
         elif view['bounds'][0]<=x<=view['bounds'][2] and view['bounds'][1]<=y<=view['bounds'][3]:
@@ -77,7 +93,10 @@ def touch(ui,action,point):
     if not gesture:return False
     if gesture['kind']=='content':
         if action=='move' and abs(y-gesture['y'])>8:gesture['moved']=True
-        offset=gesture['offset']-(y-gesture['y'])
+        delta=y-gesture['y']
+        if limit := view.get('max_drag'):
+            delta=max(-limit,min(limit,delta))
+        offset=gesture['offset']-delta
     else:
         track=view['track'];travel=max(1,track[3]-track[1]-view['thumb_height'])
         offset=(y-track[1]-gesture['anchor'])/travel*view['maximum']

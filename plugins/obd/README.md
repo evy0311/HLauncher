@@ -1,6 +1,9 @@
 # OBD Gauges
 
-The page shows engine RPM, coolant temperature (°F), accelerator pedal position (%),
+The Home tile shows **Coming soon**. The gauge renderer and BLE adapter code
+remain in the repository for development.
+
+The renderer supports engine RPM, coolant temperature (°F), accelerator pedal position (%),
 intake air temperature (°F), barometric pressure (native units), and VTEC ON/OFF.
 Missing, unsupported or stale readings show a dash; received zero remains zero.
 All six use HondaLink. BLE code is retained for adapter tools but is inactive

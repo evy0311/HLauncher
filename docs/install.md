@@ -69,10 +69,11 @@ manually expand the OS partition into that space.
 2. On the radio, open **Settings → Phone → Connect a phone → Add Bluetooth
    device**. Select **HLauncher** and confirm within the five-minute pairing
    window. No SSH commands or Bluetooth address edits are required.
-3. Open **HondaLink**, read and accept the safety notice, then complete
-   **Welcome → Apps → Startup → Appearance → Network → Finish**. Enable the plugins you need. Phone/OBD connection setup
-   is separate; see [CarPlay](../plugins/carplay/README.md),
-   [Android Auto](../plugins/android-auto/README.md) or [OBD](../plugins/obd/README.md).
+3. Park safely and engage the parking brake. Open **HondaLink**, read and
+   acknowledge the safety agreement, then complete
+   **Welcome → Apps → Startup → Appearance → Network → Finish**. For phone
+   connection setup, see [CarPlay](../plugins/carplay/README.md) or
+   [Android Auto](../plugins/android-auto/README.md).
 4. Network setup is optional. Storage protection is offered only when the
    persistent-data layout passes its checks; wait for configuration to finish
    and use Restart when prompted.

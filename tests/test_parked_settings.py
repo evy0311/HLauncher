@@ -1,11 +1,13 @@
 """Exercise the setup and settings lock with simulated HondaLink data."""
 from pathlib import Path
+import json
 import tempfile
 import time
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from hlauncher.bootstrap import BootstrapLauncher
+from hlauncher.catalog import Manifest
 from hlauncher.config import Preferences, SAFETY_NOTICE_VERSION
 from hlauncher.launcher import Launcher
 from hlauncher.protocol.vehicle_can import SCOPED_API_IDS, decode_records, subscription_rows
@@ -119,6 +121,68 @@ class ParkedSettings(unittest.TestCase):
         self.assertTrue(self.monitor.parking_snapshot()['brake_only'])
         self.assertIn(self.ui.diagnostics_menu, [callback for _, callback in self.ui.actions])
         self.assertIsNone(self.monitor.projection_vehicle_state()['speed_kph'])
+
+    def test_parked_plugin_needs_both_live_signals_and_closes_when_moving(self):
+        folder = self.prefs.path.parent
+        (folder / 'worker.py').touch()
+        (folder / 'plugin.json').write_text(json.dumps(dict(
+            api_version=1, id='vehicle', name='Vehicle', entrypoint=['python3', 'worker.py'],
+            capabilities=['touch', 'vehicle.parking'], requires_parked=True, default_enabled=True,
+        )))
+        self.ui.manifests['vehicle'] = Manifest.load(folder, bundled=True)
+        self.prefs.data['setup_complete'] = True
+        self.prefs.accept_safety_notice()
+        self.monitor.observe(dict(state='connected', uuid='test-cafe'))
+        now = time.monotonic()
+        self.brake(True, now)
+
+        worker = Mock(manifest=self.ui.manifests['vehicle'], last_parking_state=None, car_gps=False)
+        with patch('hlauncher.plugin_host.Worker', return_value=worker) as start:
+            self.assertTrue(self.monitor.parked_for_setup())
+            self.ui.open_plugin('vehicle')
+            start.assert_not_called()
+            self.assertEqual(self.ui.mode, 'home')
+            self.assertEqual(self.ui.banner, 'Park safely to open Vehicle.')
+
+            self.speed(0, now)
+            self.ui.open_plugin('vehicle')
+            start.assert_called_once()
+            self.assertEqual(self.ui.host.active, 'vehicle')
+            worker.send.assert_any_call(type='vehicle.parking', connected=True, speed_kph=0,
+                                        parking_brake=True, safely_parked=True)
+            bootstrap = BootstrapLauncher.__new__(BootstrapLauncher)
+            bootstrap.ui = self.ui
+            self.assertEqual(bootstrap.vehicle_scope(), 'driving')
+
+            self.speed(5, time.monotonic())
+            self.ui.host.touch({'contacts': []})
+            worker.close.assert_called_once()
+            self.assertFalse(any(call.kwargs.get('type') == 'touch' for call in worker.send.call_args_list))
+            self.assertEqual(self.ui.mode, 'home')
+            self.assertNotIn('vehicle', self.ui.host.workers)
+
+            self.speed(0, time.monotonic())
+            self.ui.open_plugin('vehicle')
+            self.assertEqual(self.ui.host.active, 'vehicle')
+            with patch('hlauncher.protocol_diagnostics.time.monotonic', return_value=time.monotonic() + 2.1):
+                self.ui.host.tick()
+            self.assertEqual(worker.close.call_count, 2)
+            self.assertEqual(self.ui.mode, 'home')
+
+    def test_plugin_parked_state_expires_and_clears_on_disconnect(self):
+        self.monitor.observe(dict(state='connected', uuid='test-cafe'))
+        self.brake(True, 100)
+        self.speed(0, 100)
+        self.assertTrue(self.monitor.plugin_parking_state(101)['safely_parked'])
+        self.monitor.observe(dict(state='honda_can_subscription_queued', session=1, scope='vehicle'))
+        self.assertTrue(self.monitor.plugin_parking_state(101)['safely_parked'])
+        self.assertFalse(self.monitor.plugin_parking_state(102)['safely_parked'])
+        self.speed(0, 106)
+        self.assertFalse(self.monitor.plugin_parking_state(106)['safely_parked'])
+        self.brake(True, 106)
+        self.assertTrue(self.monitor.plugin_parking_state(106)['safely_parked'])
+        self.monitor.observe(dict(state='closed', uuid='test-cafe'))
+        self.assertFalse(self.monitor.plugin_parking_state(106)['safely_parked'])
 
     def test_last_moving_speed_vetoes_brake_only_after_subscription_changes(self):
         self.monitor.observe(dict(state='connected', uuid='test-cafe'))

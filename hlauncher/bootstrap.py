@@ -70,7 +70,10 @@ class BootstrapLauncher:
         carplay = getattr(host, 'workers', {}).get('carplay')
         # Keep speed sampled on Home so opening Settings can use a live reading.
         parking = self.ui.mode == 'parking_status'
-        driving = (parking or self.ui.mode == 'home' or getattr(self.ui, 'parked_only_screen', False)
+        from .catalog import PARKING_CAPABILITY
+        plugin_parking = any(PARKING_CAPABILITY in worker.manifest.capabilities
+                             for worker in getattr(host, 'workers', {}).copy().values())
+        driving = (parking or plugin_parking or self.ui.mode == 'home' or getattr(self.ui, 'parked_only_screen', False)
                    or (android is not None and getattr(android.manifest, 'bundled', False))
                    or getattr(carplay, 'car_gps', False))
         gps = any(getattr(worker, 'car_gps', False) for worker in getattr(host, 'workers', {}).copy().values())

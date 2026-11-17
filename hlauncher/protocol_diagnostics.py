@@ -36,6 +36,8 @@ class ProtocolDiagnostics:
         self.last_marker='';self.sequence=0
         self.vehicle=VehicleTraffic()
         self.last_reported_speed = None
+        self.last_reported_speed_at = None
+        self.last_reported_speed_session = None
         self.app_keys = deque(maxlen=6)
         self.display_trials = deque(maxlen=4)
 
@@ -62,13 +64,23 @@ class ProtocolDiagnostics:
                 valid_speeds = [speed for speed in speeds if 0 <= speed <= 400]
                 if valid_speeds:
                     self.last_reported_speed = max(valid_speeds)
+                    self.last_reported_speed_at = event['monotonic']
+                    self.last_reported_speed_session = event['session']
+            speed_session_closed = (state == 'iap_data_session_closed'
+                                    or (state == 'honda_can_authorization' and not event.get('authorized')))
+            if speed_session_closed and item.get('session') in (None, self.last_reported_speed_session):
+                self.last_reported_speed_at = None
             if state=='connected' and str(item.get('uuid','')).endswith('cafe'):self.connected=True
             if state in ('closed','released') and str(item.get('uuid','')).endswith('cafe'):
                 self.connected=False;self.sessions.clear();self.vehicle.clear()
                 self.last_reported_speed = None
+                self.last_reported_speed_at = self.last_reported_speed_session = None
             if state=='iap_remote_reset':
                 self.advertised.clear();self.sessions.clear();self.vehicle.clear()
-            if state=='honda_app_disconnect_received':self.vehicle.clear()
+                self.last_reported_speed_at = None
+            if state=='honda_app_disconnect_received':
+                self.vehicle.clear()
+                self.last_reported_speed_at = None
             if state=='honda_display_test_result':
                 self.display_trials.appendleft(dict(event))
             if state in ('projection_voice_state','projection_voice_route'):self.voice={k:v for k,v in item.items() if k!='state'}
@@ -187,21 +199,37 @@ class ProtocolDiagnostics:
         speed, brake = self.parked_setup_readings(now)
         return brake is True and speed in (None, 0)
 
+    def plugin_parking_state(self, now=None):
+        """Publish only live readings and the stricter parked check for plugins."""
+        now = time.monotonic() if now is None else now
+        with self.lock:
+            speed = brake = None
+            if self.connected:
+                brake = self._setup_brake(now)
+                # Keep the original expiry when a plugin switches CAN subscriptions.
+                at = self.last_reported_speed_at
+                if at is not None and 0 <= now - at < SPEED_MAX_AGE:
+                    speed = self.last_reported_speed
+            return dict(connected=self.connected, speed_kph=speed, parking_brake=brake,
+                        safely_parked=speed == 0 and brake is True)
+
+    def _setup_brake(self, now):
+        brake = self.vehicle.status
+        # Civic 0x61 reports brake changes promptly and repeats about every 5 s.
+        if 'at' in brake and 0 <= now - brake['at'] < SETUP_BRAKE_MAX_AGE:
+            return brake['parking_brake_engaged']
+        return None
+
     def parked_setup_readings(self, now=None):
         now = time.monotonic() if now is None else now
         with self.lock:
             if not self.connected:
                 return None, None
-            brake = self.vehicle.status
-            # Civic 0x61 reports brake changes promptly and repeats about every 5 s.
-            engaged = None
-            if 'at' in brake and 0 <= now - brake['at'] < SETUP_BRAKE_MAX_AGE:
-                engaged = brake['parking_brake_engaged']
             speed, _ = self.projection_speed(now)
             # Losing the speed feed or changing subscriptions must not erase reported motion.
             if self.last_reported_speed:
                 speed = self.last_reported_speed
-            return speed, engaged
+            return speed, self._setup_brake(now)
 
     def parking_snapshot(self, now=None):
         """Read the gate and candidate signals together for the support screen."""

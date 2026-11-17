@@ -91,7 +91,11 @@ public GitHub repository, or share the file directly for USB installation.
 
 A `.hlp` is a ZIP containing regular files at its root, including `plugin.json`. The installer limits packages to 64 MiB and 4,096 files, rejects links and paths outside the package, and reserves the bundled IDs. The package digest identifies the exact installed revision. To supply tile art, set `"icon": "icon.png"` in the manifest and include a static PNG up to 256 × 256 and 64 KiB.
 
-External plugins can request `display`, `touch`, `session`, `audio.playback`, and `media.publish`. Each worker has its own `HLAUNCHER_DATA_DIR`. The manifest’s `camera` option enables a USB capture picker and provides the chosen device through `HLAUNCHER_CAMERA_DEVICE`. Camera workers receive the viewport below the standard launcher header and Back button. The `network` option configures the endpoint used by Python SDK `Client.connect()`. Plugins can also use the system’s ordinary network and device APIs directly.
+External plugins can request `display`, `touch`, `session`, `audio.playback`, `media.publish`, and `vehicle.parking`. Each worker has its own `HLAUNCHER_DATA_DIR`. The manifest’s `camera` option enables a USB capture picker and provides the chosen device through `HLAUNCHER_CAMERA_DEVICE`. Camera workers receive the viewport below the standard launcher header and Back button. The `network` option configures the endpoint used by Python SDK `Client.connect()`. Plugins can also use the system’s ordinary network and device APIs directly.
+
+For an app that should run only when parked, add `"vehicle.parking"` to its manifest’s capabilities and set `"requires_parked": true`. HLauncher checks for fresh zero speed and a confirmed parking brake before starting the worker. If either reading expires or the vehicle starts moving, HLauncher closes the worker and returns to Home when it was visible.
+
+A plugin that only needs the readings can declare `vehicle.parking` by itself. Read the `vehicle.parking` message with the SDK’s `Client.receive()`. HLauncher sends it on activation and when the state changes. It includes `connected`, `safely_parked`, `speed_kph`, and `parking_brake`. Missing or stale speed and brake readings arrive as `null`. Use `safely_parked` to gate individual actions and treat it as false until the first message arrives.
 
 ## Build a plugin with an AI agent
 
@@ -128,6 +132,7 @@ Host to plugin:
 | `host.activate`, `host.deactivate` | Foreground lifecycle |
 | `host.start` | Start a backend in the background, without presenting video |
 | `radio.session` | Bluetooth control connection and authentication state |
+| `vehicle.parking` | Read-only parked status, speed and parking brake for plugins that declare the capability |
 | `touch` | Both stable contact IDs, raw/normalized/viewport coordinates and elapsed time |
 | `touch.cancel` | Release active contacts when leaving the app |
 | `frame.release` | A display slot can be written again |

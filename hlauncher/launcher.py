@@ -14,7 +14,7 @@ from .catalog import discover
 from .config import Preferences
 from .colors import PictureSettings, DEFAULTS, LIMITS
 from .display import Framebuffer
-from .plugin_host import PluginHost
+from .plugin_host import PluginHost, PluginParkingRequired
 from .projection import PROJECTIONS
 from .touch import pixels, for_viewport
 
@@ -81,6 +81,7 @@ class Launcher:
         self.diagnostics = Diagnostics()
         from .protocol_diagnostics import ProtocolDiagnostics
         self.protocols = protocol_diagnostics or ProtocolDiagnostics(self.prefs.path.parent/'protocol-captures')
+        self.host.parking_state = self.protocols.plugin_parking_state
         self.host.projection_night_mode = self.projection_night_mode
         self.protocol_page = 0
         self.integration_tab = 'Display'
@@ -949,6 +950,8 @@ class Launcher:
             self.last_status = None
             self.host.activate(plugin_id)
             self.draw()
+        except PluginParkingRequired as exc:
+            self.home(str(exc))
         except (OSError, ValueError) as exc:
             self.event(state="plugin_launch_failed", plugin=plugin_id, error=str(exc))
             self.home(str(exc)[:120] if self.manifests[plugin_id].revision and isinstance(exc, ValueError)

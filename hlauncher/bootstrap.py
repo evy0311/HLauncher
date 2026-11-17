@@ -69,12 +69,14 @@ class BootstrapLauncher:
         android = getattr(host, 'workers', {}).get('android-auto')
         carplay = getattr(host, 'workers', {}).get('carplay')
         # Keep speed sampled on Home so opening Settings can use a live reading.
-        driving = (self.ui.mode == 'home' or getattr(self.ui, 'parked_only_screen', False)
+        parking = self.ui.mode == 'parking_status'
+        driving = (parking or self.ui.mode == 'home' or getattr(self.ui, 'parked_only_screen', False)
                    or (android is not None and getattr(android.manifest, 'bundled', False))
                    or getattr(carplay, 'car_gps', False))
         gps = any(getattr(worker, 'car_gps', False) for worker in getattr(host, 'workers', {}).copy().values())
         return '_'.join(name for enabled, name in (
             (gauges, 'gauges'), (illumination, 'illumination'), (driving, 'driving'), (gps, 'gps'),
+            (parking, 'parking'),
         ) if enabled) or 'off'
 
     def queue_display_test(self, action):

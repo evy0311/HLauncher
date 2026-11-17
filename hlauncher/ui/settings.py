@@ -28,8 +28,8 @@ def render(rows, back, *, theme='Red', size=(720,480), clock=None,
     actions=[(back_box,back)]
     tiles = []
     for i,row in enumerate(rows):
-        x=24+(i%2)*344;y=144+(i//2)*88
-        tiles.append((row, (x,y,x+328,y+76), 29))
+        x=24+(i%2)*344;y=144+(i//2)*76
+        tiles.append((row, (x,y,x+328,y+64), 29))
     for row, box, font_size in tiles:
         x, y, right, bottom = box
         width, height = right-x, bottom-y
@@ -56,7 +56,8 @@ def draw_launcher(launcher):
           Row('About','',launcher.about_settings),
           Row('Startup','',launcher.startup_settings),
           Row('System','',launcher.system_settings),
-          Row('Audio','',launcher.audio_coming_soon)]
+          Row('Audio','',launcher.audio_coming_soon),
+          Row('Diagnostics','',launcher.diagnostics_menu)]
     frame=render(rows,launcher.home,theme=launcher.prefs.data['tile_color'],
                  size=(launcher.fb.w,launcher.fb.h),banner=launcher.banner,version=__version__,
                  pressed=launcher.pressed_box if launcher.press is not None else None,

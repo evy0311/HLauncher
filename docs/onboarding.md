@@ -27,6 +27,8 @@ The builder strips application state, Bluetooth bonds, Wi-Fi profiles and SSH ho
 
 Setup and on-radio Settings require recent readings of zero speed and an engaged parking brake from HondaLink. If the readings are unavailable, the screen stays locked. Review the notice and agreement under **Settings → About → Legal info**.
 
+For help with the parked check, open **Settings → Diagnostics → Parking Status**. From the warning, double-tap **Park safely to continue** to open the read-only page directly. Take a photo of the readings for support, then tap **×** to return.
+
 CarPlay needs a supported USB CarPlay adapter. Android Auto uses an Android phone connected directly by USB and the installed engine. The OBD Gauges tile shows **Coming soon**.
 
 Enrollment recognizes HandsFreeLink/HondaLink names or the radio's audio-service combination. These are compatibility hints, not cryptographic Honda identification. Only one candidate is admitted at a time, for up to 90 seconds within the enrollment window. It becomes the saved radio only after a successful HondaLink handshake. Subsequent connections are restricted to the saved peer, and discovery closes. Failed candidate bonds are removed; unrelated existing bonds are left alone. An expired candidate cannot survive a reboot.

@@ -8,8 +8,10 @@ from unittest.mock import patch
 from hlauncher.bootstrap import BootstrapLauncher
 from hlauncher.config import Preferences, SAFETY_NOTICE_VERSION
 from hlauncher.launcher import Launcher
+from hlauncher.protocol.vehicle_can import SCOPED_API_IDS, decode_records, subscription_rows
 from hlauncher.protocol_diagnostics import ProtocolDiagnostics
 from test_architecture import Display
+from test_vehicle_can import can_data
 
 
 class ParkedSettings(unittest.TestCase):
@@ -119,6 +121,65 @@ class ParkedSettings(unittest.TestCase):
         self.brake(True, time.monotonic())
         self.ui.tick()
         self.assertFalse(self.ui.parked_screen_locked)
+
+    def test_warning_double_tap_opens_only_readings_and_close_restores_lock(self):
+        self.ui.start()
+        self.touch('down', 360, 148)
+        self.ui.update({'contacts': [{'slot': 0, 'action': 'up', 'has_position': False}]})
+        self.assertEqual(self.ui.mode, 'safety_notice')
+        self.assertTrue(self.ui.parked_screen_locked)
+        self.touch('down', 360, 148)
+        self.ui.update({'contacts': [{'slot': 0, 'action': 'up', 'has_position': False}]})
+
+        self.assertEqual(self.ui.mode, 'parking_status')
+        self.assertEqual([callback for _, callback in self.ui.actions], [self.ui.close_parking_status])
+        bootstrap = BootstrapLauncher.__new__(BootstrapLauncher)
+        bootstrap.ui = self.ui
+        self.assertEqual(bootstrap.vehicle_scope(), 'driving_parking')
+        self.assertFalse(self.monitor.recording)
+
+        self.touch('down', 664, 85)
+        self.touch('up', 664, 85)
+        self.assertEqual(self.ui.mode, 'safety_notice')
+        self.assertTrue(self.ui.parked_screen_locked)
+        self.assertEqual(self.ui.actions, [])
+        self.assertFalse(self.prefs.safety_notice_accepted)
+        self.assertEqual(bootstrap.vehicle_scope(), 'driving')
+
+    def test_parking_status_can_be_opened_from_settings_with_debug_off(self):
+        self.prefs.data['setup_complete'] = True
+        self.prefs.accept_safety_notice()
+        self.monitor.observe(dict(state='connected', uuid='test-cafe'))
+        now = time.monotonic()
+        self.brake(True, now)
+        self.speed(0, now)
+        self.ui.settings()
+        self.assertFalse(self.prefs.data['debug_mode'])
+        next(callback for _, callback in self.ui.actions if callback == self.ui.diagnostics_menu)()
+        next(callback for _, callback in self.ui.actions if callback == self.ui.open_parking_status)()
+        self.assertEqual(self.ui.mode, 'parking_status')
+        self.ui.close_parking_status()
+        self.assertEqual(self.ui.mode, 'diagnostics_menu')
+
+    def test_candidate_readings_are_scoped_and_do_not_unlock_settings(self):
+        scope = 'driving_parking'
+        self.assertEqual({row['message_id'] for row in subscription_rows(scope)},
+                         {0x158, 0x1A6, 0x12F85050, 0x12F85150, 0x12F97350})
+        self.monitor.observe(dict(state='connected', uuid='test-cafe'))
+        records = decode_records(can_data([(0x12F85050, bytes(6)),
+                                          (0x12F85150, bytes.fromhex('4002000000'))]),
+                                 api_ids=SCOPED_API_IDS[scope])
+        self.monitor.observe(dict(state='honda_can_data', session=1, records=records))
+        status = self.monitor.parking_snapshot()
+        signals = {row['api_id']: row for row in status['can_signals']}
+        self.assertTrue(signals[80]['value'])
+        self.assertEqual(signals[80]['source']['signal'], 'C_PBRAKE')
+        self.assertTrue(signals[100]['value'])
+        self.assertFalse(signals[78]['received'])
+        self.assertIsNone(status['radio_brake'])
+        self.assertFalse(status['parked'])
+        self.monitor.observe(dict(state='closed', uuid='test-cafe'))
+        self.assertFalse(any(row['received'] for row in self.monitor.parking_snapshot()['can_signals']))
 
     def test_short_reading_gap_blocks_touches_without_flashing_the_overlay(self):
         self.prefs.data['setup_complete'] = True

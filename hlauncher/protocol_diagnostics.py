@@ -9,6 +9,7 @@ import shutil
 import threading
 import time
 from .vehicle_protocol import VehicleTraffic
+from .protocol.vehicle_can import DRIVING_API_IDS, PARKING_DIAGNOSTIC_API_IDS
 
 from .config import STATE_DIR
 
@@ -18,6 +19,8 @@ NAMES = {0x01:'Session',0x09:'App information',0x11:'Connection status',0x43:'To
 PREFIXES = ('iap_', 'honda_', 'radio_control_', 'radio_button', 'projection_',
             'audio_meter_', 'audio_capture_', 'audio_hfp_', 'audio_voice_', 'plugin_audio_', 'protocol_')
 TRANSPORT = {'rx','protocol_tx','connected','closed','released','registered','socket_error','tx_error'}
+SETUP_BRAKE_MAX_AGE = 6
+SPEED_MAX_AGE = 2
 
 
 class ProtocolDiagnostics:
@@ -143,8 +146,8 @@ class ProtocolDiagnostics:
 
     def projection_speed(self, now):
         speed, = self.vehicle.signals.snapshot(now, {152})
-        if speed['received'] and 0 <= speed['age_seconds'] < 2 and 0 <= speed['value'] <= 400:
-            return speed['value'], speed['at'] + 2
+        if speed['received'] and 0 <= speed['age_seconds'] < SPEED_MAX_AGE and 0 <= speed['value'] <= 400:
+            return speed['value'], speed['at'] + SPEED_MAX_AGE
         return None, None
 
     def projection_gps(self, *, include_speed=False):
@@ -181,10 +184,22 @@ class ProtocolDiagnostics:
             brake = self.vehicle.status
             # Civic 0x61 reports brake changes promptly and repeats about every 5 s.
             if (brake.get('parking_brake_engaged') is not True
-                    or not 0 <= now - brake['at'] < 6):
+                    or not 0 <= now - brake['at'] < SETUP_BRAKE_MAX_AGE):
                 return False
             speed, _ = self.projection_speed(now)
             return speed == 0
+
+    def parking_snapshot(self, now=None):
+        """Read the gate and candidate signals together for the support screen."""
+        now = time.monotonic() if now is None else now
+        with self.lock:
+            brake = self.vehicle.status
+            return dict(connected=self.connected, parked=self.parked_for_setup(now),
+                        radio_brake=brake.get('parking_brake_engaged'),
+                        radio_flags=brake.get('flags'),
+                        radio_age=now - brake['at'] if 'at' in brake else None,
+                        can_signals=self.vehicle.signals.snapshot(
+                            now, set(DRIVING_API_IDS + PARKING_DIAGNOSTIC_API_IDS)))
 
     def parked_setup_refresh_pending(self):
         """Allow the overlay to wait briefly while a parked page awaits fresh data."""

@@ -62,6 +62,9 @@ def safety_agreement(ui):
     present(ui, page)
 
 
+PARKED_TITLE_BOUNDS = (168, 120, 552, 176)
+
+
 def parked_only(ui):
     page = Page('', None, ui.prefs.data['tile_color'], (ui.fb.w, ui.fb.h), ui.pressed_box)
     page.image = ImageEnhance.Brightness(page.image).enhance(.36)

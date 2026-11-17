@@ -105,6 +105,8 @@ class Launcher:
         self.parked_screen_locked = False
         self.parked_page_visible = False
         self.parked_overlay_at = None
+        self.parked_title_pressed_at = self.parked_title_tapped_at = None
+        self.parking_redraw = 0
         self.page = 0
         self.settings_page = 0
         self.actions = []
@@ -611,6 +613,23 @@ class Launcher:
         self.diagnostics.start()
         self.draw()
 
+    def diagnostics_menu(self):
+        self.diagnostics.stop()
+        self.mode = 'diagnostics_menu'
+        self.press = self.pressed_box = None
+        self.draw()
+
+    def open_parking_status(self):
+        self.parking_status_return_mode = self.mode
+        self.mode = 'parking_status'
+        self.press = self.pressed_box = None
+        self.draw()
+
+    def close_parking_status(self):
+        self.mode = self.parking_status_return_mode
+        self.parked_title_pressed_at = self.parked_title_tapped_at = None
+        self.draw()
+
     def debug_tools(self, page='menu'):
         if not self.prefs.data['debug_mode']: return
         self.tone_test.stop()
@@ -980,13 +999,14 @@ class Launcher:
     def parked_only_screen(self):
         if self.mode == 'home':
             return self.home_editor.editing
-        return self.mode not in ('plugin', 'obd_coming_soon', 'shutdown_pending')
+        return self.mode not in ('plugin', 'obd_coming_soon', 'shutdown_pending', 'parking_status')
 
     def sync_parked_screen(self):
         locked = self.parked_only_screen and not self.protocols.parked_for_setup()
         if locked == self.parked_screen_locked:
             return False
         self.parked_screen_locked = locked
+        self.parked_title_pressed_at = self.parked_title_tapped_at = None
         self.press = self.pressed_box = self.last_xy = None
         self.picture_drag = None
         self.list_drag = None
@@ -1062,6 +1082,8 @@ class Launcher:
             from .ui.color_picker import draw_launcher
             draw_launcher(self)
         elif self.mode in pages.PAGES:pages.PAGES[self.mode](self)
+        elif self.mode=='diagnostics_menu':diagnostics.menu(self)
+        elif self.mode=='parking_status':diagnostics.parking_status(self)
         elif self.mode=='diagnostics':diagnostics.system(self)
         elif self.mode=='protocol_tests':diagnostics.protocols(self)
         elif self.mode.startswith('debug_'):diagnostics.hardware(self)
@@ -1159,7 +1181,12 @@ class Launcher:
         if point:
             self.last_xy = point
         action = primary["action"]
+        if self.mode == 'parking_status':
+            self.update_buttons(action, point)
+            return
         if self.parked_screen_locked:
+            if self.parked_overlay_at is None and self.parked_title_touch(action, point):
+                return
             self.update_buttons(action, point)
             return
         if self.mode == 'home' and self.home_settle is not None:
@@ -1206,6 +1233,33 @@ class Launcher:
         if not self.update_buttons(action, point) and self.mode == "plugin":
             self.host.touch(touch)
 
+    def parked_title_touch(self, action, point):
+        from .ui.chrome import scale_bounds
+        from .ui.pages import PARKED_TITLE_BOUNDS
+
+        left, top, right, bottom = scale_bounds(PARKED_TITLE_BOUNDS, (self.fb.w, self.fb.h))
+        inside = point is not None and left <= point[0] <= right and top <= point[1] <= bottom
+        now = time.monotonic()
+        if action == 'down':
+            self.parked_title_pressed_at = now if inside else None
+            if not inside:
+                self.parked_title_tapped_at = None
+            return inside
+        pressed_at = self.parked_title_pressed_at
+        if pressed_at is None:
+            return False
+        if action == 'move' and (point is None or inside):
+            return True
+        self.parked_title_pressed_at = None
+        previous_tap = self.parked_title_tapped_at
+        self.parked_title_tapped_at = None
+        if action == 'up' and (point is None or inside) and now - pressed_at <= .35:
+            if previous_tap is not None and pressed_at - previous_tap <= .6:
+                self.open_parking_status()
+            else:
+                self.parked_title_tapped_at = now
+        return True
+
     def update_buttons(self, action, point):
         if action == "down":
             self.press = point
@@ -1236,7 +1290,7 @@ class Launcher:
             self.inputs.control_epochs['hondalink-iap'] += 1
         if values.get("connected") is False:
             self.press = self.pressed_box = None
-            if self.host.active not in PROJECTIONS and not self.pending_default:
+            if self.mode != 'parking_status' and self.host.active not in PROJECTIONS and not self.pending_default:
                 self.home()
 
     def tick(self):
@@ -1317,6 +1371,9 @@ class Launcher:
         if self.mode == 'protocol_tests' and now-self.protocol_redraw>.25:
             self.protocol_redraw=now
             self.draw()
+        if self.mode == 'parking_status' and now - self.parking_redraw >= .5:
+            self.parking_redraw = now
+            self.draw()
         if self.picture_dirty and now-self.picture_saved > .1:
             self.save_picture()
         elif not self.picture_dirty and self.picture_drag is None and now-self.picture_checked > .2:
@@ -1325,7 +1382,8 @@ class Launcher:
                 self.picture_values = dict(self.picture.values)
                 self.apply_picture()
                 if self.mode != 'plugin':self.draw()
-        if self.pending_default and self.prefs.safety_notice_accepted and self.prefs.data['setup_complete']:
+        if (self.mode != 'parking_status' and self.pending_default
+                and self.prefs.safety_notice_accepted and self.prefs.data['setup_complete']):
             self.pending_default = False
             plugin_id = self.prefs.data["default_plugin"]
             if plugin_id != 'obd' and plugin_id in self.manifests and self.prefs.enabled(

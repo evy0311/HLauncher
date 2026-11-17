@@ -18,11 +18,12 @@ ILLUMINATION_ID = 0x12F85450
 ILLUMINATION_API_IDS = (5, 6)
 ILLUMINATION_SUBSCRIPTION = next(row for row in SUBSCRIPTIONS if row['message_id'] == ILLUMINATION_ID)
 DRIVING_API_IDS = (152,)
+PARKING_DIAGNOSTIC_API_IDS = (78, 79, 80, 95, 99, 100, 101)
 GPS_IDS = (0x99F00003, 0x99F00004)
 GPS_SUBSCRIPTIONS = tuple(row for row in SUBSCRIPTIONS if row['message_id'] in GPS_IDS)
 
 SCOPE_GROUPS = (('gauges', GAUGE_API_IDS), ('illumination', ILLUMINATION_API_IDS),
-                ('driving', DRIVING_API_IDS), ('gps', ()))
+                ('driving', DRIVING_API_IDS), ('gps', ()), ('parking', PARKING_DIAGNOSTIC_API_IDS))
 SCOPED_API_IDS = {'off': ()}
 for count in range(1, len(SCOPE_GROUPS) + 1):
     for groups in combinations(SCOPE_GROUPS, count):

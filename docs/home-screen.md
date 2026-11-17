@@ -31,7 +31,11 @@ Touch regions scale with the displayed image on other framebuffer dimensions.
 On a fresh layout, CarPlay appears first, then the remaining enabled plugins and
 Settings. Each page has six slots. Hold a tile to edit Home. Drag tiles into
 empty slots or onto another tile to swap positions. Hold a dragged tile at either
-edge to turn the page. Use **+ Page** to add an empty page when fewer than three pages are shown.
+edge to turn the page. Every Home theme supports swiping and adds pages as needed
+for enabled apps. Use **+ Page** to keep up to two spare pages for arranging tiles.
+On the page you want to remove, choose **Delete page** in edit mode. Its apps move
+to open slots on other pages. A page can be deleted when all enabled apps fit
+on the remaining pages. On an empty page, tap **Edit Home** to open edit mode.
 Use **Done** to leave edit mode. Layout changes are saved as you make them. Settings can move to
 any slot. Use a plugin's corner button to disable it or uninstall a plugin you
 installed yourself.
@@ -81,12 +85,8 @@ The clock updates while this page is open. All child settings and diagnostics sc
 
 ## Audio and OBD pages
 
-Audio & EQ and OBD adapter selection use the shared 52 px header, themed surfaces,
-clock and Home return button. Audio presents 12 independent bands in one aligned bank, with PipeWire and EQ
-toggles plus Reset EQ. Reset clears the band and legacy tone gains without
-changing either toggle. Adapter rows use the same 44 px bars as Settings.
-The bundled OBD dashboard shares the UI artwork and typography; the Bluetooth
-worker and audio process remain independent. Missing or disconnected readings
+The Audio settings page shows Coming soon. The bundled OBD dashboard shares
+the UI artwork and typography and uses vehicle data from HondaLink. Missing or disconnected readings
 remain unavailable, and the dashboard caches its header until the minute or
 pressed state changes.
 
@@ -117,7 +117,8 @@ It has Exit on every step when opened from Settings. Choices remain saved and
 Exit returns to System. First-time setup still requires completion. Network
 setup is a separate child flow and Back returns to the wizard's Network step.
 
-The network landing page shows the Pi's current LAN setup address. The hotspot
+The Wi-Fi menu shows the Pi's current LAN setup address and opens Wi-Fi power,
+setup hotspot and SSH access. The hotspot
 page shows the device password, which also signs in to the web setup page.
 The radio has a separate SSH access page. NetworkManager sampling happens
 in the recovery worker, not in the UI/audio loop. The authenticated recovery
@@ -128,10 +129,11 @@ Storage restart is offered only after the protection job has completed.
 ## Settings categories and early welcome
 
 Settings uses two columns of rectangular category bars: Plugins, Appearance,
-Audio & EQ, About, Startup and System. Child lists use the shared horizontal
+About, Startup, System and Audio. About shows the project logo, version, creator,
+GitHub address and the Legal info button. Child lists use the shared horizontal
 color wash with inset values or Off/On controls. Appearance contains background
 color, clock visibility and global Picture controls; individual plugin pages contain their enable switch and plugin options
-(such as the CarPlay adapter icon and the OBD adapter); Startup contains the default app selector.
+(such as the CarPlay adapter icon); Startup contains the default app selector.
 
 The early HDMI welcome and wizard Welcome share their content and theme. The
 screen remains available while a saved radio reconnects; Bluetooth profiles
@@ -140,6 +142,8 @@ saved theme choices are retained.
 
 
 ## Custom theme
+
+For complete layout changes, see [Layout themes](themes.md).
 
 The six preset colors remain fixed. Settings → Appearance → Background color
 and the wizard’s Appearance step also offer Custom color. The native touch

@@ -22,10 +22,13 @@ def default_hostname(system=Path('/'), run=subprocess.run):
 def write_recovery_card(credentials, boot):
     """An SD-reader fallback when a radio gates HDMI until pairing succeeds."""
     boot = Path(boot)
-    text = ('HLauncher setup\n\nRadio pairing: Settings > Phone > Connect a phone > Add Bluetooth device.\nSelect HLauncher.\n\nConnect to Wi-Fi: '+credentials['ssid']+
+    text = ('HLauncher setup\n\nRadio pairing: Settings > Phone > Connect a phone > Add Bluetooth device.\nSelect HLauncher.\n\n'
+            'Wi-Fi starts off. From HLauncher, open Settings > System > Wi-Fi > Setup hotspot and select Start setup hotspot.\n'
+            'If the radio screen is unavailable, use Ethernet to reach the setup page on port 8080.\n\n'
+            'Connect to Wi-Fi: '+credentials['ssid']+
             '\nWi-Fi password: '+credentials['password']+
             '\nOpen: http://192.168.4.1:8080\nSetup username: hlauncher\nUse the Wi-Fi password above to sign in.\n'
-            '\nSSH is off by default. Turn it on from Wi-Fi & pairing on the radio.\n')
+            '\nSSH is off by default. Turn it on from the Wi-Fi menu on the radio.\n')
     import tempfile
     fd,name=tempfile.mkstemp(prefix='.hlauncher-setup-',dir=boot)
     try:

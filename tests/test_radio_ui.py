@@ -1,4 +1,5 @@
 """All built-in pages share chrome; settings setup and network helpers stay safe."""
+from dataclasses import replace
 import json
 from pathlib import Path
 import subprocess
@@ -14,6 +15,7 @@ from hlauncher.protocol_diagnostics import ProtocolDiagnostics
 from hlauncher.catalog import Manifest
 from hlauncher.recovery import sample_network,network_status
 from test_architecture import Display
+from test_themes import theme_document
 
 
 class RadioUI(unittest.TestCase):
@@ -25,6 +27,28 @@ class RadioUI(unittest.TestCase):
         manifests={p:Manifest.load(ROOT/'plugins'/p,bundled=True) for p in ('carplay','android-auto','obd')}
         self.ui=Launcher(framebuffer=Display(),preferences=prefs,manifests=manifests)
     def tearDown(self):self.ui.close();self.temp.cleanup()
+
+    def test_vehicle_plugin_visibility_persists_without_disabling_it(self):
+        from hlauncher.vehicle_fields import visible
+
+        ui = self.ui
+        manifest = Manifest.load(ROOT/'plugins/vehicle', bundled=True)
+        ui.manifests[manifest.id] = manifest
+        self.assertTrue(ui.prefs.enabled(manifest))
+        ui.settings()
+        ui.plugin_settings()
+        ui.plugin_detail('vehicle')
+        ui.vehicle_fields_page('tires')
+        ui.toggle_vehicle_field('126')
+        ui.toggle_vehicle_field('tires')
+        hidden = set(Preferences(ui.prefs.path).data['vehicle_hidden'])
+        self.assertFalse(visible('127', hidden))
+        self.assertTrue(visible('42', hidden))
+        ui.toggle_vehicle_field('tires')
+        hidden = set(Preferences(ui.prefs.path).data['vehicle_hidden'])
+        self.assertFalse(visible('126', hidden))
+        self.assertTrue(visible('127', hidden))
+        self.assertTrue(ui.prefs.enabled(manifest))
 
     def test_revisit_wizard_exit_is_available_every_step_and_does_not_reset_setup(self):
         ui=self.ui;ui.system_settings();ui.setup_page(True)
@@ -270,6 +294,12 @@ class RadioUI(unittest.TestCase):
     def test_wifi_power_page_queues_power_and_boot_settings(self):
         ui = self.ui
         ui.system_settings()
+        self.assertFalse(any(action == ui.wifi_power_page for _, action in ui.actions))
+        next(action for _, action in ui.actions if action == ui.recovery_page)()
+        self.assertEqual(ui.mode, 'recovery_settings')
+        next(action for _, action in ui.actions if action == ui.hotspot_page)()
+        self.assertEqual(ui.mode, 'hotspot_settings')
+        ui.actions[0][1]()
         next(action for _, action in ui.actions if action == ui.wifi_power_page)()
         self.assertEqual(ui.mode, 'wifi_power_settings')
         with patch('hlauncher.recovery.request_job') as request:
@@ -277,10 +307,211 @@ class RadioUI(unittest.TestCase):
             request.assert_called_once_with('wifi_power', mode='sleep')
             request.reset_mock()
             next(action for box, action in ui.actions if box[:2] == (600, 282))()
-            request.assert_called_once_with('wifi_boot', enabled=True)
+            request.assert_called_once_with('wifi_boot', enabled=False)
+        ui.actions[0][1]()
+        self.assertEqual(ui.mode, 'recovery_settings')
+        ui.actions[0][1]()
+        self.assertEqual(ui.mode, 'system_settings')
+
+    def test_theme_picker_preserves_oem_and_uses_existing_routes(self):
+        ui = self.ui
+        ui.settings()
+        original = ui.fb.last.copy()
+        next(action for _, action in ui.actions if action == ui.appearance_settings)()
+        next(action for _, action in ui.actions if action == ui.themes_page)()
+        self.assertEqual(ui.mode, 'theme_preview')
+        self.assertEqual((ui.theme_preview.id, ui.theme_preview_screen), ('oem', 'home'))
+        self.assertTrue(any(action == ui.preview_colors for _, action in ui.actions))
+        self.assertEqual(tuple(ui.themes.choices), ('oem', 'touring', 'drive'))
+        for retired in ('rail', 'stack'):
+            self.assertEqual(ui.themes.get(retired).id, 'oem')
+        ui.actions[0][1]()
+        ui.themes.install_document(theme_document('my-garage', 'My Garage', settings='rail',
+                                                  system_settings='rail', recovery_settings='rail'))
+        ui.themes.install_document(theme_document('my-workshop', 'My Workshop', home='list'))
+        next(action for _, action in ui.actions if action == ui.themes_page)()
+
+        def press_at(x, y):
+            next(action for (left, top, right, bottom), action in ui.actions
+                 if left <= x < right and top <= y < bottom)()
+
+        press_at(620, 270)
+        self.assertEqual(ui.theme_preview.id, 'touring')
+        self.assertFalse(any(action == ui.preview_colors for _, action in ui.actions))
+        press_at(620, 270)
+        self.assertEqual(ui.theme_preview.id, 'drive')
+        self.assertFalse(any(action == ui.preview_colors for _, action in ui.actions))
+        press_at(620, 270)
+        self.assertEqual(ui.theme_preview.id, 'my-garage')
+        self.assertFalse(any(action == ui.preview_colors for _, action in ui.actions))
+        press_at(220, 436)
+        self.assertEqual(ui.theme_preview_screen, 'settings')
+        press_at(620, 270)
+        self.assertEqual((ui.theme_preview.id, ui.theme_preview_screen), ('my-workshop', 'settings'))
+        press_at(620, 270)
+        self.assertEqual(ui.theme_preview.id, 'oem')
+        press_at(80, 270)
+        self.assertEqual(ui.theme_preview.id, 'my-workshop')
+        self.assertEqual(Preferences(ui.prefs.path).data['layout_theme'], 'oem')
+        ui.actions[0][1]()
+        self.assertEqual(ui.mode, 'appearance_settings')
+        self.assertEqual(Preferences(ui.prefs.path).data['layout_theme'], 'oem')
+        next(action for _, action in ui.actions if action == ui.themes_page)()
+        for _ in range(3):
+            press_at(620, 270)
+        press_at(570, 436)
+        self.assertEqual(Preferences(ui.prefs.path).data['layout_theme'], 'my-garage')
+        ui.settings()
+        rail_box, open_system = next((box, action) for box, action in ui.actions
+                                     if action == ui.system_settings)
+        self.assertGreaterEqual(rail_box[0], 250)
+        open_system()
+        next(action for _, action in ui.actions if action == ui.recovery_page)()
+        self.assertEqual(ui.mode, 'recovery_settings')
+        next(action for _, action in ui.actions if action == ui.wifi_power_page)()
+        self.assertEqual(ui.mode, 'wifi_power_settings')
+        ui.appearance_settings()
+        self.assertFalse(any(action == ui.tile_colors for _, action in ui.actions))
+        next(action for _, action in ui.actions if action == ui.themes_page)()
+        self.assertEqual(ui.theme_preview.id, 'my-garage')
+        for _ in range(3):
+            press_at(80, 270)
+        press_at(570, 436)
+        ui.settings()
+        self.assertIsNone(ImageChops.difference(original, ui.fb.last).getbbox())
+
+    def test_theme_color_preview_only_saves_when_applied(self):
+        ui = self.ui
+        document = theme_document('colorable', 'Colorable', home='rail')
+        ui.themes.install_document(dict(document, supports_color_selection=True))
+        ui.appearance_settings()
+        self.assertTrue(any(action == ui.tile_colors for _, action in ui.actions))
+        ui.themes_page()
+        ui.move_theme_preview(-1)
+        self.assertEqual(ui.theme_preview.id, 'colorable')
+        original = ui.fb.last.copy()
+        color_action = next(action for _, action in ui.actions if action == ui.preview_colors)
+        color_action()
+        ui.set_tile_color('Blue')
+        ui.actions[0][1]()
+        self.assertEqual(ui.mode, 'theme_preview')
+        self.assertIsNotNone(ImageChops.difference(original, ui.fb.last).getbbox())
+        self.assertEqual(Preferences(ui.prefs.path).data['tile_color'], 'Red')
+        ui.actions[0][1]()
+        self.assertEqual(Preferences(ui.prefs.path).data['tile_color'], 'Red')
+        ui.themes_page()
+        ui.move_theme_preview(-1)
+        ui.preview_colors()
+        ui.custom_color()
+        ui.color_picker.set_rgb((136, 36, 190))
+        ui.save_custom_color()
+        self.assertEqual(ui.mode, 'preview_colors')
+        ui.actions[0][1]()
+        ui.select_theme()
+        self.assertTrue(any(action == ui.tile_colors for _, action in ui.actions))
+        saved = Preferences(ui.prefs.path).data
+        self.assertEqual((saved['layout_theme'], saved['tile_color'], saved['custom_color']),
+                         ('colorable', '#8824BE', '#8824BE'))
+
+    def test_drive_features_the_enabled_startup_app_and_keeps_home_order(self):
+        ui = self.ui
+        ui.prefs.set_default('android-auto')
+        original = ui.home_pages()
+        ui.themes_page()
+        ui.preview_theme('drive')
+        ui.select_theme()
+        ui.home()
+        with patch.object(ui, 'open_plugin') as open_plugin:
+            next(action for box, action in ui.actions if box == (24, 84, 696, 240))()
+            open_plugin.assert_called_once_with('android-auto')
+        self.assertEqual(ui.home_pages(), original)
+        ui.prefs.set_enabled(ui.manifests['android-auto'], False)
+        ui.home()
+        with patch.object(ui, 'open_plugin') as open_plugin:
+            next(action for box, action in ui.actions if box == (24, 84, 696, 240))()
+            open_plugin.assert_called_once_with('carplay')
+        ui.settings()
+        back = next(action for box, action in ui.actions if box == (24, 428, 128, 476))
+        back()
+        self.assertEqual(ui.mode, 'home')
+
+    def test_all_home_themes_swipe_to_apps_beyond_three_pages(self):
+        ui = self.ui
+        template = ui.manifests['carplay']
+        ui.manifests.clear()
+        ui.manifests.update({f'app-{i:02}': replace(template, id=f'app-{i:02}', name=f'App {i:02}')
+                             for i in range(44)})
+
+        def touch(action, x):
+            ui.update({'contacts': [dict(slot=0, action=action, has_position=action != 'up',
+                                         x_raw=round(x / 719 * 32767), y_raw=round(55 / 479 * 32767))]})
+
+        for theme_id in ('oem', 'touring', 'drive'):
+            with self.subTest(theme=theme_id), patch.object(ui, 'open_plugin') as opened:
+                ui.themes_page()
+                ui.preview_theme(theme_id)
+                ui.select_theme()
+                ui.page = 0
+                ui.home()
+                for expected in range(1, 8):
+                    touch('down', 600)
+                    touch('move', 200)
+                    touch('up', 200)
+                    ui.tick_home_slide(time.monotonic() + 1)
+                    self.assertEqual(ui.page, expected)
+                opened.assert_not_called()
+                ui.actions[0][1]()
+                opened.assert_called_once_with('app-42')
+
+    def test_home_page_delete_moves_apps_and_protects_required_pages(self):
+        from hlauncher.ui.home_edit import SETTINGS
+
+        ui = self.ui
+        editor = ui.home_editor
+        ui.prefs.set_home_pages([['carplay', SETTINGS, None, None, None, None],
+                                 ['android-auto', 'obd', None, None, None, None]])
+        ui.themes_page()
+        ui.preview_theme('drive')
+        ui.select_theme()
+        ui.home()
+        ui.change_page(1)
+        editor.begin_editing()
+        next(action for _, action in ui.actions if action == editor.confirm_delete_page)()
+        self.assertEqual(editor.dialog()[0], 'Delete Home page?')
+        ui.actions[0][1]()  # Cancel
+        self.assertEqual(len(ui.home_pages()), 2)
+        next(action for _, action in ui.actions if action == editor.confirm_delete_page)()
+        ui.actions[1][1]()  # Delete
+        self.assertEqual(Preferences(ui.prefs.path).data['home_pages'],
+                         [['carplay', SETTINGS, 'android-auto', 'obd', None, None]])
+        self.assertEqual(ui.page, 0)
+        self.assertFalse(any(action == editor.confirm_delete_page for _, action in ui.actions))
+        next(action for _, action in ui.actions if action == editor.add_page)()
+        editor.done()
+        self.assertEqual(ui.page, 1)
+        next(action for _, action in ui.actions if action == editor.begin_editing)()
+        next(action for _, action in ui.actions if action == editor.confirm_delete_page)()
+        ui.actions[1][1]()
+        self.assertEqual(len(ui.home_pages()), 1)
+
+        template = ui.manifests['carplay']
+        for i in range(4):
+            ui.manifests[f'extra-{i}'] = replace(template, id=f'extra-{i}', name=f'Extra {i}')
+        ui.draw()
+        next(action for _, action in ui.actions if action == editor.confirm_delete_page)()
+        self.assertEqual(editor.dialog()[0], 'Page is needed')
+        self.assertNotIn(editor.delete_page, [action for _, action in ui.actions])
+        ui.actions[0][1]()
+        self.assertEqual(len(ui.home_pages()), 2)
 
     def test_audio_returns_to_the_page_that_opened_it(self):
-        ui=self.ui;ui.settings();ui.audio_page();ui.actions[0][1]()
+        ui=self.ui;ui.settings()
+        next(action for _, action in ui.actions if action == ui.audio_coming_soon)()
+        self.assertEqual(ui.mode, 'audio_coming_soon')
+        self.assertEqual(len(ui.actions), 1)
+        ui.actions[0][1]()
+        self.assertEqual(ui.mode,'settings')
+        ui.audio_page();ui.actions[0][1]()
         self.assertEqual(ui.mode,'settings')
         ui.home();ui.audio_page();ui.actions[0][1]()
         self.assertEqual(ui.mode,'home')

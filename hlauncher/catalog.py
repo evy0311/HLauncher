@@ -7,12 +7,13 @@ import re
 from .config import ROOT
 
 API_VERSION = 1
-RESERVED_IDS = frozenset(('carplay', 'android-auto', 'obd'))
+RESERVED_IDS = frozenset(('carplay', 'android-auto', 'obd', 'vehicle'))
 PLUGIN_ID = re.compile(r"[a-z][a-z0-9_-]{0,47}")
 PERMISSIONS = frozenset(('camera', 'network'))
-EXTERNAL_CAPABILITIES = frozenset(('display', 'touch', 'session', 'audio.playback', 'media.publish'))
+PARKING_CAPABILITY = 'vehicle.parking'
+EXTERNAL_CAPABILITIES = frozenset(('display', 'touch', 'session', 'audio.playback', 'media.publish', PARKING_CAPABILITY))
 
-CAPABILITIES = {"display", "touch", "session", "audio.status", "audio.capture", "audio.playback", "media.publish", "input.buttons", "projection.voice"}
+CAPABILITIES = {"display", "touch", "session", "audio.status", "audio.capture", "audio.playback", "media.publish", "input.buttons", "projection.voice", PARKING_CAPABILITY}
 
 
 @dataclass
@@ -38,6 +39,7 @@ class Manifest:
     blocked: str = ""
     enabled: bool = False
     data_path: Path | None = None
+    requires_parked: bool = False
 
     @classmethod
     def load(cls, folder, bundled=False, *, allow_incompatible=False):
@@ -82,6 +84,11 @@ class Manifest:
             isinstance(c, str) and c in CAPABILITIES for c in caps
         ):
             raise ValueError("unknown plugin capability")
+        requires_parked = data.get("requires_parked", False)
+        if type(requires_parked) is not bool:
+            raise ValueError("requires_parked must be a boolean")
+        if requires_parked and PARKING_CAPABILITY not in caps:
+            raise ValueError("requires_parked needs the vehicle.parking capability")
         color = data.get("color", "#18416e")
         if not isinstance(color, str) or not re.fullmatch(r"#[0-9a-fA-F]{6}", color):
             raise ValueError("invalid tile color")
@@ -108,7 +115,7 @@ class Manifest:
             data.get("default_enabled") is True,
             data.get("keep_alive") is True,
             color, api_version=api, version=version, icon=icon,
-            permissions=frozenset(permissions), blocked=blocked,
+            permissions=frozenset(permissions), blocked=blocked, requires_parked=requires_parked,
         )
 
 

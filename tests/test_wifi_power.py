@@ -63,16 +63,23 @@ class WifiPowerTests(unittest.TestCase):
     def test_maintenance_saves_mode_and_separate_boot_delay(self):
         maintenance = Maintenance(SetupState(self.folder), self.run_command)
         settings = self.folder/'settings.json'
-        self.assertEqual(Preferences(settings).data['wifi_power'], 'on')
-        maintenance.perform({'operation': 'wifi_power', 'mode': 'off'})
-        self.assertEqual(self.calls[-1], ['nmcli', 'radio', 'wifi', 'off'])
-        maintenance.perform({'operation': 'wifi_boot', 'enabled': True})
-        prefs = Preferences(settings)
-        self.assertTrue(prefs.data['wifi_delay_boot'])
-        self.assertEqual(prefs.data['wifi_power'], 'off')
+        prefs = Preferences(settings).data
+        self.assertEqual(prefs['wifi_power'], 'off')
+        self.assertTrue(prefs['wifi_delay_boot'])
+        self.assertEqual(self.power.tick(prefs['wifi_power']), 'off')
+        self.assertEqual(self.calls, [['nmcli', 'radio', 'wifi', 'off']])
+        maintenance.perform({'operation': 'wifi_boot', 'enabled': False})
+        self.assertEqual(Preferences(settings).data['wifi_power'], 'off')
         maintenance.perform({'operation': 'wifi_power', 'mode': 'sleep'})
-        self.assertTrue(Preferences(settings).data['wifi_delay_boot'])
+        self.assertFalse(Preferences(settings).data['wifi_delay_boot'])
         self.assertEqual(Preferences(settings).data['wifi_power'], 'sleep')
+
+    def test_legacy_preferences_keep_wifi_enabled(self):
+        settings = self.folder/'settings.json'
+        settings.write_text('{"enabled": {}}')
+        prefs = Preferences(settings).data
+        self.assertEqual(prefs['wifi_power'], 'on')
+        self.assertFalse(prefs['wifi_delay_boot'])
 
     def test_boot_hold_only_blocks_before_networkmanager(self):
         marker = self.folder/'boot-hold'

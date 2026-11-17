@@ -2,9 +2,73 @@
 import time
 from ..buttons import LABELS
 from ..diagnostics import power_status
+from ..protocol_diagnostics import SETUP_BRAKE_MAX_AGE, SPEED_MAX_AGE
 from .pages import page_for
-from .controls import present
+from .controls import Page, present
 from .scroll_list import Row,draw as draw_rows
+
+
+def menu(ui):
+    p = page_for(ui, 'Diagnostics', ui.settings)
+    p.bar((24, 128, 696, 184), 'Parking Status', ui.open_parking_status)
+    present(ui, p)
+
+
+PARKING_LABELS = {
+    152: ('Vehicle speed', None),
+    80: ('CAN parking brake', ('Released', 'Engaged')),
+    78: ('Parking brake lamp', ('Off', 'On')),
+    79: ('Parking brake reminder', ('Off', 'On')),
+    100: ('Transmission Park', ('Inactive', 'Active')),
+    99: ('Transmission Neutral', ('Inactive', 'Active')),
+    101: ('Transmission Reverse', ('Inactive', 'Active')),
+    95: ('Transmission Drive', ('Inactive', 'Active')),
+}
+
+
+def parking_status(ui):
+    p = Page('Parking Status', None, ui.prefs.data['tile_color'], (ui.fb.w, ui.fb.h),
+             ui.pressed_box, show_clock=ui.prefs.data['show_clock'])
+    p.button((632, 62, 696, 108), '×', ui.close_parking_status, secondary=True)
+    data = ui.protocols.parking_snapshot()
+    link = 'Connected' if data['connected'] else 'Disconnected'
+    gate = 'Parked confirmed' if data['parked'] else 'Parked unconfirmed'
+    p.text((24, 113), f'HondaLink: {link}  ·  {gate}', 16, fill='#efedf6')
+    if data['brake_only']:
+        p.text((696, 115), 'Using parking brake only', 13, anchor='rt')
+
+    def row(index, label, identifier, source, value, age, raw, max_age=SPEED_MAX_AGE):
+        y = 144 + index * 36
+        p.text((24, y + 5), label, 16, fill='#efedf6')
+        p.text((228, y), identifier, 14)
+        p.text((228, y + 16), p.fit(source, 296, 12), 12, fill='#93929e')
+        if age is None:
+            reading = 'No data'
+        elif not 0 <= age < max_age:
+            reading = f'{value} · Stale'
+        else:
+            reading = f'{value} · {age:.1f}s'
+        p.text((696, y), reading, 15, anchor='rt', fill='#efedf6')
+        if raw:
+            p.text((696, y + 16), raw, 12, anchor='rt', fill='#93929e')
+        p.draw.line((24, y + 33, 696, y + 33), fill='#39333f')
+
+    signals = {signal['api_id']: signal for signal in data['can_signals']}
+    for index, (api_id, (label, states)) in enumerate(PARKING_LABELS.items()):
+        signal = signals[api_id]
+        sources = [signal['source']] if signal['received'] else signal['sources']
+        source = ' / '.join(f"{s['signal']} 0x{int(s['message_id_hex'], 16):X}"
+                            for s in sources)
+        value = signal['value']
+        if value is not None:
+            value = f'{value:g} km/h' if states is None else states[value]
+        row(index if index == 0 else index + 1, label, f"{signal['name']} · {api_id}",
+            source, value, signal.get('age_seconds'), signal.get('data'))
+    brake = 'Engaged' if data['radio_brake'] else 'Released'
+    flags = data['radio_flags']
+    row(1, 'Radio parking brake', 'General 0x61 / 0x10', 'Status byte bit 4 (0x10)',
+        brake, data['radio_age'], f'0x{flags:02X}' if flags is not None else None, SETUP_BRAKE_MAX_AGE)
+    present(ui, p)
 
 
 def system(ui):

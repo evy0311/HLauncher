@@ -1,0 +1,81 @@
+name: Hardware compatibility report
+description: Share what worked on your car and Raspberry Pi or other ARM board.
+title: "[Compatibility]: "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Working, partly working, and unsuccessful setups are all helpful.
+        Include the car and board models in the issue title. Reports are public.
+        Remove VINs, passwords, Bluetooth addresses, and personal data from
+        anything you post.
+
+  - type: input
+    id: vehicle
+    attributes:
+      label: Vehicle make, model, and year
+      placeholder: "Example: 2014 Honda Civic EX"
+    validations:
+      required: true
+
+  - type: input
+    id: radio
+    attributes:
+      label: Radio or head unit
+      description: Include the model or part number if known, and whether it is factory or aftermarket.
+      placeholder: "Example: Factory HDMI-equipped HondaLink radio"
+    validations:
+      required: true
+
+  - type: input
+    id: board
+    attributes:
+      label: Raspberry Pi or other ARM board
+      description: Include the exact board model, RAM, and any relevant specs or accessories.
+      placeholder: "Example: Raspberry Pi 4 Model B, 4 GB RAM, microSD, USB Bluetooth adapter"
+    validations:
+      required: true
+
+  - type: input
+    id: os
+    attributes:
+      label: Operating system and architecture
+      placeholder: "Example: Raspberry Pi OS Lite Bookworm, 64-bit"
+    validations:
+      required: true
+
+  - type: input
+    id: hlauncher-version
+    attributes:
+      label: HLauncher version and install method
+      description: Give the release or commit and say whether you flashed an image or installed from source.
+    validations:
+      required: true
+
+  - type: dropdown
+    id: result
+    attributes:
+      label: Overall result
+      options:
+        - Worked for what I tested
+        - Partly worked
+        - Could not get it working
+    validations:
+      required: true
+
+  - type: textarea
+    id: results
+    attributes:
+      label: What did you test?
+      description: |
+        Describe what worked, what failed, and what you skipped. Include HDMI
+        video, Bluetooth pairing, touch, audio, and any plugins you tried.
+        For plugin tests, include the phone, dongle, or other accessory if relevant.
+    validations:
+      required: true
+
+  - type: textarea
+    id: notes
+    attributes:
+      label: Workarounds, steps, or logs
+      description: Share any setup changes, steps to reproduce failures, or relevant logs with personal data removed.

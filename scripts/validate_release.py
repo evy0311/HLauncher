@@ -16,8 +16,8 @@ def assets(version):
     updater.version(version)
     return [f'HLauncher-{version}-pi4.img.xz',f'HLauncher-{version}-pi4-arm64.tar.xz',
             f'HLauncher-{version}-local-update.hlu',f'HLauncher-{version}-sources.tar.xz',
-            'hlauncher-release.json','hlauncher-release.sig','release.pub','os-packages.txt',
-            'RELEASE-NOTES.md','SHA256SUMS','SHA256SUMS.sig']
+            'hlauncher-release.json','hlauncher-release.sig','release.pub',
+            'SHA256SUMS','SHA256SUMS.sig']
 
 
 def validate(folder, version):
@@ -31,6 +31,7 @@ def validate(folder, version):
     if item.get('local_test') is not False:
         raise ValueError('Publish a production image without developer SSH access')
     if item.get('version')!=version:raise ValueError('Release version mismatch')
+    if item.get('channel', 'stable') not in ('stable', 'beta'):raise ValueError('Invalid release channel')
     if not re.fullmatch('[0-9a-f]{64}',str(item.get('system_contract',''))):
         raise ValueError('Missing system compatibility contract')
     if not re.fullmatch('[0-9a-f]{40}',str(item.get('commit',''))):

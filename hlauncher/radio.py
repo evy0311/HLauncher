@@ -37,7 +37,7 @@ def main():
     from hlauncher.touch import decode_touch
     from hlauncher.bootstrap import BootstrapLauncher
     from hlauncher.audio_process import MixerExited
-    from hlauncher.config import RUNTIME_DIR
+    from hlauncher.config import RUNTIME_DIR, STATE_DIR
     from hlauncher.setup_state import SetupState, atomic_json, address
     from hlauncher.event_log import EventLog
     import dbus, dbus.service, dbus.mainloop.glib
@@ -46,7 +46,7 @@ def main():
     p = argparse.ArgumentParser()
     p.add_argument("--seconds", type=int, default=900)
     a = p.parse_args()
-    protocols = ProtocolDiagnostics()
+    protocols = ProtocolDiagnostics(vehicle_path=STATE_DIR/'vehicle-last-known.json')
     event = EventLog(protocols)
     state = SetupState()
     launcher = BootstrapLauncher(event, protocols, state)

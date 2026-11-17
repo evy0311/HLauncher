@@ -10,10 +10,23 @@ validated system migration.
 
 ## User operation
 
-Settings → System → Software updates offers **Check for updates**, **Restart and
-install VERSION**, and **Restore version VERSION** when a previous installation
-exists. Checks use stable releases from `evy0311/HLauncher`. They do not poll
-GitHub in the background or install updates automatically. Connect Wi-Fi first.
+Settings → System → Software updates offers **Check for updates**, installation,
+and **Restore version VERSION** when a previous installation exists. Stable
+releases from `evy0311/HLauncher` are the default. Check **Include beta builds**
+to include GitHub prereleases from `develop` in the next check. If both channels
+have an update, the page offers both. Connect Wi-Fi first.
+
+On a beta, **Check for updates** can also offer **Return to stable** if the
+latest stable is older than the installed beta and compatible with the image.
+Returning to stable keeps saved settings and plugins and retains the beta as
+the previous installed version. The checkbox controls discovery of newer
+betas. A check is manual and installation requires confirmation.
+
+An older update-enabled image needs one signed update that includes the beta
+checkbox. Install the first compatible beta with its local `.hlu` file through
+the recovery page, or install a newer stable release that includes the checkbox
+through the normal stable update check. The existing on-image updater verifies
+the first install and its boot recovery works with either channel.
 **Release notes** opens the notes from that GitHub release before installing.
 Long notes have Previous/Next pages; Markdown is simplified to display text,
 without executing HTML, loading images or opening external content.
@@ -77,14 +90,15 @@ sudo bash scripts/build_release.sh 0.2.0 /images/bookworm-arm64-lite.img US \
   /secure/location/hlauncher-release.pem /releases/hlauncher-0.2.0 /releases/notes-0.2.0.md
 ```
 
-The script builds native/Node dependencies once inside the image, then creates:
+The script builds native/Node dependencies once inside the image, then creates
+the release assets:
 
 - `HLauncher-0.2.0-pi4.img.xz`: flashable fresh-install image.
 - `HLauncher-0.2.0-pi4-arm64.tar.xz`: full application and native runtime bundle.
 - `HLauncher-0.2.0-local-update.hlu`: signed container for local network upload.
 - `hlauncher-release.json` and `.sig`: signed compatibility/checksum metadata.
 - `HLauncher-0.2.0-sources.tar.xz`: project and fetched external sources.
-- `release.pub`, `os-packages.txt`, `SHA256SUMS`, `SHA256SUMS.sig`, and `RELEASE-NOTES.md`.
+- `release.pub`, `SHA256SUMS` and `SHA256SUMS.sig` for verifying signatures and downloads.
 
 The image is seeded with the same application files/version/manifest as the
 update bundle. The writable partition defaults to 4096 MiB; override
@@ -94,9 +108,9 @@ Unsigned direct `build_image.sh` development builds do not get update trust/layo
 The country argument remains build-time configuration in this version.
 
 Keep release notes short: changes since the previous release, plus essential
-installation or compatibility information. Supply that notes file to the build;
-it is copied into the release and covered by SHA256SUMS. Leave test reports and
-build details out of the release notes.
+installation or compatibility information. Supply the notes file to the build.
+The publisher uses the build directory’s copy as the GitHub release description.
+Leave test reports and build details out of the release notes.
 
 Every future release must include both a production fresh-install image and all
 signed updater files. `scripts/validate_release.py` blocks incomplete releases,
@@ -113,9 +127,19 @@ all artifacts as a GitHub **draft** using authenticated GitHub CLI:
 bash scripts/publish_release.sh 0.2.0 /releases/hlauncher-0.2.0
 ```
 
-Publish that draft on GitHub after testing. Drafts/prereleases are not offered by
-the updater. The release tag, signed manifest version and artifact names must
-match. GitHub source archives alone are not installed as updates.
+Publish that draft on GitHub after testing. Use the same build and upload
+process for a beta, with `--beta` before the version when running
+`scripts/build_release.sh`. Build from a commit on `develop` and use a unique
+numeric version newer than the latest stable. The beta channel is part of the
+signed manifest. The publisher marks the draft as a GitHub prerelease and
+checks that its source commit is on the pushed `develop` branch. Beta assets
+include the same image, source, manual update and signatures as stable assets.
+Choose a new numeric version for each release, including stable releases.
+
+The updater checks the signed channel against GitHub's prerelease flag and
+offers published releases only. The release tag, signed manifest version
+and artifact names must match. GitHub source archives alone are not installed
+as updates.
 
 ## Validation before distribution
 
@@ -132,7 +156,7 @@ power-loss hardware acceptance are required in addition to the local tests.
 ## Local update testing without GitHub
 
 Open Settings → System → Software updates → Install local update file, or open
-Settings → System → Wi-Fi & pairing. Connect your computer to the Pi's network and visit its recovery
+Settings → System → Wi-Fi. Connect your computer to the Pi's network and visit its recovery
 page (`http://PI_ADDRESS:8080`, or `http://192.168.4.1:8080` on its hotspot).
 Sign in as `hlauncher` with the device’s setup password on the setup hotspot or a trusted local network. Choose a `.hlu` file
 under Local update and install it. The file is streamed to disk, checked with the

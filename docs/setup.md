@@ -55,7 +55,7 @@ sudo systemctl enable --now hlauncher-grow hlauncher-firstboot hlauncher-pairing
 
 On the radio, open **Settings → Phone → Connect a phone → Add Bluetooth device** and select **HLauncher** during the five-minute pairing window. Confirm on the radio, then open HLauncher through HondaLink to complete setup. The Pi accepts a qualifying first candidate and saves its address only after a successful HondaLink handshake. Subsequent connections are limited to that saved radio. Do not run a competing `bluetoothctl` default agent during enrollment.
 
-A previously paired, valid `HLAUNCHER_RADIO_ADDRESS` in `/etc/hlauncher.env` is adopted once for migration. New installations can leave it all zeroes. Use Settings → System → Wi-Fi & pairing to reopen pairing or use the local setup page if automatic identification fails.
+A previously paired, valid `HLAUNCHER_RADIO_ADDRESS` in `/etc/hlauncher.env` is adopted once for migration. New installations can leave it all zeroes. Open the local setup page through Settings → System → Wi-Fi to reopen pairing if automatic identification fails.
 
 ## HDMI
 
@@ -110,15 +110,16 @@ Settings is built into the launcher. **Settings → Plugins** lists installed pl
 and lets you enable or disable each one. **Settings → Startup → Start with** cycles
 between Home and the enabled plugins. Changes are saved in `/var/lib/hlauncher/settings.json`. Disabling a bundled startup plugin resets the selection to Home. Returning with CarPlay's Honda icon always goes to the launcher, even when CarPlay is the default.
 
-**Settings → System → Wi-Fi power** offers **On**, **Off**, and **Sleep after 3
+**Settings → System → Wi-Fi → Wi-Fi power** offers **On**, **Off**, and **Sleep after 3
 minutes**. Sleep turns off the Pi's Wi-Fi radio after three minutes of inactivity
 and waits for you to select Sleep or On again, start the setup hotspot, or reboot.
-Active Wi-Fi TCP connections and HLauncher updates postpone sleep. **Delay Wi-Fi
-at boot** holds Wi-Fi off until the launcher service is ready, with a startup
-timeout for recovery access. On is the default, with the boot delay disabled.
+Active Wi-Fi TCP connections and HLauncher updates postpone sleep. On a fresh
+install the power mode and **Wi-Fi during boot** both default to **Off**. If you
+choose **On** or **Sleep**, leaving **Wi-Fi during boot** off holds Wi-Fi until
+the launcher service is ready or the startup timeout expires.
 
 CarPlay, Android Auto and OBD Gauges are bundled. The gauges use HondaLink
-data. The OBD adapter tools separately support compatible BLE ELM327 devices.
+data from the factory radio.
 For a source install, build the Android Auto engine with
 `sudo bash scripts/install_android_auto.sh`, then connect an Android phone
 directly to the Pi USB port. Android Auto bridges radio microphone capture, and

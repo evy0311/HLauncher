@@ -14,7 +14,7 @@ from .catalog import discover
 from .config import Preferences
 from .colors import PictureSettings, DEFAULTS, LIMITS
 from .display import Framebuffer
-from .plugin_host import PluginHost
+from .plugin_host import PluginHost, PluginParkingRequired
 from .projection import PROJECTIONS
 from .touch import pixels, for_viewport
 
@@ -33,6 +33,9 @@ class Launcher:
         self.fb = framebuffer or Framebuffer(event)
         self.fb.open()
         self.prefs = preferences or Preferences()
+        from .themes import Themes
+        self.themes = Themes(self.prefs.path.parent)
+        self.theme_menu_pages = {}
         self.audio_settings = AudioSettings(self.prefs.path.with_name('audio.json'))
         self.audio_notice = ''
         self.audio_checked = 0
@@ -80,7 +83,9 @@ class Launcher:
         )
         self.diagnostics = Diagnostics()
         from .protocol_diagnostics import ProtocolDiagnostics
-        self.protocols = protocol_diagnostics or ProtocolDiagnostics(self.prefs.path.parent/'protocol-captures')
+        self.protocols = protocol_diagnostics or ProtocolDiagnostics(
+            self.prefs.path.parent/'protocol-captures', vehicle_path=self.prefs.path.parent/'vehicle-last-known.json')
+        self.host.parking_state = self.protocols.plugin_parking_state
         self.host.projection_night_mode = self.projection_night_mode
         self.protocol_page = 0
         self.integration_tab = 'Display'
@@ -103,6 +108,10 @@ class Launcher:
         self.setup_list_page = 0
         self.mode = "home" if self.prefs.safety_notice_accepted else "safety_notice"
         self.parked_screen_locked = False
+        self.parked_page_visible = False
+        self.parked_overlay_at = None
+        self.parked_title_pressed_at = self.parked_title_tapped_at = None
+        self.parking_redraw = 0
         self.page = 0
         self.settings_page = 0
         self.actions = []
@@ -185,6 +194,59 @@ class Launcher:
         self.banner=''
         self.draw()
 
+    @property
+    def layout_theme(self):
+        return self.themes.get(self.prefs.data['layout_theme'])
+
+    def themes_page(self):
+        self.themes.reload()
+        self.theme_preview_screen = 'home'
+        self.preview_theme(self.layout_theme.id)
+
+    def move_theme_preview(self, direction):
+        choices = tuple(self.themes.choices)
+        index = choices.index(self.theme_preview.id)
+        self.preview_theme(choices[(index + direction) % len(choices)])
+
+    def set_theme_preview_screen(self, screen):
+        self.theme_preview_screen = screen
+        self.press = self.pressed_box = None
+        self.draw()
+
+    def preview_theme(self, identifier):
+        self.theme_preview = self.themes.get(identifier)
+        self.theme_preview_color = None
+        self.resume_theme_preview()
+
+    def resume_theme_preview(self):
+        self.mode = 'theme_preview'
+        self.press = self.pressed_box = None
+        self.banner = ''
+        self.draw()
+
+    def preview_colors(self):
+        if self.theme_preview.supports_color_selection:
+            self.mode = 'preview_colors'
+            self.press = self.pressed_box = None
+            self.banner = ''
+            self.draw()
+
+    def select_theme(self):
+        changes = {'layout_theme': self.theme_preview.id}
+        if self.theme_preview.supports_color_selection and self.theme_preview_color is not None:
+            changes.update(config.tile_color_values(self.theme_preview_color))
+        previous = {key: self.prefs.data[key] for key in changes}
+        self.prefs.data.update(changes)
+        try:
+            self.prefs.save(force=changes)
+        except OSError:
+            self.prefs.data.update(previous)
+            self.banner = 'Could not save the theme'
+            self.draw()
+            return
+        self.theme_menu_pages.clear()
+        self.appearance_settings()
+
     def startup_settings(self):
         self.host.deactivate()
         self.mode='startup_settings'
@@ -212,9 +274,23 @@ class Launcher:
         self.press = None
         self.draw()
 
-    def install_update(self):
+    def toggle_beta_updates(self):
+        previous = self.prefs.data['include_beta_updates']
+        self.prefs.data['include_beta_updates'] = not previous
+        try:
+            self.prefs.save(force={'include_beta_updates'})
+            self.banner = ''
+        except OSError:
+            self.prefs.data['include_beta_updates'] = previous
+            self.banner = 'Could not save the beta preference'
+        self.draw()
+
+    def install_update(self, target=None):
         from .update_client import offered_plugin_api, status
-        self.confirm_update_version = status(self.prefs.path.parent).get('available')
+        offer = status(self.prefs.path.parent)
+        self.confirm_update_version = target or offer.get('available')
+        self.confirm_stable_return = (offer.get('stable_return') is True
+                                      and self.confirm_update_version == offer.get('stable_available'))
         api = offered_plugin_api(self.confirm_update_version)
         self.update_incompatible_plugins = [
             manifest.name for manifest in self.manifests.values()
@@ -228,19 +304,23 @@ class Launcher:
         from .update_client import status
         offer = status(self.prefs.path.parent)
         self.updates_page()
-        if not self.confirm_update_version or self.confirm_update_version != offer.get('available'):
+        if not self.confirm_update_version or self.confirm_update_version not in (
+                offer.get('available'), offer.get('stable_available')):
             self.banner = 'The update offer changed. Check for updates again.'
             self.draw()
             return
-        self.update_request('install')
+        self.update_request('install', self.confirm_update_version if offer.get('available_channel') else None)
 
-    def update_request(self, operation):
-        from .update_client import request
+    def update_request(self, operation, target=None):
+        from .update_client import request, request_channel
         try:
-            request(operation,self.prefs.path.parent)
+            if operation == 'check' or target is not None:
+                request_channel(operation, target)
+            else:
+                request(operation,self.prefs.path.parent)
             self.banner = 'Requested'
         except FileExistsError:self.banner = 'An update operation is already queued'
-        except (OSError,ValueError):self.banner = 'Could not request the update operation'
+        except (OSError,ValueError,subprocess.TimeoutExpired):self.banner = 'Could not request the update operation'
         self.draw()
 
     def toggle_clock(self):
@@ -311,7 +391,7 @@ class Launcher:
         self.draw()
 
     def ssh_settings(self):
-        self.ssh_return=self.hotspot_page if self.mode=='hotspot_settings' else self.recovery_page
+        self.ssh_return=self.hotspot_page if self.mode=='hotspot_settings' else self.network_resume
         self.host.deactivate()
         self.mode='ssh_settings';self.press=None;self.banner='';self.draw()
 
@@ -481,6 +561,11 @@ class Launcher:
         self.press = None
         self.draw()
 
+    def audio_coming_soon(self):
+        self.mode = 'audio_coming_soon'
+        self.press = None
+        self.draw()
+
     def safety_agreement(self):
         getattr(self, 'list_offsets', {}).pop('safety_agreement', None)
         self.mode = 'safety_agreement'
@@ -527,8 +612,23 @@ class Launcher:
             return
         self.host.deactivate()
         self.mode='plugin_detail'
+        self.vehicle_field_group = None
         self.press=None
         self.banner=''
+        self.draw()
+
+    def vehicle_fields_page(self, group):
+        self.vehicle_field_group = group
+        self.press = None
+        self.banner = ''
+        self.draw()
+
+    def toggle_vehicle_field(self, key):
+        try:
+            self.prefs.toggle_vehicle_field(key)
+            self.banner = ''
+        except OSError:
+            self.banner = 'Could not save Vehicle settings'
         self.draw()
 
     def adapter_branding_page(self):
@@ -602,6 +702,23 @@ class Launcher:
         self.diagnostic_page = 0
         self.diagnostic_revision = -1
         self.diagnostics.start()
+        self.draw()
+
+    def diagnostics_menu(self):
+        self.diagnostics.stop()
+        self.mode = 'diagnostics_menu'
+        self.press = self.pressed_box = None
+        self.draw()
+
+    def open_parking_status(self):
+        self.parking_status_return_mode = self.mode
+        self.mode = 'parking_status'
+        self.press = self.pressed_box = None
+        self.draw()
+
+    def close_parking_status(self):
+        self.mode = self.parking_status_return_mode
+        self.parked_title_pressed_at = self.parked_title_tapped_at = None
         self.draw()
 
     def debug_tools(self, page='menu'):
@@ -730,6 +847,8 @@ class Launcher:
         self.draw()
 
     def tile_colors(self):
+        if not self.layout_theme.supports_color_selection:
+            return
         self.host.deactivate()
         self.mode = 'tile_colors'
         self.press = None
@@ -738,8 +857,13 @@ class Launcher:
 
     def custom_color(self):
         from .ui.color_picker import Picker
-        self.custom_color_return=self.setup_resume if self.mode=='onboarding' else self.tile_colors
-        self.color_picker=Picker(self.prefs.data['custom_color'])
+        if self.mode == 'preview_colors':
+            self.custom_color_return = self.preview_colors
+            staged = self.theme_preview_color
+        else:
+            self.custom_color_return = self.setup_resume if self.mode == 'onboarding' else self.tile_colors
+            staged = None
+        self.color_picker = Picker(staged if staged and staged.startswith('#') else self.prefs.data['custom_color'])
         self.host.deactivate()
         self.mode='custom_color'
         self.press=self.pressed_box=None
@@ -750,6 +874,10 @@ class Launcher:
         self.custom_color_return()
 
     def save_custom_color(self):
+        if self.custom_color_return == self.preview_colors:
+            self.theme_preview_color = self.color_picker.hex
+            self.preview_colors()
+            return
         try:self.prefs.set_tile_color(self.color_picker.hex)
         except (OSError,ValueError):
             self.banner='Could not save custom color'
@@ -762,6 +890,10 @@ class Launcher:
         self.draw()
 
     def set_tile_color(self, name):
+        if self.mode == 'preview_colors':
+            self.theme_preview_color = name
+            self.draw()
+            return
         try:
             self.prefs.set_tile_color(name)
             self.banner = ''
@@ -923,6 +1055,8 @@ class Launcher:
             self.last_status = None
             self.host.activate(plugin_id)
             self.draw()
+        except PluginParkingRequired as exc:
+            self.home(str(exc))
         except (OSError, ValueError) as exc:
             self.event(state="plugin_launch_failed", plugin=plugin_id, error=str(exc))
             self.home(str(exc)[:120] if self.manifests[plugin_id].revision and isinstance(exc, ValueError)
@@ -973,30 +1107,48 @@ class Launcher:
     def parked_only_screen(self):
         if self.mode == 'home':
             return self.home_editor.editing
-        return self.mode not in ('plugin', 'obd_coming_soon', 'shutdown_pending')
+        return self.mode not in ('plugin', 'obd_coming_soon', 'shutdown_pending', 'parking_status')
 
     def sync_parked_screen(self):
         locked = self.parked_only_screen and not self.protocols.parked_for_setup()
         if locked == self.parked_screen_locked:
             return False
         self.parked_screen_locked = locked
+        self.parked_title_pressed_at = self.parked_title_tapped_at = None
         self.press = self.pressed_box = self.last_xy = None
         self.picture_drag = None
         self.list_drag = None
         self.home_editor.gesture = None
         if self.mode == 'custom_color':
             self.color_picker.drag = None
+        self.parked_overlay_at = None
         if locked:
             self.tone_test.stop()
+            # Cancel input immediately, but leave the current page visible during a brief
+            # telemetry gap. Movement, brake release or disconnect shows the overlay at once.
+            if self.parked_page_visible and self.protocols.parked_setup_refresh_pending():
+                self.parked_overlay_at = time.monotonic() + 1
         return True
+
+    def parked_overlay_due(self):
+        return self.parked_overlay_at is not None and (
+            time.monotonic() >= self.parked_overlay_at
+            or not self.protocols.parked_setup_refresh_pending()
+        )
 
     def draw(self):
         self.scroll_view=None
         self.sync_parked_screen()
         if self.parked_screen_locked:
+            if self.parked_overlay_at is not None and not self.parked_overlay_due():
+                self.actions = []
+                return
+            self.parked_overlay_at = None
+            self.parked_page_visible = False
             from .ui.pages import parked_only
             parked_only(self)
             return
+        self.parked_page_visible = self.parked_only_screen
         if self.mode == "safety_notice":
             from .ui.onboarding import draw_safety_notice
             draw_safety_notice(self)
@@ -1038,6 +1190,8 @@ class Launcher:
             from .ui.color_picker import draw_launcher
             draw_launcher(self)
         elif self.mode in pages.PAGES:pages.PAGES[self.mode](self)
+        elif self.mode=='diagnostics_menu':diagnostics.menu(self)
+        elif self.mode=='parking_status':diagnostics.parking_status(self)
         elif self.mode=='diagnostics':diagnostics.system(self)
         elif self.mode=='protocol_tests':diagnostics.protocols(self)
         elif self.mode.startswith('debug_'):diagnostics.hardware(self)
@@ -1080,15 +1234,16 @@ class Launcher:
             self.home_slide = 0.0
             self.home_settle = None
             return False
+        count = len(self.home_pages())
         if action == 'down':
-            self.home_swipe = point if len(self.home_pages()) > 1 else None
+            self.home_swipe = point if count > 1 else None
         elif self.home_swipe and action in ('move', 'up', 'unused'):
             end = point or self.last_xy or self.home_swipe
             dx = (end[0] - self.home_swipe[0]) / self.fb.w
             dy = (end[1] - self.home_swipe[1]) / self.fb.h
             horizontal = abs(dx) >= .025 and abs(dx) >= 1.5 * abs(dy)
             target = self.page + (1 if dx < 0 else -1)
-            available = 0 <= target < len(self.home_pages())
+            available = 0 <= target < count
             if action == 'move' and (horizontal or self.home_slide):
                 self.press = self.pressed_box = None
                 self.home_slide = dx if available else dx * .25
@@ -1126,7 +1281,7 @@ class Launcher:
         self.draw()
 
     def update(self, touch):
-        if self.sync_parked_screen():
+        if self.sync_parked_screen() or self.parked_overlay_due():
             self.draw()
         touch = for_viewport(touch, self.fb.w, self.fb.h)
         primary = touch.get("contacts", [])
@@ -1135,7 +1290,12 @@ class Launcher:
         if point:
             self.last_xy = point
         action = primary["action"]
+        if self.mode == 'parking_status':
+            self.update_buttons(action, point)
+            return
         if self.parked_screen_locked:
+            if self.parked_overlay_at is None and self.parked_title_touch(action, point):
+                return
             self.update_buttons(action, point)
             return
         if self.mode == 'home' and self.home_settle is not None:
@@ -1182,6 +1342,33 @@ class Launcher:
         if not self.update_buttons(action, point) and self.mode == "plugin":
             self.host.touch(touch)
 
+    def parked_title_touch(self, action, point):
+        from .ui.chrome import scale_bounds
+        from .ui.pages import PARKED_TITLE_BOUNDS
+
+        left, top, right, bottom = scale_bounds(PARKED_TITLE_BOUNDS, (self.fb.w, self.fb.h))
+        inside = point is not None and left <= point[0] <= right and top <= point[1] <= bottom
+        now = time.monotonic()
+        if action == 'down':
+            self.parked_title_pressed_at = now if inside else None
+            if not inside:
+                self.parked_title_tapped_at = None
+            return inside
+        pressed_at = self.parked_title_pressed_at
+        if pressed_at is None:
+            return False
+        if action == 'move' and (point is None or inside):
+            return True
+        self.parked_title_pressed_at = None
+        previous_tap = self.parked_title_tapped_at
+        self.parked_title_tapped_at = None
+        if action == 'up' and (point is None or inside) and now - pressed_at <= .35:
+            if previous_tap is not None and pressed_at - previous_tap <= .6:
+                self.open_parking_status()
+            else:
+                self.parked_title_tapped_at = now
+        return True
+
     def update_buttons(self, action, point):
         if action == "down":
             self.press = point
@@ -1212,7 +1399,7 @@ class Launcher:
             self.inputs.control_epochs['hondalink-iap'] += 1
         if values.get("connected") is False:
             self.press = self.pressed_box = None
-            if self.host.active not in PROJECTIONS and not self.pending_default:
+            if self.mode != 'parking_status' and self.host.active not in PROJECTIONS and not self.pending_default:
                 self.home()
 
     def tick(self):
@@ -1222,7 +1409,7 @@ class Launcher:
                 self.plugin_checked = time.monotonic()
                 self.refresh_plugins()
         now = time.monotonic()
-        if self.sync_parked_screen():
+        if self.sync_parked_screen() or self.parked_overlay_due():
             self.draw()
         if not self.parked_screen_locked:
             self.home_editor.tick(now)
@@ -1270,6 +1457,17 @@ class Launcher:
                                           if getattr(carplay, 'car_gps', False) else None)
             if 'android-auto' in self.host.workers:
                 self.host.sync_projection_vehicle(self.protocols.projection_vehicle_state())
+        if self.host.active == 'vehicle' and now-getattr(self, 'vehicle_dashboard_sent', 0) >= .25:
+            from .ui.theme_menu import resolved_colors
+
+            self.vehicle_dashboard_sent = now
+            theme = self.layout_theme
+            layout = theme.layouts.get('vehicle', 'menu')
+            color = self.prefs.data['tile_color']
+            oem_color = color if theme.id == 'oem' else None
+            colors = resolved_colors(theme, layout, color) if theme.colors else {}
+            self.host.vehicle_dashboard(*self.protocols.vehicle_plugin_snapshot(now), colors,
+                                        layout, self.prefs.data['vehicle_hidden'], oem_color=oem_color)
         if self.host.active=='obd' and time.monotonic()-getattr(self,'vehicle_gauge_sent',0)>=1/30:
             self.vehicle_gauge_sent=time.monotonic()
             self.host.vehicle_gauges(self.protocols.gauge_snapshot())
@@ -1293,6 +1491,12 @@ class Launcher:
         if self.mode == 'protocol_tests' and now-self.protocol_redraw>.25:
             self.protocol_redraw=now
             self.draw()
+        parking_visible = self.mode == 'parking_status' or (
+            self.parked_screen_locked and self.parked_overlay_at is None
+        )
+        if parking_visible and now - self.parking_redraw >= .5:
+            self.parking_redraw = now
+            self.draw()
         if self.picture_dirty and now-self.picture_saved > .1:
             self.save_picture()
         elif not self.picture_dirty and self.picture_drag is None and now-self.picture_checked > .2:
@@ -1301,7 +1505,8 @@ class Launcher:
                 self.picture_values = dict(self.picture.values)
                 self.apply_picture()
                 if self.mode != 'plugin':self.draw()
-        if self.pending_default and self.prefs.safety_notice_accepted and self.prefs.data['setup_complete']:
+        if (self.mode != 'parking_status' and self.pending_default
+                and self.prefs.safety_notice_accepted and self.prefs.data['setup_complete']):
             self.pending_default = False
             plugin_id = self.prefs.data["default_plugin"]
             if plugin_id != 'obd' and plugin_id in self.manifests and self.prefs.enabled(

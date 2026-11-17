@@ -150,6 +150,80 @@ class VehicleCAN(unittest.TestCase):
         self.assertEqual(p.sync_vehicle_scope(),([],[]))
         self.assertFalse(any(e['state']=='honda_can_data' for e in p.feed(incoming(257,0xc1,raw))[0]))
 
+    def test_vehicle_retains_separate_fault_reports_and_last_values_through_restarts(self):
+        probe = self.probe()
+        probe.vehicle_scope = lambda: 'vehicle'
+        folder = tempfile.TemporaryDirectory()
+        self.addCleanup(folder.cleanup)
+        path = Path(folder.name)/'vehicle-last-known.json'
+        monitor = ProtocolDiagnostics(folder.name, vehicle_path=path)
+        self.addCleanup(monitor.close)
+        monitor.observe(dict(state='connected', uuid='test-cafe', device='radio-one'))
+        events, _ = self.authenticate(probe)
+        queued = [event for event in events if event['state'] == 'honda_can_subscription_queued']
+        self.assertEqual([event['settings_count'] for event in queued], [7, 7])
+        self.assertEqual(queued[0]['interval_seconds'], 1)
+        self.assertIn(0x12f96750, queued[0]['can_ids'])
+        for event in queued:
+            monitor.observe(event)
+        key = probe.vehicle_subscription.keys[257]
+        for event in probe.feed(incoming(257, 0xc1, bytes.fromhex('020000')))[0]:
+            monitor.observe(event)
+        for kind, records in (
+            (0, [(0x454, bytes.fromhex('2300000000000000'))]),
+            (2, [(0x403, bytes.fromhex('0705000000'))]),
+            (2, [(0x555, bytes.fromhex('8001130000'))]),
+            (3, [(0x40c, bytes.fromhex('8011010207000000')), (0x40c, bytes.fromhex('8131323334353600'))]),
+        ):
+            events, _ = probe.feed(incoming(257, 0xc1, can_data(records, kind=kind, key=key)))
+            for event in events:
+                monitor.observe(event)
+            self.assertEqual(any(event['state'] == 'honda_can_receipt_sent' for event in events), kind != 0)
+        at = monitor.vehicle.signals.records[0x454]['at']
+        snapshot, revision, reports = monitor.vehicle_plugin_snapshot(at)
+        self.assertEqual(snapshot['readings']['42'], 35)
+        self.assertEqual(reports[2], ([(0x555, '8001130000'), (0x403, '0705000000')], 2))
+        self.assertEqual([record[0] for record in reports[3][0]], [0x40c, 0x40c])
+        monitor.observe(dict(state='closed', uuid='test-cafe', device='radio-one'))
+        self.assertEqual(monitor.vehicle_plugin_snapshot(at+6)[0]['readings']['42'], 35)
+        monitor.close()
+        with patch('hlauncher.vehicle_last_known.BOOT_ID', 'different-boot'):
+            restarted = ProtocolDiagnostics(folder.name, vehicle_path=path)
+        self.addCleanup(restarted.close)
+        restored, _, restored_reports = restarted.vehicle_plugin_snapshot(at+7)
+        self.assertEqual(restored['readings'], snapshot['readings'])
+        self.assertEqual(restored_reports, reports)
+        restarted.observe(dict(state='connected', uuid='test-cafe', device='radio-two'))
+        empty, _, new_reports = restarted.vehicle_plugin_snapshot(at+8)
+        self.assertEqual((empty['readings'], new_reports), ({}, {}))
+
+    def test_vehicle_timestamp_uses_elapsed_time_until_the_clock_synchronizes(self):
+        from hlauncher.vehicle_last_known import VehicleLastKnown
+
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder)/'vehicle-last-known.json'
+            marker = Path(folder)/'clock-synchronized'
+            with patch('hlauncher.vehicle_last_known.SYNC_MARKER', marker):
+                import time
+                now = time.monotonic()
+                saved = VehicleLastKnown(path)
+                saved.update({'42': 35}, now-60)
+                self.assertEqual(saved.updated_text(now), '1 min ago')
+                _, state = saved.pending_write(now)
+                saved.write(state)
+                with patch('hlauncher.vehicle_last_known.BOOT_ID', 'different-boot'):
+                    restored = VehicleLastKnown(path)
+                self.assertEqual(restored.updated_text(now), 'Date unavailable')
+                marker.touch()
+                with patch('hlauncher.vehicle_last_known.time.time', return_value=1794873600):
+                    _, state = saved.pending_write(now, force=True)
+                    saved.write(state)
+                self.assertEqual(state['wall'], 1794873540)
+                with patch('hlauncher.vehicle_last_known.BOOT_ID', 'different-boot'):
+                    restored = VehicleLastKnown(path)
+                self.assertIn('2026', restored.updated_text(now))
+                self.assertEqual(restored.readings, {'42': 35})
+
     def probe(self, sid=257, name=GENERAL):
         p=StartProbe(lambda _:True);p.authenticated=True;p.active_app='com.honda.hondalink.launcher'
         p.sessions={sid:(1,name)};p.honda_stage[sid]='session_start_notified'
@@ -234,6 +308,38 @@ class VehicleCAN(unittest.TestCase):
         self.assertFalse(any(e['state']=='honda_can_subscription_queued'for e in p.tick()))
         self.assertEqual(len(p.vehicle_subscription.tick(r['at']+11)),1)
         self.assertEqual(p.vehicle_subscription.tick(r['at']+12),[])
+
+    def test_driving_subscription_retries_missing_speed_and_stops_after_one_valid_sample(self):
+        for send_speed in (True, False):
+            with self.subTest(send_speed=send_speed):
+                probe = self.probe()
+                probe.vehicle_scope = lambda: 'illumination_driving'
+                self.authenticate(probe)
+                sid = 257
+                requests = probe.vehicle_subscription.requests
+                key = probe.vehicle_subscription.keys[sid]
+
+                # Headlight data and a short speed record do not confirm that speed arrived.
+                raw = can_data([(ILLUMINATION_ID, bytes(8)), (0x158, bytes(4))], key=key)
+                events, _ = probe.feed(incoming(sid, 0xC1, raw))
+                data = next(event for event in events if event['state'] == 'honda_can_data')
+                self.assertNotIn('152', data['records'][-1]['signals'])
+                self.assertEqual(probe.sync_vehicle_scope(), ([], []))
+                requests[sid]['at'] -= 3
+                events, replies = probe.sync_vehicle_scope()
+                self.assertEqual(len(replies), 1)
+                self.assertEqual(events[-1]['speed_retries'], 1)
+
+                if send_speed:
+                    raw = can_data([(0x12F85050, bytes(1))], key=key)
+                    probe.feed(incoming(sid, 0xC1, raw))
+                requests[sid]['at'] -= 5
+                events, replies = probe.sync_vehicle_scope()
+                self.assertEqual(len(replies), 0 if send_speed else 1)
+                if not send_speed:
+                    self.assertEqual(events[-1]['speed_retries'], 2)
+                requests[sid]['at'] -= 10
+                self.assertEqual(probe.sync_vehicle_scope(), ([], []))
 
     def test_diagnostics_acknowledged_and_never_replace_live_readings(self):
         p=self.probe();self.authenticate(p);key=p.vehicle_subscription.keys[257]

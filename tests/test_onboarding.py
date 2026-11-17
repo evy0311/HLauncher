@@ -283,7 +283,10 @@ class Setup(unittest.TestCase):
             ui.wizard.save(setup_step=4);ui.draw()
             with patch.object(ui,'maintenance') as maintenance:
                 ui.actions[1][1]();self.assertEqual(ui.mode,'recovery_settings')
+                next(action for _, action in ui.actions if action == ui.hotspot_page)()
+                self.assertEqual(ui.mode, 'hotspot_settings')
                 ui.actions[1][1]();maintenance.assert_called_once_with('hotspot')
+                ui.actions[0][1]();self.assertEqual(ui.mode,'recovery_settings')
                 ui.actions[0][1]();self.assertEqual(ui.mode,'onboarding')
                 self.assertEqual(ui.wizard.step,4)
             ui.wizard.save(setup_step=5);ui.storage_info['available']=True;ui.draw()

@@ -1,7 +1,8 @@
 # HLauncher
 
-A Raspberry Pi launcher for the original HDMI-equipped HondaLink radio in my
-2014 Civic. It adds CarPlay, wired Android Auto and live OBD gauges through plugins.
+A Raspberry Pi launcher for factory Honda radios with the legacy HDMI-based
+HondaLink phone-app integration, tested on my 2014 Civic Si. It adds CarPlay,
+wired Android Auto and live OBD gauges through plugins.
 
 HLauncher implements the phone side of the Civic's legacy HondaLink connection.
 HDMI carries video and media audio, and Bluetooth carries the handshake and
@@ -10,15 +11,71 @@ firmware stays intact.
 
 Tested with **Raspberry Pi 4 Model B boards with 2 GB and 4 GB RAM**, running
 **Raspberry Pi OS Lite Bookworm 64-bit**. The 4 GB model was noticeably smoother,
-but the 2 GB model ran fine. Other radios, Pi models and OS versions are
-unverified. This is development software; see the plugin guides for limitations. Reverse-engineering progress
-and future native-radio experiments are on [my blog](https://www.evanhorsley.com/blog/).
+but the 2 GB model ran fine. Other Pi models and OS versions are unverified.
+This is development software. See the plugin guides for limitations. Reverse-engineering
+progress and future native-radio experiments are on [my blog](https://www.evanhorsley.com/blog/).
 
-## Hardware
+## Vehicle compatibility
+
+HLauncher is expected to work on factory Honda radios that have an HDMI input
+for the front display and use the legacy **HondaLink Connect** phone-app protocol.
+Honda called this integration **HondaLink Next Generation**. The compatibility
+research points to a shared protocol across those radios. Check the original head
+unit and trim, since equipment varies by model year and market. See the
+[protocol notes](docs/protocol.md) and [Honda's HDMI/HondaLink service article][honda-hdmi].
+
+Acura radios with equivalent HDMI and Bluetooth app integration are expected to
+be adaptable. HLauncher currently identifies itself to the radio as a HondaLink
+app. Acura support will need changes to present the app identity the radio expects,
+such as **AcuraLink Navigation** on the ILX Premium, followed by an in-car test.
+See [Acura's app setup guide][acuralink-navigation].
+
+### United States
+
+#### Tested and working
+
+| Model year | Vehicle | Radio |
+| --- | --- | --- |
+| 2014 | Honda Civic Si | Original HDMI-equipped HondaLink Display Audio |
+
+#### Likely supported, pending an HLauncher test
+
+| Model years | Vehicle | Factory radio or trim | Sources |
+| --- | --- | --- | --- |
+| 2014–2015 | Honda Civic sedan and coupe | EX, EX-L and Si with HDMI Display Audio. Includes the 2015 SE sedan with HDMI Display Audio. | [Honda service article][honda-hdmi], [2015 Civic launch][civic-2015], [2015 audio guide][civic-2015-audio] |
+| 2014–2015 | Honda Civic Hybrid | Hybrid and Hybrid with Leather with HDMI Display Audio. | [Honda service article][honda-hdmi], [2015 Hybrid specs][civic-hybrid] |
+| 2014–2015 | Honda Civic Natural Gas | Factory HDMI Display Audio. | [2014 reference guide][civic-cng-2014], [2015 brochure][civic-cng-2015] |
+| 2015–2016 | Honda CR-V | EX, EX-L and Touring. | [Honda service article][honda-hdmi] |
+| 2016 | Honda CR-Z | LX, EX and EX-L Navi with HDMI Display Audio. | [Specs][crz-specs], [audio guide][crz-audio] |
+| 2015–2017 | Honda Fit | EX and EX-L, including EX-L with navigation. | [Honda service article][honda-hdmi], [2017 specs][fit-2017] |
+| 2016–2018 | Honda HR-V | EX and EX-L Navi. | [Honda service article][honda-hdmi], [2018 specs][hrv-2018] |
+
+#### Acura candidate requiring software changes
+
+| Model years | Vehicle | Factory radio or trim | Sources |
+| --- | --- | --- | --- |
+| 2016–2018 | Acura ILX | Premium Package with the HDMI port for tethered AcuraLink Navigation. | [2016 press kit][ilx-2016], [2017 audio guide][ilx-2017], [2018 audio guide][ilx-2018] |
 
 [Report your hardware setup](https://github.com/evy0311/HLauncher/issues/new?template=compatibility.yml)
-to share which car, radio, and Raspberry Pi or other ARM board you tried and
-what worked. Working, partial, and unsuccessful setups are welcome.
+with your market, model year, trim, radio, and what worked. Working, partial,
+and unsuccessful setups are welcome.
+
+[honda-hdmi]: https://static.nhtsa.gov/odi/tsbs/2018/MC-10149645-9999.pdf
+[civic-2015]: https://hondanews.com/en-US/honda-automobiles/releases/release-4040e16443614f429f28abb6349c44d9-style-substance-and-performance-come-together-as-honda-civic-returns-for-2015-with-new-high-value-special-edition-sedan
+[civic-2015-audio]: https://owners.honda.com/utility/download?path=%2Fstatic%2Fpdfs%2F2015%2FCivic+Sedan%2F2015_Civic_Audio_Operation.pdf
+[civic-hybrid]: https://hondanews.com/en-US/honda-automobiles/releases/release-effec58ddd6f42d094e10221f4b2e60e-2015-honda-civic-hybrid-specifications-features
+[civic-cng-2014]: https://techinfo.honda.com/rjanisis/pubs/QS/R014B2QS.pdf
+[civic-cng-2015]: https://automobiles.honda.com/images/2015/civic-natural-gas/downloads/2015-civic-natural-gas-brochure.pdf
+[crz-specs]: https://hondanews.com/en-US/releases/release-21b90b8424924c90a2627ed7d08aa499-2016-cr-z-specifications-features
+[crz-audio]: https://owners.honda.com/utility/download?path=%2Fstatic%2Fpdfs%2F2016%2FCR-Z%2F2016_CR-Z_Audio_and_Connectivity.pdf
+[fit-2017]: https://hondanews.com/en-US/honda-automobiles/releases/release-fea96a3372434702bc0a28a591f8f3aa-2017-honda-fit-specifications-and-features
+[hrv-2018]: https://hondanews.com/en-US/honda-automobiles/releases/release-f3a08c7338dc4ae9a1093787d5e3f3ad-2018-hr-v-specifications-features
+[acuralink-navigation]: https://www.acura.ca/owners/acuralink/navi_app
+[ilx-2016]: https://acuranews.com/en-US/releases/release-81698aa263284cb7a904125201f2b161-2016-acura-ilx-overview
+[ilx-2017]: https://owners.acura.com/utility/download?path=%2Fstatic%2Fpdfs%2F2017%2FILX%2F2017_ILX_All_Audio_Connections.pdf
+[ilx-2018]: https://owners.acura.com/utility/download?path=%2Fstatic%2Fpdfs%2F2018%2FILX%2F2018_ILX_Audio_Connections.pdf
+
+## Hardware
 
 - HDMI-equipped HondaLink radio with the older phone-app integration.
 - Raspberry Pi 4, microSD card, card reader and suitable Pi power supply.

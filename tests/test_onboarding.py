@@ -18,6 +18,7 @@ from hlauncher.bootstrap import BootstrapLauncher
 from hlauncher.event_log import EventLog
 from hlauncher.protocol_diagnostics import ProtocolDiagnostics
 from hlauncher.launcher import Launcher
+from hlauncher.ui.scroll_list import move
 from hlauncher.recovery import handler_for, Maintenance
 from hlauncher import storage
 from test_architecture import Display, parked_radio
@@ -77,7 +78,6 @@ class Setup(unittest.TestCase):
             self.assertEqual(ui.mode, 'recovery_settings')
             ui.actions[0][1]()
             self.assertEqual(ui.mode, 'safety_notice')
-            from hlauncher.ui.scroll_list import move
             move(ui, ui.scroll_view['maximum'])
             with patch.object(prefs, 'save', side_effect=OSError):
                 ui.actions[-1][1]()
@@ -242,6 +242,7 @@ class Setup(unittest.TestCase):
         try:
             self.assertTrue(ui.launch('com.honda.hondalink.launcher'))
             self.assertEqual(ui.mode, 'safety_notice')
+            move(ui, ui.scroll_view['maximum'])
             ui.actions[-1][1]()
             self.assertEqual(ui.mode,'onboarding')
             for step in range(6):

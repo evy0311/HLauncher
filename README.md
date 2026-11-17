@@ -16,6 +16,10 @@ and future native-radio experiments are on [my blog](https://www.evanhorsley.com
 
 ## Hardware
 
+[Report your hardware setup](https://github.com/evy0311/HLauncher/issues/new?template=compatibility.yml)
+to share which car, radio, and Raspberry Pi or other ARM board you tried and
+what worked. Working, partial, and unsuccessful setups are welcome.
+
 - HDMI-equipped HondaLink radio with the older phone-app integration.
 - Raspberry Pi 4, microSD card, card reader and suitable Pi power supply.
 - Micro-HDMI-to-HDMI cable from **HDMI0** (nearest USB-C power) to the radio.

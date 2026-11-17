@@ -5,6 +5,15 @@ changes are welcome. To make an app for your own setup or distribute it
 independently, start with the [plugin authoring guide](docs/plugins.md#author-and-package-a-plugin).
 It includes a [prompt for AI coding agents](docs/plugins.md#build-a-plugin-with-an-ai-agent).
 
+## Report hardware compatibility
+
+Open a [Hardware compatibility report](https://github.com/evy0311/HLauncher/issues/new?template=compatibility.yml)
+on GitHub for a working, partly working, or unsuccessful setup. Include your
+car's make, model, and year, the radio, the board model and specs, the OS, and
+the HLauncher version. Describe which features and plugins you tested and any
+workarounds. If you retest the same setup, comment on your report with the new
+HLauncher version and results so readers can follow what changed.
+
 ## Report a bug or propose a change
 
 Search the [issue tracker](https://github.com/evy0311/HLauncher/issues) for an

@@ -50,7 +50,7 @@ def draw_launcher(launcher):
     index=min(launcher.update_notes_index,pages-1);launcher.update_notes_index=index
     page=Page('Release notes',launcher.updates_page,launcher.prefs.data['tile_color'],
               (launcher.fb.w,launcher.fb.h),launcher.pressed_box if launcher.press is not None else None,
-              detail=f"{info.get('notes_version','')} · {index+1} / {pages}",show_clock=launcher.prefs.data['show_clock'])
+              detail=f"{info.get('notes_version','')} · {index+1} / {pages}",show_clock=launcher.prefs.data['show_clock'], layout_theme=getattr(launcher, 'layout_theme', None))
     for i,line in enumerate(text[index*PER_PAGE:(index+1)*PER_PAGE]):
         page.text((24,128+i*24),line,18,fill='#e3e0ea')
     if index>0:page.button((24,416,184,460),'Previous',lambda:launcher.release_notes_move(-1),size=20,secondary=True)

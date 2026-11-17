@@ -312,7 +312,7 @@ def present(ui, frame):
 
 def settings_menu(ui, title, back, items, *, footer='', key=None):
     theme = ui.layout_theme
-    layout = theme.layouts.get(ui.mode)
+    layout = theme.layouts.get(ui.mode, 'menu' if theme.colors else None)
     if layout is None:
         return False
     items = list(items)

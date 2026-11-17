@@ -1,8 +1,10 @@
 # Vehicle
 
 Vehicle is installed and enabled by default. Open it from Home. It uses the
-active HLauncher theme and reads the legacy HondaLink session while the page is
-open.
+active HLauncher theme and requests vehicle data from the legacy HondaLink
+session when opened. Vehicle requires both the parking brake and a fresh
+zero-speed reading. If either is lost, the worker closes and the shared parking
+screen offers Home or reopens Vehicle once both are confirmed.
 
 - **Maintenance** shows engine oil life and instrument cluster service codes.
   Tap a code for its service description or open the full guide. Definitions
@@ -30,6 +32,13 @@ refers to the most recent sample in the cache. When the Pi has a synchronized
 clock, it shows the sample date and time. Without a synchronized clock, it
 shows elapsed time within this boot, or an unavailable date after reboot.
 
-Vehicle uses receive-only HondaLink subscriptions. The new diagnostic and
-Maintenance Minder views can be tested with synthetic frames. Forwarding of
-particular records and their units still depends on the in-car radio.
+**Refresh data** asks the head unit to reapply the subscription. The request uses
+the same one-second cyclic receive mode as HondaLink Connect. If the request
+with optional diagnostic context fails to start the normal stream, Vehicle
+retries once with the standard diagnostic presets and the same live signal mask.
+Refresh does not clear the last received values. A dash means there is no value
+in the cache for that field; zero and Off are actual reported values.
+
+The request controls what the radio forwards; it cannot make a module produce
+unavailable data or prove a missing warning is off. Forwarding depends on the
+radio, vehicle equipment and operating conditions.

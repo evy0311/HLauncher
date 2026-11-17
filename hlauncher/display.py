@@ -2,7 +2,7 @@
 
 import os, fcntl, struct
 from array import array
-from PIL import ImageEnhance
+from PIL import Image, ImageEnhance
 from sdk.hlauncher_sdk.picture import DEFAULTS, NEUTRAL, validate
 try:
     import numpy as np
@@ -18,6 +18,7 @@ class Framebuffer:
         self.tty_fd = None
         self.tty_mode = None
         self.picture = dict(DEFAULTS)
+        self.last_frame = None
 
     def open(self):
         if self.fd is not None:
@@ -72,6 +73,7 @@ class Framebuffer:
         self.open()
         if len(raw) != self.w * self.h * 2:
             raise ValueError("frame size mismatch")
+        self.last_frame = raw
         if self.kms is not None:
             try:
                 self.kms.present(raw)
@@ -91,6 +93,10 @@ class Framebuffer:
                 ) != len(row):
                     raise OSError("short framebuffer row write")
 
+    def snapshot(self):
+        if self.last_frame is not None:
+            return Image.frombytes('RGB', (self.w, self.h), self.last_frame, 'raw', 'BGR;16')
+
     def set_picture(self, values):
         self.picture = validate(values)
 
@@ -106,6 +112,7 @@ class Framebuffer:
         if apply_picture:rgb=adjust_image(rgb, self.picture)
         if self.kms is None:
             self.blit(encode(rgb));return False
+        self.last_frame = encode(rgb)
         try:
             self.kms.present(rgb.tobytes('raw','BGRX'))
             return True
@@ -120,6 +127,7 @@ class Framebuffer:
         self.blit(encode(im),apply_picture=False);return False
 
     def close(self):
+        self.last_frame = None
         if self.kms is not None:
             self.kms.close()
             self.kms = None

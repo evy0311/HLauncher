@@ -50,6 +50,18 @@ layout but is outside the original 168-entry ALL subscription and is not shown
 as a live reading by this test. Extra diagnostic field sets,
 friendly enum descriptions and Helpnet data assembly remain separate work.
 
+The Vehicle home tile requests its read-only batch on entry and offers
+**Refresh data** to reissue it on the authenticated session. The original
+Connect app configures a cyclic CAN subscription at startup
+(`HLLpaCommunicator.init`, native address `0x63D7C`); its
+`GetVehicleInfoArray` bridge reads the resulting native cache. The stock Civic
+settings handler (`Communication.exe` `0xC4600`) checks permission on that
+same application connection before forwarding the settings. A settings ACK
+means the request was accepted; it does not guarantee records will arrive.
+The protocol also defines a noncyclic mode. Vehicle refresh keeps the cyclic
+mode so periodic readings, including the speed used by the parking gate,
+continue after the request.
+
 The OBD Gauges home tile requests RPM, coolant temperature, accelerator pedal
 position, intake air temperature, native-scaled barometric pressure and VTEC
 status at a target 10 Hz. Intake and VTEC use extra fields from the native CAN

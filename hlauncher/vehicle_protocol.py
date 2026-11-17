@@ -55,11 +55,13 @@ class VehicleTraffic:
             self.clear(event.get('session'))
         if state in ('honda_can_subscription_queued', 'honda_can_subscription_response',
                      'honda_can_subscription_transport_ack', 'honda_can_subscription_timeout'):
+            same_scope = (self.subscription.get('scope') == event.get('scope')
+                          and self.subscription.get('session') == event.get('session'))
             self.subscription.update({k:v for k,v in event.items()
                                       if k in ('session','status','result_code','reason','can_ids','cycle','protocol',
                                                'transaction','transport_status','phase','can_classes','interval_seconds','api_count','settings_count')})
             if state == 'honda_can_subscription_queued':
-                if event.get('part',1)==1:
+                if event.get('part',1)==1 and not same_scope:
                     if not set(GPS_IDS).issubset(event.get('can_ids', ())):
                         self.gps = {}
                     illumination = self.signals.records.get(ILLUMINATION_ID)
@@ -80,7 +82,7 @@ class VehicleTraffic:
         elif state == 'honda_can_data':
             normal = event.get('data_type', 0) == 0
             self.subscription.update(session=event['session'])
-            if normal:
+            if normal and event['records']:
                 self.subscription.update(status='Receiving',last_error='')
                 self.signals.update(event['records'],event.get('monotonic',time.monotonic()),event['session'])
                 if any(record['can_id'] in GPS_IDS for record in event['records']):

@@ -107,7 +107,7 @@ def tile_image(theme, text, icon_name, corner, active):
 
 def render(layout, *, theme='Red', size=(720,480), page=0, clock=None,
            message='', dismiss=None, change_page=None, pressed=None, show_clock=False,
-           editor=None, confirmation=None, slide=0.0, edit_empty=None):
+           editor=None, confirmation=None, slide=0.0, edit_empty=None, layout_theme=None):
     """Render from a canonical 720×480 layout and return matching touch regions.
 
     The ordinary three-plugin setup matches the approved five-tile mockup.
@@ -115,12 +115,33 @@ def render(layout, *, theme='Red', size=(720,480), page=0, clock=None,
     editing = editor is not None
     pages = len(layout)
     page = max(0, min(page, pages - 1))
-    image=render_chrome(theme,clock=clock,show_clock=show_clock and not editing);d=ImageDraw.Draw(image)
+    from .theme_menu import resolved_colors
+    colors = resolved_colors(layout_theme, 'menu', theme) if layout_theme and layout_theme.colors else {}
+    image=render_chrome(theme,clock=clock,show_clock=show_clock and not editing,colors=colors)
+    d=ImageDraw.Draw(image)
     sx,sy=size[0]/720,size[1]/480
     def bounds(box):return tuple(round(v*(sx if i%2==0 else sy)) for i,v in enumerate(box))
     actions=[]
     tw,th=art.TILE_SIZE
     def draw_tile(entry, x, y, active=False, corner=False):
+        if colors:
+            edge = colors['accent'] if active else art.blend(colors['panel'], colors['text'], .15)
+            d.rounded_rectangle((x, y, x+tw-1, y+th-1), radius=10, fill=colors['panel'], outline=edge)
+            icon = art.glyph(entry.icon, 56)
+            image.paste(icon, (x+(tw-icon.width)//2,y+22), icon)
+            face = interface_font(20, 500)
+            title = entry.label
+            if d.textlength(title, font=face) > tw-26:
+                while title and d.textlength(title+'…', font=face) > tw-26:
+                    title = title[:-1]
+                title += '…'
+            d.text((x+tw//2, y+th-31), title, font=face, fill=colors['text'], anchor='mm')
+            if corner:
+                left, top, right, bottom = remove_button_box(x+tw, y)
+                d.rounded_rectangle((left, top, right, bottom), radius=6,
+                                    fill=colors['background'], outline=edge)
+                d.text(((left+right)//2, (top+bottom)//2), '×', font=face, fill=colors['text'], anchor='mm')
+            return
         shadow=art.tile_shadow(tw,th)
         image.paste(shadow,(x-8,y-5),shadow)
         tile = tile_image(theme, entry.label, entry.icon, corner, active)
@@ -138,7 +159,7 @@ def render(layout, *, theme='Red', size=(720,480), page=0, clock=None,
             x = left + shift
             if entry is None or (gesture and gesture.plugin_id == entry.id):
                 if editing:
-                    d.rounded_rectangle((x, y, right + shift, bottom), radius=10, outline='#857381', width=2)
+                    d.rounded_rectangle((x, y, right + shift, bottom), radius=10, outline=colors.get('muted', '#857381'), width=2)
                 continue
             actual = bounds((left, y, right, bottom))
             has_corner = editing and entry.id in editor.ui.manifests
@@ -153,7 +174,7 @@ def render(layout, *, theme='Red', size=(720,480), page=0, clock=None,
         if dragged is not None and dragged.id == gesture.plugin_id:
             target = editor.target_slot(gesture.point)
             if gesture.moved and target is not None:
-                d.rounded_rectangle(slot_box(target), radius=10, outline='#f0dbe5', width=3)
+                d.rounded_rectangle(slot_box(target), radius=10, outline=colors.get('accent', '#f0dbe5'), width=3)
             origin = slot_box(gesture.slot)
             x = round(min(720-tw, max(0, origin[0] + gesture.point[0] - gesture.start[0])))
             y = round(min(480-th, max(55, origin[1] + gesture.point[1] - gesture.start[1])))
@@ -176,7 +197,7 @@ def render(layout, *, theme='Red', size=(720,480), page=0, clock=None,
                                 lambda delta=index-page: change_page(delta)))
     if editing or (edit_empty and not offset and not any(layout[page])):
         from .controls import Page
-        header = Page('', None, theme, size, pressed)
+        header = Page('', None, theme, size, pressed, layout_theme=layout_theme)
         header.image, header.draw = image, d
         if editing:
             if pages > 1:
@@ -191,7 +212,7 @@ def render(layout, *, theme='Red', size=(720,480), page=0, clock=None,
         from .controls import Page
         from .projection import wrap_status
 
-        dialog = Page('Notice', None, theme, size, pressed)
+        dialog = Page('Notice', None, theme, size, pressed, layout_theme=layout_theme)
         dialog.image.paste(Image.blend(image, Image.new('RGB', image.size), .64), (0, 0))
         title, body, buttons = confirmation or ('Notice', message, [('OK', dismiss)])
         lines = wrap_status(str(body), dialog.draw, interface_font(22), 464)
@@ -228,7 +249,7 @@ def draw_launcher(launcher):
     editor = launcher.home_editor
     confirmation = editor.dialog()
     theme = launcher.layout_theme
-    alternate = theme.layouts.get('home')
+    alternate = theme.layouts.get('home', 'tiles' if theme.colors else None)
     if alternate and not (editor.editing or confirmation or launcher.banner):
         from . import theme_menu
 
@@ -252,7 +273,8 @@ def draw_launcher(launcher):
                  slide=launcher.home_slide,
                  edit_empty=editor.begin_editing,
                  editor=editor if editor.editing else None, confirmation=confirmation,
-                 pressed=launcher.pressed_box if launcher.press is not None else None,show_clock=launcher.prefs.data['show_clock'])
+                 pressed=launcher.pressed_box if launcher.press is not None else None,show_clock=launcher.prefs.data['show_clock'],
+                 layout_theme=theme)
     launcher.actions=frame.actions;launcher.page=frame.page
     launcher.home_clock=datetime.now().strftime('%Y-%m-%d %H:%M')
     # Preserve the existing RGB565 dithering path; home handles its own touch style.

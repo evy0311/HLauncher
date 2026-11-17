@@ -155,3 +155,9 @@ color. The saved hex color is used by launcher pages, boot welcome, projection
 shell, OBD dashboard and recovery website. Icon and text colors are unchanged.
 First-run setup never shows Exit, including after returning from the picker;
 Exit is available only when completed setup is reopened from Settings.
+
+
+The active theme also colors launcher controls and dialogs, the parked screen,
+Vehicle and the bundled projection connection pages. Once CarPlay or Android
+Auto is connected, the phone draws its own interface. The projection
+day/night settings still apply there.

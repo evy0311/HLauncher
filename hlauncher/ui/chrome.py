@@ -19,7 +19,24 @@ def scale_bounds(box,size):
     return tuple(round(value*size[i%2]/(720 if i%2==0 else 480)) for i,value in enumerate(box))
 
 
-def render(theme, *, child=False, clock=None, pressed=False, show_clock=False):
+def render(theme, *, child=False, clock=None, pressed=False, show_clock=False, colors=None):
+    if colors:
+        image = Image.new('RGB', (720, 480), colors['background'])
+        d = ImageDraw.Draw(image)
+        edge = art.blend(colors['panel'], colors['text'], .15)
+        d.rectangle((0, 0, 719, 51), fill=colors['panel'])
+        d.line((0, 51, 719, 51), fill=edge)
+        if child:
+            d.rounded_rectangle((8, 6, 58, 46), radius=7,
+                                fill=colors['background'], outline=colors['accent'] if pressed else edge)
+            d.line(((24, 20), (18, 26), (24, 32)), fill=colors['text'], width=2)
+            d.line(((18, 26), (43, 26)), fill=colors['text'], width=2)
+        d.text((76 if child else 24, 26), 'HLauncher', font=interface_font(21),
+               fill=colors['text'], anchor='lm')
+        if show_clock:
+            d.text((696, 26), clock or datetime.now().strftime('%-I:%M'),
+                   font=interface_font(25), fill=colors['text'], anchor='rm')
+        return image
     image=art.background(theme,child).copy();d=ImageDraw.Draw(image)
     if child and pressed:
         overlay=Image.new('RGBA',(50,40))

@@ -1,4 +1,4 @@
-"""Shared stock-radio surfaces for launcher-owned control pages."""
+"""Shared OEM and palette-themed surfaces for launcher-owned pages."""
 from datetime import datetime
 from PIL import Image, ImageDraw
 from sdk.hlauncher_sdk.fonts import font
@@ -9,20 +9,42 @@ from .home import caption, Frame
 
 
 class Page:
-    def __init__(self, title, back, theme, size, pressed=None, clock=None, detail='', heading_y=72, show_clock=False):
+    def __init__(self, title, back, theme, size, pressed=None, clock=None, detail='', heading_y=72, show_clock=False, layout_theme=None):
         self.theme,self.size,self.pressed=theme,size,pressed
+        from .theme_menu import resolved_colors
+        self.colors = (resolved_colors(layout_theme, 'menu', theme)
+                       if layout_theme and layout_theme.colors else {})
+        self.accent = self.colors.get('accent', art.blend(art.accent(theme), (245, 243, 255), .65))
+        self.edge = art.blend(self.colors['panel'], self.colors['text'], .15) if self.colors else '#39333f'
         box=scale_bounds(BACK_BOUNDS,size)
-        self.image=chrome(theme,child=back is not None,clock=clock,pressed=pressed==box,show_clock=show_clock)
+        self.image=chrome(theme,child=back is not None,clock=clock,pressed=pressed==box,show_clock=show_clock,colors=self.colors)
         self.draw=ImageDraw.Draw(self.image)
         self.actions=[(box,back)] if back is not None else []
         self.label((24,heading_y),title,28)
         self.text((696,heading_y+16),detail,16,anchor='rm')
 
+    @classmethod
+    def for_launcher(cls, ui, title, back, *, color=None, **options):
+        return cls(title, back, color or ui.prefs.data['tile_color'], (ui.fb.w, ui.fb.h),
+                   ui.pressed_box if ui.press is not None else None,
+                   show_clock=ui.prefs.data['show_clock'],
+                   layout_theme=getattr(ui, 'layout_theme', None), **options)
+
     def label(self,xy,text,size=24):
+        if self.colors:
+            self.draw.text(xy, str(text), font=font(size, 500), fill=self.colors['text'], anchor='lt')
+            return
         label=caption(str(text),size)
         self.image.paste(label,tuple(round(v) for v in xy),label)
 
     def text(self,xy,text,size=16,fill='#c2c0cc',anchor='lt'):
+        if self.colors:
+            if fill in ('#ffffff', '#efedf6', '#f4f4f7'):
+                fill = self.colors['text']
+            elif fill == '#c2c0cc':
+                fill = self.colors['muted']
+            elif fill == '#efbd82':
+                fill = self.accent
         self.draw.text(xy,str(text),font=font(size),fill=fill,anchor=anchor)
 
     def fit(self,text,width,size=16):
@@ -33,11 +55,21 @@ class Page:
 
     def panel(self,box):
         x,y,r,b=box
+        if self.colors:
+            self.draw.rounded_rectangle(box, radius=8, fill=self.colors['panel'], outline=self.edge)
+            return
         tile=art.tile(self.theme,r-x,b-y,radius=6,control=True)
         self.image.paste(tile,(x,y),tile)
 
     def button(self,box,title,action,selected=False,size=20,secondary=False):
         x,y,r,b=box;actual=scale_bounds(box,self.size)
+        if self.colors:
+            self.draw.rounded_rectangle((x,y,r-1,b-1), radius=8,
+                fill=self.colors['background' if secondary else 'panel'],
+                outline=self.accent if selected or self.pressed == actual else self.edge)
+            self.text(((x+r)//2,(y+b)//2), self.fit(title,r-x-16,size), size, '#ffffff', 'mm')
+            self.actions.append((actual,action))
+            return
         if secondary:
             self.draw.rounded_rectangle((x,y,r-1,b-1),radius=6,
                 fill='#38363e' if self.pressed==actual else '#27262d',
@@ -55,6 +87,17 @@ class Page:
 
     def bar(self,box,title,action,value='',toggle=None,size=24):
         x,y,r,b=box;actual=scale_bounds(box,self.size)
+        if self.colors:
+            self.panel(box)
+            if self.pressed == actual:
+                self.draw.rounded_rectangle(box, radius=8, outline=self.accent, width=2)
+            tail = ('On' if toggle else 'Off') if toggle is not None else str(value or '›')
+            self.text((x+16,(y+b)//2),self.fit(title,r-x-232 if value else r-x-118,min(size,23)),
+                      min(size,23),'#ffffff','lm')
+            self.text((r-16,(y+b)//2), self.fit(tail,192,18),18,anchor='rm',
+                      fill=self.accent if toggle else '#c2c0cc')
+            self.actions.append((actual,action))
+            return
         surface=art.settings_bar(self.theme,r-x,b-y)
         self.image.paste(surface,(x,y))
         if self.pressed==actual:
@@ -95,7 +138,7 @@ class Page:
     def info(self,y,title,value):
         self.text((24,y),title,16)
         self.text((252,y),self.fit(value,444,17),17,fill='#efedf6')
-        self.draw.line((24,y+28,696,y+28),fill='#39333f')
+        self.draw.line((24,y+28,696,y+28),fill=self.edge)
 
     def notice(self,text,y=452):
         if text:self.text((24,y),self.fit(text,672,14),14,fill='#efbd82')

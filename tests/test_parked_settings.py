@@ -141,25 +141,29 @@ class ParkedSettings(unittest.TestCase):
             self.assertTrue(self.monitor.parked_for_setup())
             self.ui.open_plugin('vehicle')
             start.assert_not_called()
-            self.assertEqual(self.ui.mode, 'home')
-            self.assertEqual(self.ui.banner, 'Park safely to open Vehicle.')
+            self.assertEqual(self.ui.mode, 'parked_plugin')
+            self.assertTrue(self.ui.parked_screen_locked)
+            self.assertEqual([action for _, action in self.ui.actions], [self.ui.home])
+            bootstrap = BootstrapLauncher.__new__(BootstrapLauncher)
+            bootstrap.ui, bootstrap.protocols = self.ui, self.monitor
+            self.assertEqual(bootstrap.vehicle_scope(), 'vehicle')
 
             self.speed(0, now)
-            self.ui.open_plugin('vehicle')
+            with patch.object(self.ui.host, 'tick'):
+                self.ui.tick()
             start.assert_called_once()
             self.assertEqual(self.ui.host.active, 'vehicle')
             worker.send.assert_any_call(type='vehicle.parking', connected=True, speed_kph=0,
                                         parking_brake=True, safely_parked=True)
-            bootstrap = BootstrapLauncher.__new__(BootstrapLauncher)
-            bootstrap.ui = self.ui
             self.assertEqual(bootstrap.vehicle_scope(), 'vehicle')
 
             self.speed(5, time.monotonic())
             self.ui.host.touch({'contacts': []})
             worker.close.assert_called_once()
             self.assertFalse(any(call.kwargs.get('type') == 'touch' for call in worker.send.call_args_list))
-            self.assertEqual(self.ui.mode, 'home')
+            self.assertEqual(self.ui.mode, 'parked_plugin')
             self.assertNotIn('vehicle', self.ui.host.workers)
+            self.assertTrue(self.ui.parked_screen_locked)
 
             self.speed(0, time.monotonic())
             self.ui.open_plugin('vehicle')
@@ -167,7 +171,10 @@ class ParkedSettings(unittest.TestCase):
             with patch('hlauncher.protocol_diagnostics.time.monotonic', return_value=time.monotonic() + 2.1):
                 self.ui.host.tick()
             self.assertEqual(worker.close.call_count, 2)
+            self.assertEqual(self.ui.mode, 'parked_plugin')
+            self.ui.actions[0][1]()
             self.assertEqual(self.ui.mode, 'home')
+            self.assertIsNone(self.ui.locked_plugin)
 
     def test_plugin_parked_state_expires_and_clears_on_disconnect(self):
         self.monitor.observe(dict(state='connected', uuid='test-cafe'))

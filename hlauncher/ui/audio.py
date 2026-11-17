@@ -3,14 +3,13 @@ from ..audio_settings import EQ_BANDS
 from .controls import Page, present
 from .home import caption
 from .chrome import scale_bounds
-from . import home_art as art
 
 
 def draw_launcher(launcher):
     values=launcher.audio_settings.values
     page=Page('Audio & EQ',getattr(launcher,'audio_return',launcher.home),launcher.prefs.data['tile_color'],
               (launcher.fb.w,launcher.fb.h),
-              launcher.pressed_box if launcher.press is not None else None,show_clock=launcher.prefs.data['show_clock'])
+              launcher.pressed_box if launcher.press is not None else None,show_clock=launcher.prefs.data['show_clock'], layout_theme=getattr(launcher, 'layout_theme', None))
     controls=[('PipeWire '+('On' if values['pipewire'] else 'Off'),
                lambda:launcher.change_audio(pipewire=not values['pipewire']),values['pipewire']),
               ('EQ '+('On' if values['eq'] else 'Off'),
@@ -21,7 +20,7 @@ def draw_launcher(launcher):
         page.button((x,112,x+216,156),title,action,selected,size=21)
 
     # One uninterrupted bank, rather than twelve nested cards and 24 shiny tiles.
-    accent=art.blend(art.accent(page.theme),(230,227,243),.6)
+    accent=page.accent
     page.draw.line((24,176,696,176),fill='#3e3744',width=1)
     for i,(key,freq) in enumerate(EQ_BANDS.items()):
         cx=52+i*56;gain=values['bands'][key]

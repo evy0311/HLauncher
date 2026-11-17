@@ -150,6 +150,30 @@ class VehicleCAN(unittest.TestCase):
         self.assertEqual(p.sync_vehicle_scope(),([],[]))
         self.assertFalse(any(e['state']=='honda_can_data' for e in p.feed(incoming(257,0xc1,raw))[0]))
 
+    def test_vehicle_request_fallback_and_manual_refresh_use_the_authorized_session(self):
+        probe = self.probe()
+        probe.vehicle_scope = lambda: 'vehicle'
+        events, _ = self.authenticate(probe)
+        request = probe.vehicle_subscription.requests[257]
+        first = [event for event in events if event['state'] == 'honda_can_subscription_queued']
+        self.assertEqual(len(first), 2)
+        self.assertTrue(all(event['session'] == 257 for event in first))
+        with patch('hlauncher.protocol.session.time.monotonic', return_value=request['at'] + 5):
+            events, replies = probe.sync_vehicle_scope()
+            fallback = [event for event in events if event['state'] == 'honda_can_subscription_queued']
+            self.assertEqual(len(replies), 2)
+            self.assertEqual([event['settings_count'] for event in fallback], [4, 4])
+            self.assertEqual(fallback[0]['can_ids'], first[0]['can_ids'])
+            self.assertEqual(fallback[0]['cycle'], 10)
+            self.assertEqual(probe.sync_vehicle_scope(refresh=1), ([], []))
+        request = probe.vehicle_subscription.requests[257]
+        with patch('hlauncher.protocol.session.time.monotonic', return_value=request['at'] + 12):
+            self.assertEqual(probe.sync_vehicle_scope(), ([], []))
+            events, replies = probe.sync_vehicle_scope(refresh=1)
+            self.assertEqual(len(replies), 2)
+            self.assertEqual(events[-1]['settings_count'], 4)
+            self.assertEqual(probe.sync_vehicle_scope(refresh=1), ([], []))
+
     def test_vehicle_retains_separate_fault_reports_and_last_values_through_restarts(self):
         probe = self.probe()
         probe.vehicle_scope = lambda: 'vehicle'

@@ -3,7 +3,7 @@ import math
 from datetime import datetime
 from functools import lru_cache
 from pathlib import Path
-from PIL import Image, ImageDraw, ImageEnhance
+from PIL import Image, ImageDraw, ImageFilter
 from .. import __version__
 from ..config import TILE_COLORS
 from ..colors import DEFAULTS,LIMITS
@@ -19,8 +19,7 @@ from sdk.hlauncher_sdk.fonts import font
 
 
 def page_for(ui,title,back=None):
-    return Page(title,back or ui.settings,ui.prefs.data['tile_color'],(ui.fb.w,ui.fb.h),
-                ui.pressed_box if ui.press is not None else None,show_clock=ui.prefs.data['show_clock'])
+    return Page.for_launcher(ui, title, back or ui.settings)
 
 
 @lru_cache(maxsize=1)
@@ -67,23 +66,36 @@ def safety_agreement(ui):
 PARKED_TITLE_BOUNDS = (168, 120, 552, 176)
 
 
+def parked_backdrop(ui):
+    snapshot = getattr(ui.fb, 'snapshot', None)
+    prior = snapshot() if snapshot else None
+    black = Image.new('RGB', (720, 480), 'black')
+    if prior is None:
+        return black
+    # Remove lettering and detail at low resolution before the heavy dimming pass.
+    blur = prior.convert('RGB').resize((36, 24)).filter(ImageFilter.GaussianBlur(2))
+    return Image.blend(black, blur.resize(black.size, Image.Resampling.BILINEAR), .07)
+
+
 def parked_only(ui):
-    page = Page('', None, ui.prefs.data['tile_color'], (ui.fb.w, ui.fb.h), ui.pressed_box)
-    page.image = ImageEnhance.Brightness(page.image).enhance(.36)
+    page = Page.for_launcher(ui, '', None)
+    page.image = ui.parked_backdrop.copy()
     page.draw = ImageDraw.Draw(page.image)
-    page.text((360, 148), 'Park safely to continue', 30, fill='#ffffff', anchor='mm')
-    page.text((360, 203), 'Come to a complete stop and engage the parking brake.', 19, anchor='mm')
-    speed, _ = ui.protocols.parked_setup_readings()
-    if speed is not None and speed > 0:
-        page.text((360, 254), 'Waiting for the radio to confirm the vehicle has stopped.', 17, anchor='mm')
-    else:
-        page.text((360, 254), 'Waiting for the radio to confirm the parking brake.', 17, anchor='mm')
-        page.text((360, 284), 'If it is already engaged, keep the brake pedal pressed.', 17, anchor='mm')
-        page.text((360, 310), 'Then release and re-engage the parking brake.', 17, anchor='mm')
+    page.draw.rounded_rectangle((332, 106, 388, 110), 2, fill=page.accent)
+    page.draw.text((360, 148), 'Park safely to continue', font=font(30, 600), fill='white', anchor='mm')
+    page.draw.text((360, 203), 'Come to a complete stop and engage the parking brake.',
+                   font=font(19), fill='#e8e8e8', anchor='mm')
+    speed, brake = ui.protocols.parked_setup_readings()
+    lines = ('Waiting for the radio to confirm the parking brake.',
+             'If it is already engaged, keep the brake pedal pressed.',
+             'Then release and re-engage the parking brake.')
+    if (speed is not None and speed > 0) or (ui.mode == 'parked_plugin' and brake is True):
+        lines = ('Waiting for the radio to confirm the vehicle has stopped.',)
+    for index, line in enumerate(lines):
+        page.draw.text((360, 254 + index * 28), line, font=font(17), fill='#bbbbbb', anchor='mm')
     if ui.prefs.safety_notice_accepted and ui.prefs.data['setup_complete']:
         page.button((240, 360, 480, 414), 'Back to Home', ui.home, secondary=True)
     present(ui, page)
-
 
 def obd_coming_soon(ui):
     page = page_for(ui, 'OBD Gauges', ui.home)
@@ -455,7 +467,7 @@ def themes(ui):
 def picture(ui):
     p=page_for(ui,'Picture',ui.appearance_settings)
     ui.picture_sliders=[]
-    accent=art.blend(art.accent(p.theme),(240,237,250),.5)
+    accent=p.accent
     for i,key in enumerate(DEFAULTS):
         y=128+i*80;value=ui.picture_values[key];low,high=LIMITS[key]
         p.label((24,y),key.capitalize(),24)

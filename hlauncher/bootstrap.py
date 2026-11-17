@@ -64,6 +64,11 @@ class BootstrapLauncher:
         host = self.ui.host
         if self.ui.mode == 'plugin' and host.active == 'vehicle':
             return 'vehicle'
+        if (self.ui.mode == 'parked_plugin' and self.ui.locked_plugin == 'vehicle'
+                and self.protocols.parked_setup_readings()[1] is True):
+            # A full stream includes speed. Keep its retries running while the
+            # worker is blocked waiting for that speed confirmation.
+            return 'vehicle'
         illumination = any(ident in PROJECTIONS and getattr(worker.manifest, 'bundled', False) and
                            self.ui.prefs.auto_night(ident)
                            for ident, worker in getattr(host, 'workers', {}).copy().items())
@@ -130,10 +135,12 @@ class BootstrapLauncher:
         from .ui.first_boot import render
         from .config import Preferences
         from sdk.hlauncher_sdk.theme import dither_rgb565
+        from .themes import Themes
         paired=bool(self.state.peer)
         prefs=Preferences(self.state.folder/'settings.json')
         self.splash.image(dither_rgb565(render(self.state.credentials(),paired,
-            prefs.data['tile_color'],(self.splash.w,self.splash.h),show_clock=prefs.data['show_clock'])))
+            prefs.data['tile_color'],(self.splash.w,self.splash.h),show_clock=prefs.data['show_clock'],
+            layout_theme=Themes(prefs.path.parent).get(prefs.data['layout_theme']))))
         self.splash_key=(paired,time.strftime('%Y-%m-%d %H:%M'))
 
     def prepare(self):

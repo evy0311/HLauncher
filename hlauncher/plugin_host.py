@@ -298,6 +298,9 @@ class PluginHost:
         self.height = height
         self.event = event
         self.home = home
+        self.parking_required = lambda plugin_id: self.home(
+            f'Park safely to open {self.manifests[plugin_id].name}.')
+        self.refresh_vehicle = lambda: None
         self.audio = audio
         self.background_allowed = background_allowed or (lambda m: m.keep_alive)
         self.workers = {}
@@ -378,8 +381,11 @@ class PluginHost:
                 self.projection_request=None
                 self.failed(plugin_id,'Previous projection session has not released USB; retry after disconnecting the adapter')
             return
-        except PluginParkingRequired as exc:
-            self.failed(plugin_id, exc)
+        except PluginParkingRequired:
+            foreground = self.active == plugin_id
+            self.stop(plugin_id)
+            if foreground:
+                self.parking_required(plugin_id)
             return
         self.projection_request=None;self.projection_notice=''
 
@@ -489,7 +495,7 @@ class PluginHost:
         self.stop(plugin_id)
         self.event(state='plugin_parking_required', plugin=plugin_id)
         if foreground:
-            self.home(f'Park safely to open {worker.manifest.name}.')
+            self.parking_required(plugin_id)
         return False
 
     def vehicle_gauges(self, snapshot):
@@ -663,6 +669,9 @@ class PluginHost:
                                 superseded=worker.frames_superseded,
                                 copied=worker.frames_copied,
                             )
+                    elif (kind == 'vehicle.refresh' and plugin_id == 'vehicle'
+                          and worker.manifest.bundled and self.active == plugin_id and worker.ready):
+                        self.refresh_vehicle()
                     elif kind == 'radio.button.result':
                         if 'input.buttons' in worker.manifest.capabilities:
                             self.button_result(worker, message)

@@ -78,6 +78,7 @@ class StartProbe:
         self.simple_remote_state = 0
         self.vehicle_subscription = VehicleSubscription()
         self.vehicle_auth_sessions = {}
+        self.vehicle_refresh_seen = 0
         self.vehicle_session = None
         self.vehicle_identities = {}
         self.display_sequence = 0
@@ -738,7 +739,8 @@ class StartProbe:
                                             self.vehicle_session = None
                                     events.append(dict(state='honda_can_authorization', session=sid,
                                         protocol=self.sessions[sid][1], authorized=authorized,
-                                        result=body[1], flags=body[10]))
+                                        result=body[1], flags=body[10],
+                                        can_capable=self.vehicle_auth_sessions.get(sid, {}).get('can_capable', False)))
                             if mid != 0xB3:
                                 self.request_vehicle_data(events, replies)
                             if mid == 0xB3 and body == b"\0":
@@ -936,12 +938,13 @@ class StartProbe:
         self.session_pending={txn:value for txn,value in self.session_pending.items() if value[0]!=sid}
         self.session_start_requested=False
 
-    def request_vehicle_data(self, events, replies):
+    def request_vehicle_data(self, events, replies, *, refresh=0):
         if not self.authenticated or self.active_app is None:
             return
         scope=self.vehicle_scope()
         if scope not in SCOPES:scope='off'
         now = time.monotonic()
+        manual = scope == 'vehicle' and refresh > self.vehicle_refresh_seen
         # Firmware C80C4 checks the specific app connection, not a global flag.
         # One owner per app connection; a bootstrap channel cannot borrow auth.
         for sid, auth in self.vehicle_auth_sessions.items():
@@ -952,18 +955,20 @@ class StartProbe:
                 continue
             if self.vehicle_session is not None and self.vehicle_session != sid:
                 continue
-            if not self.vehicle_subscription.needs_request(sid, scope, now):
+            if not self.vehicle_subscription.needs_request(sid, scope, now, refresh=manual):
                 continue
             self.vehicle_session = sid
             events.append(dict(state='honda_can_session_selected', session=sid,
                                protocol=name, authorization_session=sid, **auth))
             self.vehicle_subscription.request(sid, self.send_honda, events, replies, now=now,
-                                              protocol=name, scope=scope)
+                                              protocol=name, scope=scope, refresh=manual)
+            if manual:
+                self.vehicle_refresh_seen = refresh
             return
 
-    def sync_vehicle_scope(self):
+    def sync_vehicle_scope(self, *, refresh=0):
         events=[];replies=[]
-        self.request_vehicle_data(events,replies)
+        self.request_vehicle_data(events,replies,refresh=refresh)
         return events,replies
 
     def tick(self):

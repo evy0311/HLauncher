@@ -35,6 +35,8 @@ class ProtocolDiagnostics:
         self.recent=deque(maxlen=12);self.voice={};self.mic={};self.connected=False
         self.last_marker='';self.sequence=0
         self.vehicle=VehicleTraffic()
+        self.vehicle_feed_at = None
+        self.vehicle_feed_capable = {}
         self.last_reported_speed = None
         self.last_reported_speed_at = None
         self.last_reported_speed_session = None
@@ -85,6 +87,16 @@ class ProtocolDiagnostics:
             if state=='honda_app_disconnect_received':
                 self.vehicle.clear()
                 self.last_reported_speed_at = None
+            if state == 'honda_can_authorization':
+                if event.get('authorized'):
+                    self.vehicle_feed_capable[event.get('session')] = bool(event.get('can_capable'))
+                else:
+                    self.vehicle_feed_capable.pop(event.get('session'), None)
+            if state == 'iap_data_session_closed':
+                self.vehicle_feed_capable.pop(event.get('session'), None)
+            if state in ('iap_remote_reset', 'honda_app_disconnect_received') or not self.connected:
+                self.vehicle_feed_capable.clear()
+                self.vehicle_feed_at = None
             self.remember_vehicle(event)
             if state=='honda_display_test_result':
                 self.display_trials.appendleft(dict(event))
@@ -170,7 +182,10 @@ class ProtocolDiagnostics:
             if event['data_type']:
                 saved.update_report(event['data_type'], event['records'], now)
             else:
-                saved.update(self.vehicle_readings_from(event), now)
+                readings = self.vehicle_readings_from(event)
+                if readings:
+                    self.vehicle_feed_at = now
+                    saved.update(readings, now)
         elif state == 'honda_radio_status' and active and self.connected:
             saved.update({'brake': event['parking_brake_engaged']}, now)
         elif ((state == 'honda_can_subscription_queued' and event.get('scope') != 'vehicle') or
@@ -199,7 +214,23 @@ class ProtocolDiagnostics:
     def vehicle_plugin_snapshot(self, now):
         with self.lock:
             saved = self.last_vehicle
-            snapshot = dict(last_updated=saved.updated_text(now), readings=dict(saved.readings))
+            subscription = self.vehicle.subscription
+            status = subscription.get('status') if subscription.get('scope') == 'vehicle' else None
+            if not self.connected:
+                link = 'Radio disconnected'
+            elif self.vehicle_feed_at is not None and now - self.vehicle_feed_at <= 3:
+                link = 'Receiving vehicle data'
+            elif status in ('rejected', 'Settings rejected', 'Transport rejected'):
+                link = 'Radio rejected the request'
+            elif status in ('Accepted; no data', 'No settings reply', 'No transport ACK', 'Receiving'):
+                link = 'No recent data from the radio'
+            elif self.vehicle_feed_capable and not any(self.vehicle_feed_capable.values()):
+                link = 'Radio did not offer vehicle data'
+            elif status is None:
+                link = 'Connecting to HondaLink'
+            else:
+                link = 'Requesting vehicle data'
+            snapshot = dict(last_updated=saved.updated_text(now), readings=dict(saved.readings), link=link)
             return snapshot, saved.report_revision, saved.report_view()
 
     def save_last_vehicle(self, *, force=False):

@@ -62,7 +62,7 @@ def draw_launcher(ui):
     picker=ui.color_picker
     p=Page('Hex color' if picker.keyboard else 'Custom color',
            (lambda:ui.picker_key('cancel-hex')) if picker.keyboard else ui.cancel_custom_color,
-           picker.hex,(ui.fb.w,ui.fb.h),ui.pressed_box if ui.press is not None else None,show_clock=ui.prefs.data['show_clock'])
+           picker.hex,(ui.fb.w,ui.fb.h),ui.pressed_box if ui.press is not None else None,show_clock=ui.prefs.data['show_clock'], layout_theme=getattr(ui, 'layout_theme', None))
     if picker.keyboard:
         p.panel((24,120,324,192))
         p.label((48,140),'#'+picker.buffer.ljust(6,'_'),32)

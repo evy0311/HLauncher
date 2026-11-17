@@ -4,9 +4,7 @@ from math import cos, radians, sin
 from PIL import Image, ImageColor, ImageDraw
 from hlauncher_sdk.fonts import font
 from hlauncher.ui import home_art
-from hlauncher.ui.chrome import BACK_BOUNDS
-from hlauncher.ui.controls import Page
-from hlauncher.ui.home import caption
+from hlauncher.ui.chrome import BACK_BOUNDS, render as chrome
 from hlauncher.vehicle_fields import (
     DIAGNOSTIC_FIELDS, DIAGNOSTIC_KEYS, GROUPS, MINDER_IDS, SERVICE_ITEMS,
     field_label, unit, visible,
@@ -15,7 +13,7 @@ from diagnostics import fault_codes, record_title
 
 WIDTH, HEIGHT = 720, 480
 TABS = ('Maintenance', 'Health', 'Diagnostics', 'Readings')
-FALLBACK_COLORS = dict(background='#101318', panel='#1b2129', accent='#f4b36a', text='#f3f2ee', muted='#aeb9c6')
+FALLBACK_COLORS = dict(background='#101015', panel='#1d1e25', accent='#e7a693', text='#f5f4f6', muted='#b5b4be')
 
 
 def blend(low, high, fraction):
@@ -35,6 +33,8 @@ class Dashboard:
         self.readings = {}
         self.reports = {}
         self.last_updated = 'No readings yet'
+        self.link = 'Connecting to HondaLink'
+        self.refreshing = False
         self.colors = {}
         self.layout = 'menu'
         self.oem_color = None
@@ -43,6 +43,8 @@ class Dashboard:
         self.hidden = set(hidden)
         self.readings = snapshot['readings']
         self.last_updated = snapshot['last_updated']
+        self.link = snapshot.get('link', 'Connecting to HondaLink')
+        self.refreshing = snapshot.get('refreshing', False)
         self.colors = {**FALLBACK_COLORS, **colors}
         self.oem_color = oem_color
         self.layout = layout
@@ -83,21 +85,18 @@ class Dashboard:
         self.c['edge'] = blend(self.c['panel'], self.c['text'], .15)
         self.c['raised'] = blend(self.c['panel'], self.c['text'], .08)
         self.actions = []
-        self.oem_page = None
         if self.oem_color:
-            self.c['accent'] = home_art.blend(home_art.accent(self.oem_color), (245, 243, 255), .62)
-            self.c['edge'] = home_art.blend(home_art.accent(self.oem_color), (62, 55, 66), .6)
-            pressed = BACK_BOUNDS if self.down == 'home' and self.inside(BACK_BOUNDS) else None
-            self.oem_page = Page('Vehicle', self.home, self.oem_color, (WIDTH, HEIGHT), pressed=pressed, heading_y=60)
-            self.image, self.d = self.oem_page.image, self.oem_page.draw
-            self.top = 144
-            nav_y = 96
+            self.c['accent'] = home_art.blend(home_art.accent(self.oem_color), self.c['text'], .65)
+            pressed = self.down == 'home' and self.inside(BACK_BOUNDS)
+            self.image = chrome(self.oem_color, child=True, pressed=pressed)
+            self.d = ImageDraw.Draw(self.image)
+            self.d.rectangle((0, 52, 719, 479), fill=self.c['background'])
+            self.top, nav_y = 144, 96
         else:
             self.image = Image.new('RGB', (WIDTH, HEIGHT), self.c['background'])
             self.d = ImageDraw.Draw(self.image)
             bottom = self.layout in ('console', 'dock')
-            self.top = 80 if bottom else 128
-            nav_y = 432 if bottom else 68
+            self.top, nav_y = (80, 432) if bottom else (128, 68)
         self.bottom = self.top + 328
         self.header(nav_y)
         if self.tab == 0:
@@ -112,14 +111,6 @@ class Dashboard:
 
     def text(self, x, y, value, size=18, role='text', *, weight=400, width=None, anchor='lm'):
         value = str(value)
-        if self.oem_page and weight >= 500 and role == 'text':
-            label = caption(value, size)
-            while width is not None and label.width > width and value:
-                value = value[:-1]
-                label = caption(value+'…', size)
-            offset = {'lm': 0, 'mm': label.width//2, 'rm': label.width}.get(anchor, 0)
-            self.image.paste(label, (x-offset, y-label.height//2), label)
-            return
         face = font(size, weight)
         if width is not None and self.d.textlength(value, font=face) > width:
             while value and self.d.textlength(value+'…', font=face) > width:
@@ -128,12 +119,7 @@ class Dashboard:
         self.d.text((x, y), value, fill=self.c[role], font=face, anchor=anchor)
 
     def panel(self, box, *, fill='panel', radius=12):
-        if self.oem_page:
-            x, y, right, bottom = box
-            tile = home_art.tile(self.oem_color, right-x, bottom-y, radius=6, control=fill == 'raised')
-            self.image.paste(tile, (x, y), tile)
-        else:
-            self.d.rounded_rectangle(box, radius=radius, fill=self.c[fill], outline=self.c['edge'])
+        self.d.rounded_rectangle(box, radius=radius, fill=self.c[fill], outline=self.c['edge'])
 
     def rule(self, x, y, right):
         self.d.line((x, y, right, y), fill=self.c['edge'])
@@ -145,10 +131,6 @@ class Dashboard:
     def button(self, box, key, label, action, *, selected=False, size=16):
         x, y, right, bottom = box
         pressed = self.hit(box, key, action)
-        if self.oem_page:
-            self.oem_page.pressed = box if pressed else None
-            self.oem_page.button(box, label, action, selected=selected, size=size+3)
-            return
         if selected or pressed:
             self.panel(box, fill='raised', radius=8)
         self.text((x+right)//2, (y+bottom)//2, label, size, weight=500 if selected else 400,
@@ -163,20 +145,32 @@ class Dashboard:
         return 'home'
 
     def header(self, nav_y):
-        if self.oem_page:
+        if self.oem_color:
             self.hit(BACK_BOUNDS, 'home', self.home)
-            self.text(696, 74, f'Last updated · {self.last_updated}', 15, 'muted', anchor='rm')
+            self.text(24, 73, 'Vehicle', 26, weight=500)
+            status_y = 73
+            refresh_box = (574, 53, 696, 93)
         else:
             self.button((24, 12, 104, 56), 'home', '‹  Home', self.home)
-            self.text(116, 34, 'Vehicle', 30, weight=500)
-            self.text(696, 22, 'Last updated', 13, 'muted', anchor='rm')
-            self.text(696, 42, self.last_updated, 16, width=420, anchor='rm')
+            self.text(116, 34, 'Vehicle', 26, weight=500)
+            status_y = 34
+            refresh_box = (574, 12, 696, 56)
             self.rule(24, 60 if nav_y == 68 else 64, 696)
+        if self.readings or self.reports:
+            self.text(556, status_y - 10, self.link, 16, 'text', width=285, anchor='rm')
+            self.text(556, status_y + 10, f'Last received · {self.last_updated}', 13, 'muted',
+                      width=340 if self.oem_color else 326, anchor='rm')
+        else:
+            self.text(556, status_y, self.link, 16, 'muted', width=325, anchor='rm')
+        if self.refreshing:
+            self.text(635, status_y, 'Requesting…', 15, 'muted', anchor='mm')
+        else:
+            self.button(refresh_box, 'refresh', 'Refresh data', lambda: 'refresh', selected=True, size=15)
         for i, tab in enumerate(TABS):
             left = 24 + i*170
             self.button((left, nav_y, left+162, nav_y+40), ('tab', i), tab,
                         lambda i=i: self.navigate(tab=i), selected=self.tab == i, size=17)
-            if self.tab == i and not self.oem_page:
+            if self.tab == i:
                 self.d.rounded_rectangle((left+60, nav_y+36, left+102, nav_y+38), radius=1, fill=self.c['accent'])
 
     def has(self, key):
@@ -188,7 +182,7 @@ class Dashboard:
     def value(self, key):
         value = self.reading(key)
         if value is None:
-            return 'Waiting'
+            return '—'
         if key == '42' and not 0 <= value <= 100:
             return 'Unavailable'
         if isinstance(value, bool):
@@ -219,7 +213,7 @@ class Dashboard:
         if not valid and cluster is not None:
             note = 'Cluster code · ' + self.value('72')
         elif not valid:
-            note = 'Waiting for oil life' if value is None else 'Oil life unavailable'
+            note = 'No oil-life reading received' if value is None else 'Oil life unavailable'
         elif value <= 15:
             note = 'Oil life depleted' if value == 0 else 'Service due now' if value <= 5 else 'Service due soon'
         self.text(cx, end-20, note, 14, 'muted', anchor='mm')
@@ -251,8 +245,8 @@ class Dashboard:
             if len(active) > 3:
                 self.text(676, y+186, f'+{len(active)-3} more in code guide', 13, 'muted', anchor='rm')
         elif not readings or not any(value is not None for _, value in readings):
-            self.text(x+20, y+80, 'Waiting for service codes' if readings else 'Service codes hidden', 21)
-            self.text(x+20, y+113, 'Codes appear when the cluster reports them', 15, 'muted', width=656-x)
+            self.text(x+20, y+80, 'No service data received' if readings else 'Service codes hidden', 21)
+            self.text(x+20, y+113, 'Codes are shown when the cluster reports them', 15, 'muted', width=656-x)
         else:
             complete = all(value is False for _, value in readings)
             self.text(x+20, y+80, 'No service codes reported' if complete else 'Service codes incomplete', 20,
@@ -327,11 +321,6 @@ class Dashboard:
 
     def list_row(self, y, key, label, value='', *, action=None, role='muted'):
         box = (24, y, 696, y+44)
-        if self.oem_page and action:
-            box = (24, y, 696, y+40)
-            self.oem_page.pressed = box if self.hit(box, key, action) else None
-            self.oem_page.bar(box, label, action, value=value, size=22)
-            return
         if action:
             pressed = self.hit(box, key, action)
             if pressed:
@@ -377,7 +366,7 @@ class Dashboard:
                 self.text(44, y+61, f'{len(active)} reported active', 26, 'accent', weight=500)
                 self.text(44, y+90, ' · '.join(map(field_label, active)), 16, 'muted', width=626)
             else:
-                self.text(44, y+70, 'No active warnings reported' if checked else 'Waiting for warning data', 23)
+                self.text(44, y+70, 'No active warnings reported' if checked else 'No warning data received', 23)
             self.button((44, y+104, 676, y+144), 'warnings', f'View indicators · {checked} of {len(warnings)} reported',
                         lambda: self.navigate('warnings'), size=16)
             self.chevron(672, y+124)
@@ -441,14 +430,14 @@ class Dashboard:
                     count = f'{total} record' + ('s' if total != 1 else '')
                     status = count if kind == 3 else f'{len(codes)} decoded · {count}'
             else:
-                status = 'Waiting for a report'
+                status = 'No report received'
             self.text(44, y+44, status, 15, 'muted')
             self.chevron(676, y+32)
 
     def diagnostic_report(self, kind, view):
         records, total, complete = self.reports.get(kind, ([], 0, False))
         if kind not in self.reports:
-            note = 'Waiting for a report from this stream'
+            note = 'No report received from this stream'
         elif not complete:
             note = 'Receiving report'
         else:
@@ -488,6 +477,8 @@ class Dashboard:
         if health and group == 'warnings':
             note = 'Last states reported by the radio'
         self.heading(label, note, back)
+        fields = [key for key in fields if self.reading(key) is not None] + [
+            key for key in fields if self.reading(key) is None]
         for i, key in enumerate(self.paginate(fields, 5)):
             value = self.value(key)
             role = 'text'

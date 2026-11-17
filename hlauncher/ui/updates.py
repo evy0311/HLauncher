@@ -11,7 +11,7 @@ from sdk.hlauncher_sdk.fonts import font
 def draw_launcher(launcher):
     info=status(launcher.prefs.path.parent)
     page=Page('Software updates',(launcher.updates_page if launcher.mode == 'update_confirm' else launcher.system_settings),launcher.prefs.data['tile_color'],
-              (launcher.fb.w,launcher.fb.h),launcher.pressed_box if launcher.press is not None else None,show_clock=launcher.prefs.data['show_clock'])
+              (launcher.fb.w,launcher.fb.h),launcher.pressed_box if launcher.press is not None else None,show_clock=launcher.prefs.data['show_clock'], layout_theme=getattr(launcher, 'layout_theme', None))
     if launcher.mode == 'update_confirm':
         action = 'Return to stable ' if launcher.confirm_stable_return else 'Install HLauncher '
         page.text((24, 120), action + (launcher.confirm_update_version or ''), 26)

@@ -79,7 +79,7 @@ def safety_agreement_text(launcher, page, *, top, bottom, include_notice=False):
 def draw_safety_notice(launcher):
     page = Page('Safety notice', None, launcher.prefs.data['tile_color'],
                 (launcher.fb.w, launcher.fb.h), launcher.pressed_box,
-                heading_y=88, show_clock=launcher.prefs.data['show_clock'])
+                heading_y=88, show_clock=launcher.prefs.data['show_clock'], layout_theme=getattr(launcher, 'layout_theme', None))
     page.button((24, 408, 240, 460), 'Cancel', launcher.recovery_page, secondary=True)
     reviewed = safety_agreement_text(launcher, page, top=128, bottom=378, include_notice=True)
     if launcher.banner:
@@ -102,7 +102,7 @@ def draw_launcher(launcher):
               (lambda:launcher.setup_next(-1)) if step else (launcher.exit_setup if can_exit else None),
               launcher.prefs.data['tile_color'],(launcher.fb.w,launcher.fb.h),
               launcher.pressed_box if launcher.press is not None else None,
-              detail='' if can_exit else f'{step+1} / {len(STEPS)}',heading_y=88,show_clock=launcher.prefs.data['show_clock'])
+              detail='' if can_exit else f'{step+1} / {len(STEPS)}',heading_y=88,show_clock=launcher.prefs.data['show_clock'], layout_theme=getattr(launcher, 'layout_theme', None))
     if can_exit:
         page.text((548,104),f'{step+1} / {len(STEPS)}',16,anchor='rm')
         page.button((568,80,696,124),'Exit',launcher.exit_setup,size=20,secondary=True)

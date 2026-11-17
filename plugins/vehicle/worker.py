@@ -48,14 +48,16 @@ def main():
                     contact = contacts[0] if contacts else {}
                     point = (contact['x_px'], contact['y_px']) if (
                         contact.get('x_px') is not None and contact.get('y_px') is not None) else None
-                    if dashboard.touch(contact.get('action', 'unused'), point) == 'home':
+                    action = dashboard.touch(contact.get('action', 'unused'), point)
+                    if action == 'home':
                         client.home()
                         active = False
+                    elif action == 'refresh':
+                        client.send(type='vehicle.refresh')
                     dirty = True
             if active and dirty and client.free:
                 frame = dashboard.render()
-                if dashboard.oem_color:
-                    frame = dither_rgb565(frame)
+                frame = dither_rgb565(frame)
                 if client.present(encode(frame)):
                     dirty = False
                     frames += 1

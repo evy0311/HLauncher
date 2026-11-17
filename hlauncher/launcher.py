@@ -86,6 +86,10 @@ class Launcher:
         self.protocols = protocol_diagnostics or ProtocolDiagnostics(
             self.prefs.path.parent/'protocol-captures', vehicle_path=self.prefs.path.parent/'vehicle-last-known.json')
         self.host.parking_state = self.protocols.plugin_parking_state
+        self.host.parking_required = self.park_plugin
+        self.host.refresh_vehicle = self.refresh_vehicle
+        self.vehicle_refresh_serial = 0
+        self.vehicle_refresh_at = float('-inf')
         self.host.projection_night_mode = self.projection_night_mode
         self.protocol_page = 0
         self.integration_tab = 'Display'
@@ -107,6 +111,8 @@ class Launcher:
         self.storage_checked = 0
         self.setup_list_page = 0
         self.mode = "home" if self.prefs.safety_notice_accepted else "safety_notice"
+        self.locked_plugin = None
+        self.parked_backdrop = None
         self.parked_screen_locked = False
         self.parked_page_visible = False
         self.parked_overlay_at = None
@@ -525,6 +531,7 @@ class Launcher:
         self.restore_hdmi_range()
         self.host.deactivate()
         self.mode = "home"
+        self.locked_plugin = None
         self.camera_frame = None
         self.home_swipe = None
         self.home_slide = 0.0
@@ -759,6 +766,15 @@ class Launcher:
             self.protocols.observe(dict(state='honda_display_test_result', action=action,
                                        status='Radio transport unavailable'))
         self.draw()
+
+    def refresh_vehicle(self):
+        from .protocol.vehicle_can import VEHICLE_REFRESH_INTERVAL
+
+        now = time.monotonic()
+        if (self.host.active == 'vehicle' and self.protocols.plugin_parking_state()['safely_parked']
+                and now - self.vehicle_refresh_at >= VEHICLE_REFRESH_INTERVAL):
+            self.vehicle_refresh_serial += 1
+            self.vehicle_refresh_at = now
 
     def vehicle_tab(self, tab):
         self.vehicle_data_tab = tab
@@ -1046,7 +1062,12 @@ class Launcher:
             self.press = self.pressed_box = None
             self.draw()
             return
+        if (self.manifests[plugin_id].requires_parked
+                and not self.protocols.plugin_parking_state()['safely_parked']):
+            self.park_plugin(plugin_id)
+            return
         try:
+            self.locked_plugin = None
             self.mode = "plugin"
             self.camera_frame = None
             self.plugin_home_pressed = False
@@ -1055,8 +1076,8 @@ class Launcher:
             self.last_status = None
             self.host.activate(plugin_id)
             self.draw()
-        except PluginParkingRequired as exc:
-            self.home(str(exc))
+        except PluginParkingRequired:
+            self.park_plugin(plugin_id)
         except (OSError, ValueError) as exc:
             self.event(state="plugin_launch_failed", plugin=plugin_id, error=str(exc))
             self.home(str(exc)[:120] if self.manifests[plugin_id].revision and isinstance(exc, ValueError)
@@ -1103,6 +1124,15 @@ class Launcher:
             self.event(state="settings_save_failed", error=str(exc))
         self.draw()
 
+    def park_plugin(self, plugin_id):
+        self.host.deactivate()
+        self.mode = 'parked_plugin'
+        self.locked_plugin = plugin_id
+        self.press = self.pressed_box = None
+        self.has_frame = False
+        self.camera_frame = None
+        self.draw()
+
     @property
     def parked_only_screen(self):
         if self.mode == 'home':
@@ -1110,7 +1140,10 @@ class Launcher:
         return self.mode not in ('plugin', 'obd_coming_soon', 'shutdown_pending', 'parking_status')
 
     def sync_parked_screen(self):
-        locked = self.parked_only_screen and not self.protocols.parked_for_setup()
+        # Pending plugins reopen on tick, after the host has finished stopping
+        # the previous worker. Until then every input stays on the lock screen.
+        locked = self.mode == 'parked_plugin' or (
+            self.parked_only_screen and not self.protocols.parked_for_setup())
         if locked == self.parked_screen_locked:
             return False
         self.parked_screen_locked = locked
@@ -1123,11 +1156,17 @@ class Launcher:
             self.color_picker.drag = None
         self.parked_overlay_at = None
         if locked:
+            from .ui.pages import parked_backdrop
+
+            self.parked_backdrop = parked_backdrop(self)
             self.tone_test.stop()
             # Cancel input immediately, but leave the current page visible during a brief
             # telemetry gap. Movement, brake release or disconnect shows the overlay at once.
-            if self.parked_page_visible and self.protocols.parked_setup_refresh_pending():
+            if (self.mode != 'parked_plugin' and self.parked_page_visible
+                    and self.protocols.parked_setup_refresh_pending()):
                 self.parked_overlay_at = time.monotonic() + 1
+        else:
+            self.parked_backdrop = None
         return True
 
     def parked_overlay_due(self):
@@ -1399,7 +1438,7 @@ class Launcher:
             self.inputs.control_epochs['hondalink-iap'] += 1
         if values.get("connected") is False:
             self.press = self.pressed_box = None
-            if self.mode != 'parking_status' and self.host.active not in PROJECTIONS and not self.pending_default:
+            if self.mode not in ('parking_status', 'parked_plugin') and self.host.active not in PROJECTIONS and not self.pending_default:
                 self.home()
 
     def tick(self):
@@ -1409,6 +1448,8 @@ class Launcher:
                 self.plugin_checked = time.monotonic()
                 self.refresh_plugins()
         now = time.monotonic()
+        if self.mode == 'parked_plugin' and self.protocols.plugin_parking_state()['safely_parked']:
+            self.open_plugin(self.locked_plugin)
         if self.sync_parked_screen() or self.parked_overlay_due():
             self.draw()
         if not self.parked_screen_locked:
@@ -1466,7 +1507,10 @@ class Launcher:
             color = self.prefs.data['tile_color']
             oem_color = color if theme.id == 'oem' else None
             colors = resolved_colors(theme, layout, color) if theme.colors else {}
-            self.host.vehicle_dashboard(*self.protocols.vehicle_plugin_snapshot(now), colors,
+            snapshot, revision, reports = self.protocols.vehicle_plugin_snapshot(now)
+            from .protocol.vehicle_can import VEHICLE_REFRESH_INTERVAL
+            snapshot['refreshing'] = now - self.vehicle_refresh_at < VEHICLE_REFRESH_INTERVAL
+            self.host.vehicle_dashboard(snapshot, revision, reports, colors,
                                         layout, self.prefs.data['vehicle_hidden'], oem_color=oem_color)
         if self.host.active=='obd' and time.monotonic()-getattr(self,'vehicle_gauge_sent',0)>=1/30:
             self.vehicle_gauge_sent=time.monotonic()

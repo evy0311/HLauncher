@@ -28,7 +28,7 @@ PARKING_LABELS = {
 
 def parking_status(ui):
     p = Page('Parking Status', None, ui.prefs.data['tile_color'], (ui.fb.w, ui.fb.h),
-             ui.pressed_box, show_clock=ui.prefs.data['show_clock'])
+             ui.pressed_box, show_clock=ui.prefs.data['show_clock'], layout_theme=getattr(ui, 'layout_theme', None))
     p.button((632, 62, 696, 108), '×', ui.close_parking_status, secondary=True)
     data = ui.protocols.parking_snapshot()
     link = 'Connected' if data['connected'] else 'Disconnected'

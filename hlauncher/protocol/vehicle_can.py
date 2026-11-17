@@ -19,6 +19,8 @@ ILLUMINATION_API_IDS = (5, 6)
 ILLUMINATION_SUBSCRIPTION = next(row for row in SUBSCRIPTIONS if row['message_id'] == ILLUMINATION_ID)
 DRIVING_API_IDS = (152,)
 SPEED_RETRY_DELAYS = (2, 4)
+VEHICLE_RETRY_DELAY = 5
+VEHICLE_REFRESH_INTERVAL = 3
 PARKING_DIAGNOSTIC_API_IDS = (78, 79, 80, 95, 99, 100, 101)
 GPS_IDS = (0x99F00003, 0x99F00004)
 GPS_SUBSCRIPTIONS = tuple(row for row in SUBSCRIPTIONS if row['message_id'] in GPS_IDS)
@@ -111,7 +113,7 @@ def subscription_ticks(scope):
     return 1 if 'gauges' in scope or 'driving' in scope else 10
 
 
-def subscription_payloads(scope='diagnostics'):
+def subscription_payloads(scope='diagnostics', *, crm=True):
     if scope=='off':return (bytes.fromhex('0200000a0100'),)
     rows=subscription_rows(scope)
     normal = serialize_setting(0, ((r['message_id'], r['can_type'], r['mask']) for r in rows))
@@ -121,7 +123,7 @@ def subscription_payloads(scope='diagnostics'):
     settings = [normal]
     for data_type in (1, 2, 3):
         settings.append(bytes((data_type, 0, 0, 0, 0)))
-        if scope == 'vehicle':
+        if scope == 'vehicle' and crm:
             settings.append(serialize_setting(data_type, CRM_CONTEXT[min(data_type-1, 1)]))
     header = bytes((2, 0, 0, ticks, 1, len(settings)))
     # The native serializer sends the normal list and diagnostic settings separately.
@@ -205,7 +207,7 @@ class VehicleSubscription:
         # Native SDK ignores duplicate finish seeds once configured.
         if sid not in self.keys:self.keys[sid] = session_key(seed, device_info)
 
-    def needs_request(self, sid, scope, now):
+    def needs_request(self, sid, scope, now, *, refresh=False):
         if sid not in self.keys:
             return False
         previous = self.requests.get(sid)
@@ -214,24 +216,33 @@ class VehicleSubscription:
         age = now - previous['at']
         if previous['scope'] != scope:
             return age >= .35
+        if scope == 'vehicle':
+            return (refresh and age >= VEHICLE_REFRESH_INTERVAL) or (
+                previous['crm'] and age >= VEHICLE_RETRY_DELAY
+                and (previous['status'] == 'rejected' or not previous.get('normal_received')))
         retries = previous['speed_retries']
         return ('driving' in scope and not previous.get('speed_received')
                 and retries < len(SPEED_RETRY_DELAYS) and age >= SPEED_RETRY_DELAYS[retries])
 
-    def request(self, sid, send, events, replies, now=None, protocol=None, scope='diagnostics'):
+    def request(self, sid, send, events, replies, now=None, protocol=None, scope='diagnostics', *, refresh=False):
         at=time.monotonic() if now is None else now
-        if not self.needs_request(sid, scope, at):
+        if not self.needs_request(sid, scope, at, refresh=refresh):
             return
         previous=self.requests.get(sid)
         speed_retries = previous['speed_retries'] + 1 if previous and previous['scope'] == scope else 0
         rows = subscription_rows(scope)
         api_ids = SCOPED_API_IDS.get(scope)
         cycle = subscription_ticks(scope)
-        payloads=subscription_payloads(scope)
+        same_scope = previous is not None and previous['scope'] == scope
+        # The Connect app's optional CRM context uses seven settings. If that
+        # exchange fails, try its standard four-setting form with the same live mask.
+        crm = scope == 'vehicle' and (not same_scope or (
+            previous['crm'] and previous.get('normal_received') and previous['status'] != 'rejected'))
+        payloads=subscription_payloads(scope, crm=crm)
         request = self.requests[sid] = dict(at=at,scope=scope,api_ids=api_ids,
             previous_api_ids=previous['api_ids'] if previous else None,can_ids={r['message_id'] for r in rows},
             status='pending', protocol=protocol, transport_status='pending', transactions=[], acks={},
-            speed_retries=speed_retries)
+            speed_retries=speed_retries, crm=crm)
         for index, payload in enumerate(payloads):
             send(sid, 0xc2, payload, events, replies, 'honda_can_subscription_queued')
             events[-1].update(can_ids=[r['message_id'] for r in rows], cycle=cycle,
@@ -286,7 +297,7 @@ class VehicleSubscription:
                     error=str(exc), bytes=len(payload), preview=payload[:64].hex()))
                 return
             request['received'] = True
-            if payload[11] == 0:
+            if payload[11] == 0 and records:
                 request['normal_received'] = True
                 if any(0 <= record['signals'].get('152', -1) <= 400 for record in records):
                     request['speed_received'] = True
@@ -312,6 +323,6 @@ class VehicleSubscription:
                     'no_settings_response' if request['transport_status']=='acknowledged' else 'no_transport_ack')
                 events.append(dict(state='honda_can_subscription_timeout', session=sid,
                     status=request['status'], seconds=10, reason='No normal CAN data received',
-                    retry=False, phase=phase, protocol=request['protocol'],
+                    retry=self.needs_request(sid, request['scope'], now), phase=phase, protocol=request['protocol'],
                     transaction=request['transaction'], transport_status=request['transport_status']))
         return events

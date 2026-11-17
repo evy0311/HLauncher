@@ -2,7 +2,6 @@
 from dataclasses import dataclass
 from PIL import ImageDraw
 from .chrome import scale_bounds
-from . import home_art as art
 
 
 @dataclass
@@ -60,13 +59,14 @@ def scrollbar(ui,page,view,step, *, draggable=True):
             view.update(track=(646,track_top,662,track_bottom),thumb_height=thumb_height,thumb_top=thumb_top)
         else:
             view['max_drag']=bottom-top-24
-        page.draw.rounded_rectangle((650,track_top,658,track_bottom),radius=4,fill='#201a22',outline='#77606c')
+        page.draw.rounded_rectangle((650,track_top,658,track_bottom),radius=4,fill=page.colors.get('panel','#201a22'),outline=page.edge)
         page.draw.rounded_rectangle((651,thumb_top,657,thumb_top+thumb_height),radius=3,
-                                    fill=art.blend(art.accent(page.theme),(245,228,238),.65))
+                                    fill=page.accent)
         for y,direction in ((top,-1),(bottom-48,1)):
             box=(664,y,696,y+48);actual=scale_bounds(box,page.size)
-            if page.pressed==actual:page.draw.rectangle(box,fill='#30232d')
-            color='#e7dce4' if (offset>0 if direction<0 else offset<maximum) else '#655560'
+            if page.pressed==actual:page.draw.rectangle(box,fill=page.colors.get('panel','#30232d'))
+            color = (page.colors.get('text', '#e7dce4') if (offset > 0 if direction < 0 else offset < maximum)
+                     else page.edge)
             for shift in (-5,4):
                 cy=y+24+shift
                 page.draw.line([(669,cy-direction*4),(680,cy+direction*4),(691,cy-direction*4)],fill=color,width=3)

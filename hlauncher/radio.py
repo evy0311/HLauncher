@@ -256,7 +256,8 @@ def main():
                 for _,profile in profiles:
                     if not profile.uuid.endswith('cafe'):continue
                     for device,parser in list(profile.parsers.items()):
-                        changes,replies=parser.sync_vehicle_scope()
+                        changes,replies=parser.sync_vehicle_scope(
+                            refresh=getattr(launcher.ui, 'vehicle_refresh_serial', 0))
                         for item in changes:event(uuid=profile.uuid,**item)
                         profile.queue_replies(device,replies)
                 if launcher.display_test and now >= launcher.display_test[1]:

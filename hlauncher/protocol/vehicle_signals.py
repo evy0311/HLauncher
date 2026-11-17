@@ -17,7 +17,14 @@ EXTRA_SIGNALS = []
 for ident,name,mid,signal,bits,shift,factor,offset,kind in (
     (1001,'ENGINE_OIL_TEMPERATURE_RAW',0x320,'ENG_OIL_TEMP',8,32,1,0,'INT32'),
     (1002,'INTAKE_AIR_TEMPERATURE',0x324,'ENG_INTAKE_AIR_TEMP',8,48,1,-40,'INT32'),
-    (1003,'VTEC_STATUS',0x320,'ENG_VTEC_STATUS',1,54,1,0,'BOOLEAN')):
+    (1003,'VTEC_STATUS',0x320,'ENG_VTEC_STATUS',1,54,1,0,'BOOLEAN'),
+    (1004,'ENGINE_OIL_LIFE_YEAR_RAW',0x454,'ENG_OIL_LIFE_YEAR',4,40,1,0,'INT32'),
+    (1005,'ENGINE_OIL_LIFE_DISTANCE_RAW',0x454,'ENG_OIL_LIFE_DISTANCE',16,24,1,0,'INT32'),
+    (1006,'MAINTENANCE_RESULT_RAW',0x12f96750,'C_MAINT_RESULT',2,36,1,0,'INT32'),
+    (1007,'MAINTENANCE_DISPLAY_CONDITION_RAW',0x12f96750,'C_I_DISPLAY_CONDITION_MAINT',4,20,1,0,'INT32'),
+    (1008,'MAINTENANCE_VEHICLE_CONDITION_RAW',0x12f96750,'C_I_CAR_CONDITION_MAINT',1,19,1,0,'BOOLEAN'),
+    *((1010+i, f'MAINTENANCE_ITEM_{item}_APPLIED', 0x12f96750, f'C_MAINT_ITEM_{item}_APPLIED',
+       1, 11-i, 1, 0, 'BOOLEAN') for i, item in enumerate('AB0123456789'))):
     m=MESSAGES[mid]
     info=dict(api_id=ident,name=name,value_type=kind,source_type='SIGNAL',sources=[dict(
         message_id=mid,message_id_hex=f'0x{mid:08X}',bus=m['canType'],message_name=m['name'],
@@ -31,7 +38,7 @@ for info in (*SIGNALS,*EXTRA_SIGNALS):
 
 # Only annotate units established by the corresponding native field/layout.
 # Unannotated values retain their SDK conversion and display as native units.
-UNITS = {40:'°C', 42:'%', 44:'rpm', 77:'°C', 113:'°', 132:'cycles', 152:'km/h', 167:'%'}
+UNITS = {40:'°C', 42:'%', 44:'rpm', 77:'°C', 113:'°', 132:'cycles', 152:'km/h', 167:'%', 1002:'°C'}
 LABELS = {40:'Coolant temperature', 44:'Engine RPM', 152:'Vehicle speed',
           167:'Accelerator pedal position'}
 ALIASES = {40:'coolant_temperature_c', 44:'engine_rpm'}
@@ -110,7 +117,13 @@ class SignalCache:
             selected = None
             for source in info['sources']:
                 record = self.records.get(source['message_id'])
-                if record and info['api_id']>168 and record.get('api_ids') is None:continue
+                if record and info['api_id'] > 168:
+                    if record.get('api_ids') is None:
+                        continue
+                    received_bits = 4 * len(record['data'])
+                    missing_bits = 8 * source['length'] - received_bits
+                    if source['trailing_offset'] < missing_bits:
+                        continue
                 if record and record.get('api_ids') is not None and info['api_id'] not in record['api_ids']:continue
                 if record and (selected is None or record['at']-selected[0]['at'] > 30):
                     selected = (record, source)

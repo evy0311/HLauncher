@@ -1,7 +1,7 @@
 # HLauncher
 
 A Raspberry Pi launcher for the original HDMI-equipped HondaLink radio in my
-2014 Civic. It adds CarPlay, wired Android Auto and live OBD gauges through plugins.
+2014 Civic. It adds CarPlay, wired Android Auto, live OBD gauges and a Vehicle maintenance dashboard through plugins.
 
 HLauncher implements the phone side of the Civic's legacy HondaLink connection.
 HDMI carries video and media audio, and Bluetooth carries the handshake and
@@ -26,6 +26,7 @@ and future native-radio experiments are on [my blog](https://www.evanhorsley.com
 | CarPlay | iPhone and compatible Carlinkit USB adapter connected to the Pi | [CarPlay](plugins/carplay/README.md) |
 | Android Auto | Android phone connected directly to a Pi USB host port | [Android Auto](plugins/android-auto/README.md) |
 | OBD Gauges | HondaLink vehicle data from the factory radio | [OBD Gauges](plugins/obd/README.md) |
+| Vehicle | HondaLink maintenance, health and fault data from the factory radio | [Vehicle](plugins/vehicle/README.md) |
 
 Power currently comes from a cigarette-lighter USB plug supplying **3 A**. The Pi
 loses power whenever the car cuts power to the socket, without a clean shutdown.

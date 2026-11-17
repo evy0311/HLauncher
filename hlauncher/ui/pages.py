@@ -217,6 +217,40 @@ def plugins(ui):
     present(ui,p)
 
 
+def vehicle_settings(ui, rows):
+    from ..vehicle_fields import GROUPS, field_label, visible
+
+    hidden = set(ui.prefs.data['vehicle_hidden'])
+    group = getattr(ui, 'vehicle_field_group', None)
+    if group is None:
+        title = 'Vehicle'
+        back = ui.plugin_settings
+        for key, (name, fields) in GROUPS.items():
+            count = sum(visible(field, hidden) for field in fields)
+            rows.append(Row(name, lambda key=key: ui.vehicle_fields_page(key),
+                            value=f'{count} of {len(fields)}' if count else 'Hidden'))
+    else:
+        title, fields = GROUPS[group]
+        back = lambda: ui.vehicle_fields_page(None)
+        rows = [Row('Show this group', lambda: ui.toggle_vehicle_field(group), toggle=group not in hidden)]
+        for field in fields:
+            action = lambda field=field: ui.toggle_vehicle_field(field)
+            enabled = field not in hidden
+            if group in hidden:
+                rows.append(Row(field_label(field), action, value='Saved on' if enabled else 'Saved off'))
+            else:
+                rows.append(Row(field_label(field), action, toggle=enabled))
+    key = 'vehicle-settings:' + (group or 'groups')
+    footer = ('Group hidden · individual choices are saved' if group in hidden
+              else 'Controls which readings appear in Vehicle')
+    if settings_menu(ui, title, back, row_items(rows), footer=footer, key=key):
+        return
+    p = page_for(ui, title, back)
+    draw_rows(ui, p, rows, bottom=436, key=key, size=23)
+    p.notice(ui.banner or footer)
+    present(ui, p)
+
+
 def plugin_detail(ui):
     manifest=ui.manifests.get(ui.settings_plugin_id)
     if manifest is None:return plugins(ui)
@@ -244,6 +278,9 @@ def plugin_detail(ui):
         draw_rows(ui, p, rows, bottom=422, key='plugin:'+manifest.id, size=25)
         p.notice(message)
         present(ui, p)
+        return
+    if manifest.bundled and manifest.id == 'vehicle':
+        vehicle_settings(ui, rows)
         return
     if manifest.id=='carplay':
         rows.append(Row('Frame rate', ui.toggle_carplay_fps, value=f'{ui.prefs.carplay_fps} FPS'))

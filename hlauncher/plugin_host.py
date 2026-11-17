@@ -437,7 +437,7 @@ class PluginHost:
             if "session" in worker.manifest.capabilities:
                 worker.send(type="radio.session", **self.session)
         if values.get("connected") is False:
-            if self.active in PROJECTIONS:
+            if self.active in (*PROJECTIONS, 'vehicle'):
                 if worker := self.workers.get(self.active):
                     worker.send(type="touch.cancel")
             else:
@@ -462,6 +462,23 @@ class PluginHost:
         if self.active=='obd' and worker is not None and worker.manifest.bundled:
             return worker.send(type='vehicle.gauges',snapshot=snapshot)
         return False
+
+    def vehicle_dashboard(self, snapshot, revision, reports, colors, layout, hidden):
+        worker = self.workers.get('vehicle')
+        if self.active != 'vehicle' or worker is None or not worker.manifest.bundled or not worker.ready:
+            return
+        if not worker.send(type='vehicle.dashboard', snapshot=snapshot, colors=colors,
+                           layout=layout, hidden=hidden, revision=revision):
+            return
+        if getattr(worker, 'vehicle_revision', None) != revision:
+            # Keep each message under the SDK packet limit, even at the maximum record size.
+            for kind, (records, total) in reports.items():
+                for start in range(0, max(len(records), 1), 28):
+                    batch = records[start:start+28]
+                    if not worker.send(type='vehicle.report', revision=revision, kind=kind,
+                                       start=start, total=total, records=batch, complete=start+len(batch) == len(records)):
+                        return
+            worker.vehicle_revision = revision
 
     def sync_projection_gps(self, fix, carplay_fix):
         for ident in PROJECTIONS:

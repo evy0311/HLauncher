@@ -7,7 +7,7 @@ import re
 from .config import ROOT
 
 API_VERSION = 1
-RESERVED_IDS = frozenset(('carplay', 'android-auto', 'obd'))
+RESERVED_IDS = frozenset(('carplay', 'android-auto', 'obd', 'vehicle'))
 PLUGIN_ID = re.compile(r"[a-z][a-z0-9_-]{0,47}")
 PERMISSIONS = frozenset(('camera', 'network'))
 EXTERNAL_CAPABILITIES = frozenset(('display', 'touch', 'session', 'audio.playback', 'media.publish'))

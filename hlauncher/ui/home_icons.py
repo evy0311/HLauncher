@@ -46,6 +46,15 @@ def render_icon(kind, size):
         with Image.open(Path(__file__).parent/'assets/icons'/(kind+'.png')) as source:
             icon=ImageOps.contain(source.convert('RGBA'),(56*S,56*S),Image.Resampling.LANCZOS)
         canvas.alpha_composite(icon,((canvas.width-icon.width)//2,7*S))
+    elif kind == 'vehicle':
+        ink = '#eef3fa'
+        line([(8,49),(9,39),(18,34),(27,23),(46,23),(55,34),(64,39),
+              (65,49),(58,49)], ink, 3)
+        line([(15,49),(8,49)], ink, 3)
+        line([(27,49),(46,49)], ink, 3)
+        for x in (21,52):
+            d.ellipse(box(x-6,43,12,12),outline=ink,width=3*S)
+        line([(20,34),(54,34)], ink, 2)
     elif kind=='obd':
         # One instrument, with a silver bezel, dark dial and a colored redline.
         mask=Image.new('L',canvas.size);q=ImageDraw.Draw(mask)

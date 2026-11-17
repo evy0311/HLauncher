@@ -4,7 +4,8 @@ from .config import TILE_COLORS
 STEPS = ('Welcome', 'Apps', 'Startup', 'Appearance', 'Network', 'Finish')
 REQUIREMENTS = {'carplay': 'USB CarPlay adapter',
                 'android-auto': 'Android phone connected by USB',
-                'obd': 'Vehicle data from HondaLink'}
+                'obd': 'Vehicle data from HondaLink',
+                'vehicle': 'Maintenance and faults from HondaLink'}
 
 
 class Onboarding:

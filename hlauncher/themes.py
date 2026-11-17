@@ -12,7 +12,7 @@ from .setup_state import atomic_json
 
 THEME_ID = re.compile(r'[a-z][a-z0-9-]{0,31}')
 SCREENS = ('home', 'settings', 'appearance_settings', 'system_settings', 'recovery_settings',
-           'startup_settings', 'plugins_settings', 'plugin_detail')
+           'startup_settings', 'plugins_settings', 'plugin_detail', 'vehicle')
 LAYOUTS = ('rail', 'list', 'grid', 'tiles', 'featured', 'categories', 'menu', 'dock', 'console')
 COLORS = ('background', 'panel', 'accent', 'text', 'muted')
 MAX_BYTES = 8192

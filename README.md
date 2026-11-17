@@ -1,7 +1,22 @@
-# HLauncher
+<h1 align="center">
+  <img src="hlauncher/ui/assets/branding/hlauncher-256.png" width="160" height="160" alt="HLauncher">
+</h1>
 
-A Raspberry Pi launcher for the original HDMI-equipped HondaLink radio in my
-2014 Civic. It adds CarPlay and Android Auto through plugins. OBD Gauges is coming soon.
+<p align="center">
+  <a href="https://github.com/evy0311/HLauncher/releases"><img src="https://img.shields.io/github/v/release/evy0311/HLauncher?style=flat-square&amp;color=b42326" alt="Latest release"></a>
+  <a href="docs/install.md"><img src="https://img.shields.io/badge/Raspberry_Pi-4_Model_B-9d174d?style=flat-square&amp;logo=raspberrypi" alt="Raspberry Pi 4 Model B installation guide"></a>
+  <a href="https://github.com/evy0311/HLauncher/blob/docs/readme-refresh/docs/vehicle-compatibility.md"><img src="https://img.shields.io/badge/HondaLink-Vehicle_compatibility-285c83?style=flat-square" alt="HondaLink vehicle compatibility"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/License-GPL--3.0-3c5c49?style=flat-square" alt="GPL-3.0 license"></a>
+  <a href="https://ko-fi.com/evy0311"><img src="https://img.shields.io/badge/Sponsor-Ko--fi-9f1239?style=flat-square&amp;logo=kofi&amp;logoColor=white" alt="Sponsor HLauncher on Ko-fi"></a>
+</p>
+
+A Raspberry Pi launcher for factory Honda radios with the legacy HDMI-based
+HondaLink phone-app integration, tested on my 2014 Civic Si. It adds CarPlay and
+Android Auto through plugins. OBD Gauges is coming soon.
+
+![The dashboard of a 2014 Honda Civic Si with the HLauncher tile visible in CarPlay on the factory radio](docs/images/hlauncher-in-car.jpg)
+
+*CarPlay running through HLauncher on the factory radio in my 2014 Civic Si.*
 
 HLauncher implements the phone side of the Civic's legacy HondaLink connection.
 HDMI carries video and media audio, and Bluetooth carries the handshake and
@@ -10,9 +25,13 @@ firmware stays intact.
 
 Tested with **Raspberry Pi 4 Model B boards with 2 GB and 4 GB RAM**, running
 **Raspberry Pi OS Lite Bookworm 64-bit**. The 4 GB model was noticeably smoother,
-but the 2 GB model ran fine. Other radios, Pi models and OS versions are
-unverified. This is development software; see the plugin guides for limitations. Reverse-engineering progress
-and future native-radio experiments are on [my blog](https://www.evanhorsley.com/blog/).
+but the 2 GB model ran fine. Other Pi models and OS versions are unverified.
+This is development software. See the plugin guides for limitations. Reverse-engineering
+progress and future native-radio experiments are on [my blog](https://www.evanhorsley.com/blog/).
+
+## Vehicle compatibility
+
+[See vehicle compatibility](https://github.com/evy0311/HLauncher/blob/docs/readme-refresh/docs/vehicle-compatibility.md).
 
 ## Hardware
 

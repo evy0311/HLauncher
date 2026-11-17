@@ -3,7 +3,8 @@
   "id": "vehicle",
   "name": "Vehicle",
   "entrypoint": ["python3", "worker.py"],
-  "capabilities": ["display", "touch"],
+  "capabilities": ["display", "touch", "vehicle.parking"],
+  "requires_parked": true,
   "default_enabled": true,
   "keep_alive": false,
   "color": "#26353F"

@@ -43,6 +43,12 @@ CARPLAY_FRAME_RATES = (30, 60)
 WIFI_POWER_MODES = ('on', 'off', 'sleep')
 
 
+def tile_color_values(name):
+    if not isinstance(name, str) or name not in TILE_COLORS:
+        name = normalize_color(name)
+    return {'tile_color': name, 'custom_color': name} if name.startswith('#') else {'tile_color': name}
+
+
 class Preferences:
     def __init__(self, path=None):
         self.path = Path(path) if path else STATE_DIR / "settings.json"
@@ -51,6 +57,7 @@ class Preferences:
                      "safety_notice_app_version": "",
                      "debug_mode": False, "show_clock": False, "ssh_enabled": False, "wifi_power": "off",
                      "wifi_delay_boot": True,
+                     "layout_theme": "oem",
                      "home_pages": [], "carplay_fps": CARPLAY_FRAME_RATES[0],
                      "carplay_auto_night": True, "android_auto_auto_night": True,
                      "carplay_car_gps": False, "android_auto_car_gps": False}
@@ -76,6 +83,9 @@ class Preferences:
             self.data['wifi_power'] = mode if mode in WIFI_POWER_MODES else previous_mode
             delay = loaded.get('wifi_delay_boot')
             self.data['wifi_delay_boot'] = delay if type(delay) is bool else not self.data['setup_complete']
+            layout_theme = loaded.get('layout_theme')
+            if isinstance(layout_theme, str) and re.fullmatch(r'[a-z][a-z0-9-]{0,31}', layout_theme):
+                self.data['layout_theme'] = layout_theme
             fps = loaded.get('carplay_fps')
             if type(fps) is int and fps in CARPLAY_FRAME_RATES:
                 self.data['carplay_fps'] = fps
@@ -161,14 +171,13 @@ class Preferences:
             raise
 
     def set_tile_color(self, name):
-        if not isinstance(name,str) or name not in TILE_COLORS:name=normalize_color(name)
-        before = (self.data['tile_color'],self.data['custom_color'])
-        self.data['tile_color'] = name
-        if name.startswith('#'):self.data['custom_color']=name
+        changes = tile_color_values(name)
+        before = {key: self.data[key] for key in changes}
+        self.data.update(changes)
         try:
             self.save()
         except OSError:
-            self.data['tile_color'],self.data['custom_color'] = before
+            self.data.update(before)
             raise
 
     def save(self, force=()):

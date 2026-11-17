@@ -1,5 +1,6 @@
 """Shared settings, connection and picture pages; no display or service ownership."""
 import math
+from datetime import datetime
 from functools import lru_cache
 from pathlib import Path
 from PIL import Image, ImageDraw, ImageEnhance
@@ -13,6 +14,7 @@ from .scroll_list import Row,draw as draw_rows
 from .chrome import scale_bounds
 from . import home_art as art
 from .projection import wrap_status
+from .theme_menu import Item, row_items, settings_menu
 from sdk.hlauncher_sdk.fonts import font
 
 
@@ -90,7 +92,6 @@ def obd_coming_soon(ui):
 
 
 def system(ui):
-    p=page_for(ui,'System',ui.settings)
     info=ui.storage_info
     rows=[('Wi-Fi','',ui.recovery_page),
           ('Setup wizard','',lambda:ui.setup_page(True)),
@@ -99,8 +100,12 @@ def system(ui):
           ('Storage protection','Enabled' if info['protected'] else 'Off' if info['available'] else 'Unavailable',lambda:ui.storage_confirm(not info['protected'])),
           ('Shut down','',ui.shutdown_page)]
     if ui.prefs.data['debug_mode']:rows.append(('Diagnostics','',ui.system_diagnostics))
-    draw_rows(ui,p,[Row(title,action,value=value) if title!='Debug mode' else
-                    Row(title,action,toggle=ui.prefs.data['debug_mode']) for title,value,action in rows])
+    rows = [Row(title, action, toggle=ui.prefs.data['debug_mode']) if title == 'Debug mode'
+            else Row(title, action, value=value) for title, value, action in rows]
+    if settings_menu(ui, 'System', ui.settings, row_items(rows)):
+        return
+    p=page_for(ui,'System',ui.settings)
+    draw_rows(ui,p,rows)
     p.notice(ui.banner)
     present(ui,p)
 
@@ -115,19 +120,27 @@ def network(ui):
         present(ui,p);return
     connection = network_status()
     address = connection.get('address')
-    p=page_for(ui,'Wi-Fi',getattr(ui,'recovery_return',ui.system_settings))
+    back = getattr(ui, 'recovery_return', ui.system_settings)
+    from ..ssh_access import status
+    ssh = status()
+    ssh_value = 'On' if ssh['enabled'] else 'Off'
+    if settings_menu(ui, 'Wi-Fi', back, (
+            Item('Setup hotspot', ui.hotspot_page),
+            Item('Wi-Fi power', ui.wifi_power_page),
+            Item('SSH access', ui.ssh_settings, ssh_value),
+    ), footer=f'http://{address}:8080' if address else 'No network connection'):
+        return
+    p=page_for(ui,'Wi-Fi',back)
     if address:
         p.label((24,128),'http://'+address+':8080',26)
         p.text((24,176),'Open this page on a device on the same network as the Pi',17)
     else:
         p.label((24,128),'No network connection',26)
         p.text((24,176),'Start the setup hotspot to connect this Pi to Wi-Fi',17)
-    from ..ssh_access import status
-    ssh=status()
     p.bar((24, 218, 696, 274), 'Setup hotspot', ui.hotspot_page, size=27)
     p.bar((24, 286, 696, 342), 'Wi-Fi power', ui.wifi_power_page, size=27)
     p.bar((24, 354, 696, 410), 'SSH access', ui.ssh_settings,
-          value='On' if ssh['enabled'] else 'Off', size=27)
+          value=ssh_value, size=27)
     p.notice(ui.banner)
     present(ui,p)
 
@@ -223,7 +236,6 @@ def storage(ui):
 
 
 def plugins(ui):
-    p=page_for(ui,'Plugins',ui.settings)
     entries=sorted(ui.manifests.values(),key=lambda m:m.id!='carplay')
     rows = [Row(m.name, lambda pid=m.id: ui.plugin_detail(pid),
                 value='' if m.bundled else m.version) for m in entries]
@@ -231,6 +243,9 @@ def plugins(ui):
         rows.append(Row('Add plugin', ui.plugin_manager.add))
         if ui.plugin_store.legacy_sources():
             rows.append(Row('Older plugins saved', ui.legacy_plugin_notice))
+    if settings_menu(ui, 'Plugins', ui.settings, row_items(rows), footer='' if rows else 'No plugins installed'):
+        return
+    p=page_for(ui,'Plugins',ui.settings)
     draw_rows(ui, p, rows)
     if not rows:p.text((24,128),'No plugins installed',20)
     p.notice(ui.banner,462)
@@ -240,7 +255,6 @@ def plugins(ui):
 def plugin_detail(ui):
     manifest=ui.manifests.get(ui.settings_plugin_id)
     if manifest is None:return plugins(ui)
-    p=page_for(ui,manifest.name,ui.plugin_settings)
     rows=[Row('Enabled',lambda:ui.toggle_plugin(manifest.id),toggle=ui.prefs.enabled(manifest))]
     if manifest.revision and ui.plugin_manager:
         manager = ui.plugin_manager
@@ -259,6 +273,9 @@ def plugin_detail(ui):
             rows.append(Row('Restore previous version', lambda: manager.change(manifest.id, 'rollback')))
         rows.append(Row('Uninstall', lambda: manager.confirm_remove(manifest.id)))
         message = ui.banner or manifest.blocked or manifest.origin
+        if settings_menu(ui, manifest.name, ui.plugin_settings, row_items(rows), footer=message):
+            return
+        p=page_for(ui,manifest.name,ui.plugin_settings)
         draw_rows(ui, p, rows, bottom=422, key='plugin:'+manifest.id, size=25)
         p.notice(message)
         present(ui, p)
@@ -274,6 +291,9 @@ def plugin_detail(ui):
                         toggle=ui.prefs.auto_night(manifest.id)))
         rows.append(Row('Use car built-in GPS', lambda: ui.toggle_car_gps(manifest.id),
                         toggle=ui.prefs.car_gps(manifest.id)))
+    if settings_menu(ui, manifest.name, ui.plugin_settings, row_items(rows)):
+        return
+    p=page_for(ui,manifest.name,ui.plugin_settings)
     draw_rows(ui,p,rows,key='plugin:'+manifest.id)
     p.notice(ui.banner)
     present(ui,p)
@@ -299,30 +319,98 @@ def adapter_branding(ui):
 
 
 def appearance(ui):
-    p=page_for(ui,'Appearance',ui.settings)
-    draw_rows(ui,p,[Row('Background color',ui.tile_colors,value='Custom' if ui.prefs.data['tile_color'].startswith('#') else ui.prefs.data['tile_color']),
-                    Row('Show clock',ui.toggle_clock,toggle=ui.prefs.data['show_clock']),
-                    Row('Picture',ui.color_settings)])
-    present(ui,p)
+    color = ui.prefs.data['tile_color']
+    color_name = 'Custom' if color.startswith('#') else color
+    clock = ui.prefs.data['show_clock']
+    theme = ui.layout_theme
+    rows = []
+    if theme.supports_color_selection:
+        rows.append(Row('Background color' if theme.id == 'oem' else 'Theme color', ui.tile_colors, value=color_name))
+    rows.extend((Row('Show clock', ui.toggle_clock, toggle=clock),
+                 Row('Picture', ui.color_settings),
+                 Row('Change theme', ui.themes_page, value=theme.name)))
+    if settings_menu(ui, 'Appearance', ui.settings, row_items(rows)):
+        return
+    p = page_for(ui, 'Appearance', ui.settings)
+    draw_rows(ui, p, rows)
+    present(ui, p)
+
+
+def theme_preview(ui):
+    from . import home, settings, theme_menu
+
+    theme = ui.theme_preview
+    screen = ui.theme_preview_screen
+    choices = tuple(ui.themes.choices)
+    current = choices.index(theme.id) + 1
+    p = page_for(ui, 'Change theme', ui.appearance_settings)
+    p.label((24, 112), p.fit(theme.name, 480, 25), 25)
+    status = f'{current} / {len(choices)}'
+    if theme.id == ui.layout_theme.id:
+        status += '  ·  Active'
+    p.text((696, 128), status, 17, anchor='rm')
+    size = (384, 256)
+    layout = theme.layouts.get(screen)
+    color = ui.theme_preview_color or ui.prefs.data['tile_color']
+    show_clock = ui.prefs.data['show_clock']
+    clock = datetime.now().strftime('%-I:%M') if show_clock else None
+    if screen == 'home':
+        pages = home.launcher_layout(ui, layout)
+        if layout:
+            preview = theme_menu.render(theme, layout, 'Home', theme_menu.home_items(pages),
+                                        size=size, clock=clock, change_page=ui.change_page, color=color)
+        else:
+            preview = home.render(pages, theme=color, size=size, clock=clock, show_clock=show_clock)
+    else:
+        rows = settings.categories(ui)
+        if layout:
+            items = [Item(row.title, row.action) for row in rows]
+            preview = theme_menu.render(theme, layout, 'Settings', [items], size=size,
+                                        back=ui.home, clock=clock, footer=f'Version {__version__}', color=color)
+        else:
+            preview = settings.render(rows, ui.home, theme=color, size=size, clock=clock,
+                                      version=__version__, show_clock=show_clock)
+    p.image.paste(preview.image, (168, 144))
+    p.draw.rectangle((167, 143, 552, 400), outline='#64616d')
+    if len(choices) > 1:
+        p.button((24, 246, 152, 298), '‹  Previous', lambda: ui.move_theme_preview(-1), secondary=True)
+        p.button((568, 246, 696, 298), 'Next  ›', lambda: ui.move_theme_preview(1), secondary=True)
+    p.button((24, 414, 148, 458), 'Home', lambda: ui.set_theme_preview_screen('home'),
+             selected=screen == 'home')
+    p.button((160, 414, 284, 458), 'Settings', lambda: ui.set_theme_preview_screen('settings'),
+             selected=screen == 'settings')
+    if theme.supports_color_selection:
+        p.button((296, 414, 396, 458), 'Color', ui.preview_colors, secondary=True)
+    p.button((408, 414, 696, 458), 'Use theme', ui.select_theme, selected=True, size=22)
+    p.notice(ui.banner, 462)
+    present(ui, p)
+
 
 
 def startup(ui):
-    p=page_for(ui,'Startup',ui.settings)
     manifest=ui.manifests.get(ui.prefs.data['default_plugin'])
     value=manifest.name if manifest and manifest.id != 'obd' and ui.prefs.enabled(manifest) else 'Home'
+    if settings_menu(ui, 'Startup', ui.settings, (Item('Start with', ui.cycle_default, value),),
+                     footer='Tap to cycle through Home and enabled apps'):
+        return
+    p=page_for(ui,'Startup',ui.settings)
     draw_rows(ui,p,[Row('Start with',ui.cycle_default,value=value)])
     p.text((24,204),'Select to cycle through Home and your enabled apps',17)
     present(ui,p)
 
 
 def themes(ui):
-    p=page_for(ui,'Background color',ui.appearance_settings)
+    preview = ui.mode == 'preview_colors'
+    theme = ui.theme_preview if preview else ui.layout_theme
+    color = (ui.theme_preview_color if preview else None) or ui.prefs.data['tile_color']
+    back = ui.resume_theme_preview if preview else ui.appearance_settings
+    p = page_for(ui, 'Background color' if theme.id == 'oem' else 'Theme color', back)
     for i,name in enumerate(TILE_COLORS):
         x=24+i%3*228;y=128+i//3*104;previous=p.theme;p.theme=name
         p.button((x,y,x+216,y+88),name,lambda name=name:ui.set_tile_color(name),
-                 selected=name==ui.prefs.data['tile_color'],size=24)
+                 selected=name==color,size=24)
         p.theme=previous
-    p.button((24,364,696,420),'Custom color',ui.custom_color,selected=ui.prefs.data['tile_color'].startswith('#'),size=24)
+    p.button((24,364,696,420),'Custom color',ui.custom_color,selected=color.startswith('#'),size=24)
     p.notice(ui.banner)
     present(ui,p)
 
@@ -414,5 +502,7 @@ def waiting(ui):
 
 PAGES={'ssh_settings':ssh,'adapter_branding':adapter_branding,'appearance_settings':appearance,'startup_settings':startup,'system_settings':system,'recovery_settings':network,'hotspot_settings':hotspot,'wifi_power_settings':wifi_power,'storage_confirm':storage,
        'plugins_settings':plugins,'plugin_detail':plugin_detail,'tile_colors':themes,'colors':picture,'hdmi_test':hdmi,
-       'shutdown_confirm':shutdown,'shutdown_pending':shutdown,'about_settings':about,'legal_info':legal_info,
-       'audio_coming_soon':audio_coming_soon,'safety_agreement':safety_agreement,'obd_coming_soon':obd_coming_soon}
+       'shutdown_confirm':shutdown,'shutdown_pending':shutdown,'about_settings':about,
+       'legal_info':legal_info,'audio_coming_soon':audio_coming_soon,
+       'theme_preview':theme_preview,'preview_colors':themes,
+       'safety_agreement':safety_agreement,'obd_coming_soon':obd_coming_soon}

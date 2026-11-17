@@ -50,14 +50,22 @@ def render(rows, back, *, theme='Red', size=(720,480), clock=None,
     return Frame(image,actions,0)
 
 
+def categories(launcher):
+    return [Row('Plugins','',launcher.plugin_settings),
+            Row('Appearance','',launcher.appearance_settings),
+            Row('About','',launcher.about_settings),
+            Row('Startup','',launcher.startup_settings),
+            Row('System','',launcher.system_settings),
+            Row('Audio','',launcher.audio_coming_soon),
+            Row('Diagnostics','',launcher.diagnostics_menu)]
+
+
 def draw_launcher(launcher):
-    rows=[Row('Plugins','',launcher.plugin_settings),
-          Row('Appearance','',launcher.appearance_settings),
-          Row('About','',launcher.about_settings),
-          Row('Startup','',launcher.startup_settings),
-          Row('System','',launcher.system_settings),
-          Row('Audio','',launcher.audio_coming_soon),
-          Row('Diagnostics','',launcher.diagnostics_menu)]
+    rows = categories(launcher)
+    from .theme_menu import Item, settings_menu
+    if settings_menu(launcher, 'Settings', launcher.home,
+                     (Item(row.title, row.action) for row in rows), footer=f'Version {__version__}'):
+        return
     frame=render(rows,launcher.home,theme=launcher.prefs.data['tile_color'],
                  size=(launcher.fb.w,launcher.fb.h),banner=launcher.banner,version=__version__,
                  pressed=launcher.pressed_box if launcher.press is not None else None,

@@ -249,6 +249,15 @@ PAGE = '''<!doctype html><html><head><meta charset="utf-8"><meta name="viewport"
 <section><h2>Local update</h2><p>Install a signed .hlu file from your computer. Your settings stay saved; HLauncher restarts after verification.</p>
 <label for="updatefile">Update file</label><input type="file" id="updatefile" accept=".hlu"><button id="uploadbutton" onclick="uploadUpdate()">Install local update</button><p id="uploadstatus" role="status"></p></section>
 
+<details>
+<summary>Layout themes</summary>
+<p>On the radio, open Settings → Appearance → Change theme to preview or switch themes. OEM is the original layout.</p>
+<div id="theme-downloads"></div>
+<p>Download a starter, edit its JSON, then import it. You can also download and share an installed theme.</p>
+<label for="themefile">Theme JSON file</label><input type="file" id="themefile" accept=".json,application/json">
+<button class="secondary" onclick="uploadTheme()">Import theme</button><p id="themestatus" role="status"></p>
+</details>
+
 <details><summary>Radio pairing</summary><p>On the radio, open Settings → Phone → Connect a phone → Add Bluetooth device. Select HLauncher and confirm the pairing code. To replace the saved radio, reopen pairing below.</p>
 <button class="secondary" onclick="act('pair')">Forget radio and reopen pairing</button>
 <details><summary>Enter a radio address manually</summary><p>Use this only if the radio was not recognized automatically.</p><label for="peer">Bluetooth address</label><input id="peer" placeholder="AA:BB:CC:DD:EE:FF"><button class="secondary" onclick="manual()">Allow this radio for five minutes</button></details></details>
@@ -262,6 +271,43 @@ function manual(){post('/api/manual',{address:document.getElementById('peer').va
 async function wifi(){if(!document.getElementById('ssid').value)return;let queued=await post('/api/job',{operation:'wifi',ssid:document.getElementById('ssid').value,password:document.getElementById('password').value,country:document.getElementById('country').value.toUpperCase()});if(queued){document.getElementById('password').value='';document.getElementById('notice').textContent='The Pi is switching networks. Reconnect this device to the same Wi-Fi afterward.'}}
 async function uploadUpdate(){let file=document.getElementById('updatefile').files[0];if(!file){document.getElementById('uploadstatus').textContent='Choose a .hlu file';return}if(!confirm('Install this signed update and restart HLauncher? Your plugins and their data will be kept. Some plugins may stop working after this update.'))return;let button=document.getElementById('uploadbutton');button.disabled=true;document.getElementById('uploadstatus').textContent='Uploading…';try{let response=await fetch('/api/update-file',{method:'POST',headers:{'Content-Type':'application/octet-stream'},body:file});let data=await response.json();if(!response.ok)throw new Error(data.error||'Upload failed');document.getElementById('uploadstatus').textContent='Uploaded. Verifying and installing; HLauncher will restart.'}catch(error){document.getElementById('uploadstatus').textContent=error.message}finally{button.disabled=false}}
 function debug(){post('/api/debug',{})}
+async function loadThemeDownloads(){
+    const response=await fetch('/api/layout-themes');
+    if(!response.ok)throw new Error('Could not load themes. Reload the setup page to retry.');
+    const data=await response.json();
+    const starters=new Map(Object.entries(data.templates));
+    const list=document.getElementById('theme-downloads');
+    list.replaceChildren();
+    for(const theme of data.themes){
+        const starter=starters.get(theme.id);
+        const download=starter||theme;
+        const button=document.createElement('button');
+        button.className='secondary';
+        button.textContent='Download '+theme.name+(starter?' starter':'');
+        button.onclick=()=>{
+            const link=document.createElement('a');
+            const url=URL.createObjectURL(new Blob([JSON.stringify(download,null,2)+'\\n'],{type:'application/json'}));
+            link.href=url;
+            link.download=download.id+'.json';
+            link.click();
+            setTimeout(()=>URL.revokeObjectURL(url),1000);
+        };
+        list.append(button);
+    }
+}
+async function uploadTheme(){
+    const file=document.getElementById('themefile').files[0];
+    const status=document.getElementById('themestatus');
+    if(!file||file.size>8192){status.textContent='Choose a theme JSON file no larger than 8 KiB.';return}
+    try{
+        const response=await fetch('/api/layout-themes',{method:'POST',headers:{'Content-Type':'application/json'},body:file});
+        const data=await response.json();
+        if(!response.ok)throw new Error(data.error||'Import failed');
+        status.textContent='Imported '+data.name+'. Reopen Change theme on the radio.';
+        await loadThemeDownloads().catch(()=>{});
+    }catch(error){status.textContent=error.message}
+}
+loadThemeDownloads().catch(error=>{document.getElementById('themestatus').textContent=error.message})
 async function refresh(){try{let r=await fetch('/api/status');let data=await r.json();document.body.style.setProperty('--accent',themes[data.theme]||(/^#[0-9A-Fa-f]{6}$/.test(data.theme||'')?[1,3,5].map(i=>parseInt(data.theme.slice(i,i+2),16)).join(','):themes.Red));document.getElementById('capture').hidden=!data.debug;let job=data.maintenance||{};if(job.status==='Working')document.getElementById('notice').textContent='Applying connection changes…';else if(job.status==='Failed')document.getElementById('notice').textContent=job.message||job.status;else if(job.status==='Done')document.getElementById('notice').textContent=''}catch{}}
 refresh();setInterval(refresh,3000)
 </script></main></body></html>'''
@@ -295,6 +341,11 @@ def handler_for(state, maintenance):
             if not self.authorized():
                 return
             if self.path == '/': return self.send(200,PAGE,'text/html; charset=utf-8')
+            if self.path == '/api/layout-themes':
+                from .themes import OEM, Themes
+                themes = Themes(state.folder)
+                return self.send(200, {'themes': [theme.document() for theme in themes.choices.values()
+                                                  if theme is not OEM], 'templates': themes.templates()})
             if self.path == '/ui-font.ttf':
                 path=Path(__file__).parent/'ui/assets/fonts/NotoSansJP.ttf'
                 self.send_response(200);self.send_header('Content-Type','font/ttf')
@@ -382,10 +433,19 @@ def handler_for(state, maintenance):
                 return self.send(415,{'error':'JSON required'})
             try:
                 size = int(self.headers.get('Content-Length','0'))
-                if not 0 < size <= 4096: raise ValueError('Invalid request size')
+                from .themes import MAX_BYTES
+                limit = MAX_BYTES if self.path == '/api/layout-themes' else 4096
+                if not 0 < size <= limit: raise ValueError('Invalid request size')
                 data = json.loads(self.rfile.read(size))
                 if not isinstance(data,dict): raise ValueError('Invalid request')
-                if self.path == '/api/debug':
+                if self.path == '/api/layout-themes':
+                    from .themes import Themes
+                    try:
+                        theme = Themes(state.folder).install_document(data)
+                    except ValueError as exc:
+                        return self.send(400, {'error': str(exc)})
+                    return self.send(201, {'id': theme.id, 'name': theme.name})
+                elif self.path == '/api/debug':
                     prefs = Preferences(state.folder/'settings.json'); prefs.data['debug_mode'] = not prefs.data['debug_mode']; prefs.save()
                 elif self.path == '/api/manual':
                     peer = address(data.get('address',''))

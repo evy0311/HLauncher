@@ -64,6 +64,18 @@ The image uses the tested **720×480 HDMI input**; forcing the panel's 800×480
 resolution cropped the picture. See [display setup](docs/setup.md#hdmi) for other
 hardware. To install from source instead, use the [source setup guide](docs/setup.md).
 
+## Home themes
+
+Open **Settings → Appearance → Change theme** to preview and apply a theme:
+
+- **OEM** uses the original factory-style grid and your choice of background color.
+- **Touring** uses large app tiles, a two-column Settings menu, and cool graphite colors.
+- **Drive** puts your startup app above a row of shortcuts, with a black and deep-gray palette.
+
+All three support Home pages you can swipe between. To make your own theme,
+download an editable Touring or Drive starter from the Pi's local setup page,
+make your changes, and import it. See the [theme guide](docs/themes.md).
+
 ## Updates and recovery
 
 On update-enabled images, **Settings → System → Software updates** checks for

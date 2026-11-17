@@ -1,6 +1,9 @@
 # OBD Gauges
 
-The page shows engine RPM, coolant temperature (°F), accelerator pedal position (%),
+The Home tile shows **Coming soon**. The gauge renderer and BLE adapter code
+remain in the repository for development.
+
+The renderer supports engine RPM, coolant temperature (°F), accelerator pedal position (%),
 intake air temperature (°F), barometric pressure (native units), and VTEC ON/OFF.
 Missing, unsupported or stale readings show a dash; received zero remains zero.
 All six use HondaLink. BLE code is retained for adapter tools but is inactive
@@ -33,13 +36,11 @@ The host handoff expires after one second without a heartbeat. Individual
 HondaLink samples expire after five seconds and clear on disconnect/session
 close. An older diagnostic snapshot never replaces a normal live gauge value.
 
-## Retained BLE adapter tools
+## BLE adapter development
 
-Open **Settings → Plugins → OBD Gauges → OBD adapter → Scan**. The short BLE scan shows all
-nearby BLE devices (apart from the radio); select your ELM327-compatible device.
-The page shows discovery, connection, vehicle initialization and failure status.
-Disconnect forgets the selected device. The saved device reconnects automatically
-while the OBD service is running and the HondaLink control session is healthy.
+The BLE service can scan for nearby adapters and save or forget the selected device.
+The saved device reconnects while the OBD service is running and the HondaLink
+control session is healthy.
 BLE devices requiring a vendor-specific GATT protocol may need an additional
 transport profile. Classic-only Bluetooth ELM327 devices are not supported here.
 

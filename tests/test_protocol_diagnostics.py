@@ -19,7 +19,7 @@ from hlauncher.control_protocols import hfp_request
 from hlauncher.protocol.session import StartProbe,packet
 from hlauncher.config import Preferences
 from hlauncher.launcher import Launcher
-from test_architecture import Display
+from test_architecture import Display, parked_radio
 
 ROOT=Path(__file__).resolve().parents[1]
 
@@ -82,6 +82,7 @@ class ProtocolCapture(unittest.TestCase):
             self.assertIn('storage',bad.snapshot()['status'])
             bad.close()
 
+    @parked_radio
     def test_diagnostics_tabs_record_in_background_and_voice_output_is_separate(self):
         with tempfile.TemporaryDirectory() as folder:
             prefs=Preferences(Path(folder)/'settings.json')

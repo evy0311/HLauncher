@@ -8,7 +8,6 @@ from . import __version__
 from .debug_tools import InputMonitor, ToneTest
 from . import config
 from .diagnostics import Diagnostics
-from .obd import ObdManager
 from .audio_settings import AudioSettings, EQ_BANDS
 from .audio import AudioBroker
 from .catalog import discover
@@ -97,15 +96,13 @@ class Launcher:
         self.tone_test = ToneTest(self.audio.playback)
         self.debug_touch = {}
         self.debug_redraw = 0
-        self.obd = ObdManager(event)
-        self.obd_page = 0
-        self.obd_revision = -1
         self.diagnostic_page = 0
         self.diagnostic_revision = -1
         self.storage_info = dict(protected=False, available=False, message='Checking storage layout')
         self.storage_checked = 0
         self.setup_list_page = 0
         self.mode = "home" if self.prefs.safety_notice_accepted else "safety_notice"
+        self.parked_screen_locked = False
         self.page = 0
         self.settings_page = 0
         self.actions = []
@@ -131,7 +128,9 @@ class Launcher:
         self.tone_test.stop()
         self.host.deactivate()
         self.setup_can_exit = bool(self.prefs.data['setup_complete'] and self.mode in ('settings','system_settings'))
-        self.wizard = Onboarding(self.prefs, {key: value for key, value in self.manifests.items() if value.bundled})
+        self.wizard = Onboarding(self.prefs, {
+            key: value for key, value in self.manifests.items() if value.bundled and key != 'obd'
+        })
         if restart:
             if self.prefs.data['setup_complete']:self.wizard.save(setup_step=0)
             else:self.wizard.restart()
@@ -403,6 +402,8 @@ class Launcher:
             self.started = True
 
     def safety_notice(self, message=''):
+        if self.mode != 'safety_notice':
+            getattr(self, 'list_offsets', {}).pop('safety_notice', None)
         self.mode = 'safety_notice'
         self.pending_default = False
         self.press = None
@@ -410,6 +411,11 @@ class Launcher:
         self.draw()
 
     def accept_safety_notice(self):
+        view = self.scroll_view
+        if (self.mode != 'safety_notice' or not view or view['key'] != 'safety_notice'
+                or view['offset'] < view['maximum'] or not self.protocols.parked_for_setup()):
+            self.draw()
+            return
         try:
             self.prefs.accept_safety_notice()
         except OSError:
@@ -472,6 +478,12 @@ class Launcher:
 
     def legal_info(self):
         self.mode = 'legal_info'
+        self.press = None
+        self.draw()
+
+    def safety_agreement(self):
+        getattr(self, 'list_offsets', {}).pop('safety_agreement', None)
+        self.mode = 'safety_agreement'
         self.press = None
         self.draw()
 
@@ -577,31 +589,6 @@ class Launcher:
                 self.host.request_branding()
                 self.banner=''
             except (OSError,ValueError) as exc:self.banner=str(exc)[:100]
-        self.draw()
-
-    def obd_settings(self):
-        self.obd_return=self.plugin_detail if self.mode=='plugin_detail' else self.settings if self.mode=='settings' else self.home
-        self.host.deactivate()
-        self.mode = 'obd_settings'
-        self.press = None
-        self.obd_page = 0
-        self.draw()
-
-    def obd_scan(self):
-        self.obd.command('scan')
-        self.obd_page = 0
-        self.draw()
-
-    def obd_connect(self, address):
-        self.obd.command('connect', address=address)
-        self.draw()
-
-    def obd_disconnect(self):
-        self.obd.command('disconnect')
-        self.draw()
-
-    def obd_devices_page(self, delta):
-        self.obd_page = max(0, self.obd_page+delta)
         self.draw()
 
     def system_diagnostics(self):
@@ -918,11 +905,14 @@ class Launcher:
         if not self.prefs.safety_notice_accepted:
             self.safety_notice()
             return
-        if plugin_id == 'obd':
-            self.obd.close()
-            self.obd.enabled=False
         if plugin_id not in self.manifests or not self.prefs.enabled(self.manifests[plugin_id]):
             self.home("Plugin unavailable")
+            return
+        if plugin_id == 'obd':
+            self.host.deactivate()
+            self.mode = 'obd_coming_soon'
+            self.press = self.pressed_box = None
+            self.draw()
             return
         try:
             self.mode = "plugin"
@@ -966,7 +956,7 @@ class Launcher:
         self.draw()
 
     def cycle_default(self):
-        choices = [None] + [m.id for m in self.enabled()]
+        choices = [None] + [m.id for m in self.enabled() if m.id != 'obd']
         old = self.prefs.data["default_plugin"]
         next_id = (
             choices[(choices.index(old) + 1) % len(choices)] if old in choices else None
@@ -979,8 +969,34 @@ class Launcher:
             self.event(state="settings_save_failed", error=str(exc))
         self.draw()
 
+    @property
+    def parked_only_screen(self):
+        if self.mode == 'home':
+            return self.home_editor.editing
+        return self.mode not in ('plugin', 'obd_coming_soon', 'shutdown_pending')
+
+    def sync_parked_screen(self):
+        locked = self.parked_only_screen and not self.protocols.parked_for_setup()
+        if locked == self.parked_screen_locked:
+            return False
+        self.parked_screen_locked = locked
+        self.press = self.pressed_box = self.last_xy = None
+        self.picture_drag = None
+        self.list_drag = None
+        self.home_editor.gesture = None
+        if self.mode == 'custom_color':
+            self.color_picker.drag = None
+        if locked:
+            self.tone_test.stop()
+        return True
+
     def draw(self):
         self.scroll_view=None
+        self.sync_parked_screen()
+        if self.parked_screen_locked:
+            from .ui.pages import parked_only
+            parked_only(self)
+            return
         if self.mode == "safety_notice":
             from .ui.onboarding import draw_safety_notice
             draw_safety_notice(self)
@@ -1008,9 +1024,9 @@ class Launcher:
             from .ui.onboarding import draw_launcher
             draw_launcher(self)
             return
-        if self.mode in ("audio_settings", "obd_settings"):
-            from .ui import audio, obd
-            (audio if self.mode == "audio_settings" else obd).draw_launcher(self)
+        if self.mode == "audio_settings":
+            from .ui import audio
+            audio.draw_launcher(self)
             return
         if self.mode == "plugin" and self.host.active in ('carplay','android-auto'):
             if not self.has_frame:
@@ -1110,6 +1126,8 @@ class Launcher:
         self.draw()
 
     def update(self, touch):
+        if self.sync_parked_screen():
+            self.draw()
         touch = for_viewport(touch, self.fb.w, self.fb.h)
         primary = touch.get("contacts", [])
         primary = primary[0] if primary else {"action": "unused", "has_position": False}
@@ -1117,6 +1135,9 @@ class Launcher:
         if point:
             self.last_xy = point
         action = primary["action"]
+        if self.parked_screen_locked:
+            self.update_buttons(action, point)
+            return
         if self.mode == 'home' and self.home_settle is not None:
             if action != 'down':
                 return
@@ -1158,6 +1179,10 @@ class Launcher:
                     return
             self.host.touch(touch)
             return
+        if not self.update_buttons(action, point) and self.mode == "plugin":
+            self.host.touch(touch)
+
+    def update_buttons(self, action, point):
         if action == "down":
             self.press = point
             self.pressed_box = next((box for box, _ in self.actions if point and
@@ -1175,15 +1200,13 @@ class Launcher:
             self.press = self.pressed_box = None
             if callback is not None:
                 callback()
-                return
+                return True
             if box is not None:
                 self.draw()
-        if self.mode == "plugin":
-            self.host.touch(touch)
+        return False
 
     def session_changed(self, **values):
         self.host.session_changed(**values)
-        self.obd.tick(self.host.session)
         if 'connected' in values:
             self.inputs.steering_mode=None
             self.inputs.control_epochs['hondalink-iap'] += 1
@@ -1199,7 +1222,10 @@ class Launcher:
                 self.plugin_checked = time.monotonic()
                 self.refresh_plugins()
         now = time.monotonic()
-        self.home_editor.tick(now)
+        if self.sync_parked_screen():
+            self.draw()
+        if not self.parked_screen_locked:
+            self.home_editor.tick(now)
         self.tick_home_slide(now)
         waiting_projection = (self.mode == "plugin" and self.host.active in ('carplay','android-auto')
                               and not self.has_frame)
@@ -1257,12 +1283,10 @@ class Launcher:
                 if self.host.branding.pending or carplay_adapter_present():
                     try:self.host.ensure_background_carplay()
                     except (OSError,ValueError) as exc:self.event(state='projection_background_failed',error=str(exc))
-        self.obd.tick(self.host.session)
         now = time.monotonic()
         if self.mode in ('debug_inputs','debug_audio','debug_volume') and now-self.debug_redraw >= .05:
             self.debug_redraw = now
             self.draw()
-        if self.mode == "obd_settings" and self.obd.revision != self.obd_revision:self.draw()
         if self.mode == 'diagnostics':
             _, revision, _ = self.diagnostics.snapshot()
             if revision != self.diagnostic_revision:self.draw()
@@ -1280,7 +1304,7 @@ class Launcher:
         if self.pending_default and self.prefs.safety_notice_accepted and self.prefs.data['setup_complete']:
             self.pending_default = False
             plugin_id = self.prefs.data["default_plugin"]
-            if plugin_id in self.manifests and self.prefs.enabled(
+            if plugin_id != 'obd' and plugin_id in self.manifests and self.prefs.enabled(
                 self.manifests[plugin_id]
             ):
                 self.open_plugin(plugin_id)
@@ -1323,7 +1347,6 @@ class Launcher:
         self.inputs.close()
         self.tone_test.stop()
         self.diagnostics.stop()
-        self.obd.close()
         self.host.close()
         self.protocols.close()
         if hasattr(self.audio.playback,'close'):self.audio.playback.close()

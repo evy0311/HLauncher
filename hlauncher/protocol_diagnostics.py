@@ -172,6 +172,20 @@ class ProtocolDiagnostics:
                     state.update(parking_brake=brake['parking_brake_engaged'], brake_until=brake['at'] + 2)
         return state
 
+    def parked_for_setup(self, now=None):
+        """Require live zero speed and an engaged brake from the radio."""
+        now = time.monotonic() if now is None else now
+        with self.lock:
+            if not self.connected:
+                return False
+            brake = self.vehicle.status
+            # Civic 0x61 reports brake changes promptly and repeats about every 5 s.
+            if (brake.get('parking_brake_engaged') is not True
+                    or not 0 <= now - brake['at'] < 6):
+                return False
+            speed, _ = self.projection_speed(now)
+            return speed == 0
+
     def illumination_night_mode(self, now=None):
         now = time.monotonic() if now is None else now
         with self.lock:

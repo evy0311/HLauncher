@@ -1,5 +1,6 @@
 """Shared settings, connection and picture pages; no display or service ownership."""
 import math
+from PIL import ImageDraw, ImageEnhance
 from ..config import TILE_COLORS
 from ..colors import DEFAULTS,LIMITS
 from ..recovery import job_status, network_status
@@ -19,14 +20,41 @@ def page_for(ui,title,back=None):
 
 def about(ui):
     page = page_for(ui, 'About', ui.settings)
-    page.bar((24,144,696,200), 'Legal info', ui.legal_info)
+    page.bar((24,144,696,200), 'Legal', ui.legal_info)
     present(ui, page)
 
 
 def legal_info(ui):
     from .onboarding import safety_notice_text
-    page = page_for(ui, 'Legal info', ui.about_settings)
+    page = page_for(ui, 'Legal', ui.about_settings)
     safety_notice_text(page)
+    page.bar((24,256,696,312), 'Safety agreement', ui.safety_agreement)
+    present(ui, page)
+
+
+def safety_agreement(ui):
+    from .onboarding import safety_agreement_text
+    page = page_for(ui, 'Safety agreement', ui.legal_info)
+    safety_agreement_text(ui, page, top=132, bottom=448)
+    present(ui, page)
+
+
+def parked_only(ui):
+    page = Page('', None, ui.prefs.data['tile_color'], (ui.fb.w, ui.fb.h), ui.pressed_box)
+    page.image = ImageEnhance.Brightness(page.image).enhance(.36)
+    page.draw = ImageDraw.Draw(page.image)
+    page.text((360, 178), 'Park safely to continue', 30, fill='#ffffff', anchor='mm')
+    page.text((360, 233), 'Use setup and settings only when conditions are safe', 19, anchor='mm')
+    page.text((360, 263), 'and the parking brake is engaged.', 19, anchor='mm')
+    page.text((360, 307), 'Waiting for the radio to confirm the vehicle is parked.', 17, anchor='mm')
+    if ui.prefs.safety_notice_accepted and ui.prefs.data['setup_complete']:
+        page.button((240, 360, 480, 414), 'Back to Home', ui.home, secondary=True)
+    present(ui, page)
+
+
+def obd_coming_soon(ui):
+    page = page_for(ui, 'OBD Gauges', ui.home)
+    page.text((360, 236), 'Coming soon', 28, fill='#ffffff', anchor='mm')
     present(ui, page)
 
 
@@ -207,7 +235,7 @@ def plugin_detail(ui):
     if manifest.id=='carplay':
         rows.append(Row('Frame rate', ui.toggle_carplay_fps, value=f'{ui.prefs.carplay_fps} FPS'))
         rows.append(Row('Adapter icon',ui.adapter_branding_page))
-    elif manifest.id=='obd':rows.append(Row('OBD adapter',ui.obd_settings))
+    elif manifest.id=='obd':rows.append(Row('Coming soon', None))
     elif manifest.keep_alive and manifest.id!='android-auto':
         rows.append(Row('Run in background',lambda:ui.toggle_background(manifest.id),toggle=ui.prefs.background_enabled(manifest)))
     if manifest.id in ('carplay', 'android-auto'):
@@ -251,7 +279,7 @@ def appearance(ui):
 def startup(ui):
     p=page_for(ui,'Startup',ui.settings)
     manifest=ui.manifests.get(ui.prefs.data['default_plugin'])
-    value=manifest.name if manifest and ui.prefs.enabled(manifest) else 'Home'
+    value=manifest.name if manifest and manifest.id != 'obd' and ui.prefs.enabled(manifest) else 'Home'
     draw_rows(ui,p,[Row('Start with',ui.cycle_default,value=value)])
     p.text((24,204),'Select to cycle through Home and your enabled apps',17)
     present(ui,p)
@@ -356,4 +384,5 @@ def waiting(ui):
 
 PAGES={'ssh_settings':ssh,'adapter_branding':adapter_branding,'appearance_settings':appearance,'startup_settings':startup,'system_settings':system,'recovery_settings':network,'hotspot_settings':hotspot,'wifi_power_settings':wifi_power,'storage_confirm':storage,
        'plugins_settings':plugins,'plugin_detail':plugin_detail,'tile_colors':themes,'colors':picture,'hdmi_test':hdmi,
-       'shutdown_confirm':shutdown,'shutdown_pending':shutdown,'about_settings':about,'legal_info':legal_info}
+       'shutdown_confirm':shutdown,'shutdown_pending':shutdown,'about_settings':about,'legal_info':legal_info,
+       'safety_agreement':safety_agreement,'obd_coming_soon':obd_coming_soon}

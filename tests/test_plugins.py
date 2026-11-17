@@ -21,9 +21,10 @@ from hlauncher.plugin_network import Network
 from hlauncher.plugin_sources import usb_packages
 from hlauncher.plugins import PluginStore
 from sdk.hlauncher_sdk import Client
-from test_architecture import Display
+from test_architecture import Display, parked_radio
 
 
+@parked_radio
 class ManagedPlugins(unittest.TestCase):
     def setUp(self):
         self.scratch = tempfile.TemporaryDirectory()

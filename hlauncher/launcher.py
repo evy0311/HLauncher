@@ -1371,7 +1371,10 @@ class Launcher:
         if self.mode == 'protocol_tests' and now-self.protocol_redraw>.25:
             self.protocol_redraw=now
             self.draw()
-        if self.mode == 'parking_status' and now - self.parking_redraw >= .5:
+        parking_visible = self.mode == 'parking_status' or (
+            self.parked_screen_locked and self.parked_overlay_at is None
+        )
+        if parking_visible and now - self.parking_redraw >= .5:
             self.parking_redraw = now
             self.draw()
         if self.picture_dirty and now-self.picture_saved > .1:

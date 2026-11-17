@@ -177,17 +177,21 @@ class ProtocolDiagnostics:
 
     def parked_for_setup(self, now=None):
         """Require live zero speed and an engaged brake from the radio."""
+        speed, brake = self.parked_setup_readings(now)
+        return speed == 0 and brake is True
+
+    def parked_setup_readings(self, now=None):
         now = time.monotonic() if now is None else now
         with self.lock:
             if not self.connected:
-                return False
+                return None, None
             brake = self.vehicle.status
             # Civic 0x61 reports brake changes promptly and repeats about every 5 s.
-            if (brake.get('parking_brake_engaged') is not True
-                    or not 0 <= now - brake['at'] < SETUP_BRAKE_MAX_AGE):
-                return False
+            engaged = None
+            if 'at' in brake and 0 <= now - brake['at'] < SETUP_BRAKE_MAX_AGE:
+                engaged = brake['parking_brake_engaged']
             speed, _ = self.projection_speed(now)
-            return speed == 0
+            return speed, engaged
 
     def parking_snapshot(self, now=None):
         """Read the gate and candidate signals together for the support screen."""

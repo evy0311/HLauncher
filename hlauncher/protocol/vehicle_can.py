@@ -18,6 +18,7 @@ ILLUMINATION_ID = 0x12F85450
 ILLUMINATION_API_IDS = (5, 6)
 ILLUMINATION_SUBSCRIPTION = next(row for row in SUBSCRIPTIONS if row['message_id'] == ILLUMINATION_ID)
 DRIVING_API_IDS = (152,)
+SPEED_RETRY_DELAYS = (2, 4)
 PARKING_DIAGNOSTIC_API_IDS = (78, 79, 80, 95, 99, 100, 101)
 GPS_IDS = (0x99F00003, 0x99F00004)
 GPS_SUBSCRIPTIONS = tuple(row for row in SUBSCRIPTIONS if row['message_id'] in GPS_IDS)
@@ -152,18 +153,33 @@ class VehicleSubscription:
         # Native SDK ignores duplicate finish seeds once configured.
         if sid not in self.keys:self.keys[sid] = session_key(seed, device_info)
 
+    def needs_request(self, sid, scope, now):
+        if sid not in self.keys:
+            return False
+        previous = self.requests.get(sid)
+        if previous is None:
+            return scope != 'off'
+        age = now - previous['at']
+        if previous['scope'] != scope:
+            return age >= .35
+        retries = previous['speed_retries']
+        return ('driving' in scope and not previous.get('speed_received')
+                and retries < len(SPEED_RETRY_DELAYS) and age >= SPEED_RETRY_DELAYS[retries])
+
     def request(self, sid, send, events, replies, now=None, protocol=None, scope='diagnostics'):
         at=time.monotonic() if now is None else now
+        if not self.needs_request(sid, scope, at):
+            return
         previous=self.requests.get(sid)
-        if sid not in self.keys or (previous and (previous['scope']==scope or at-previous['at']<.35)):return
-        if scope=='off' and previous is None:return
+        speed_retries = previous['speed_retries'] + 1 if previous and previous['scope'] == scope else 0
         rows = subscription_rows(scope)
         api_ids = SCOPED_API_IDS.get(scope)
         cycle = subscription_ticks(scope)
         payloads=subscription_payloads(scope)
         request = self.requests[sid] = dict(at=at,scope=scope,api_ids=api_ids,
             previous_api_ids=previous['api_ids'] if previous else None,can_ids={r['message_id'] for r in rows},
-            status='pending', protocol=protocol, transport_status='pending', transactions=[], acks={})
+            status='pending', protocol=protocol, transport_status='pending', transactions=[], acks={},
+            speed_retries=speed_retries)
         for index, payload in enumerate(payloads):
             send(sid, 0xc2, payload, events, replies, 'honda_can_subscription_queued')
             events[-1].update(can_ids=[r['message_id'] for r in rows], cycle=cycle,
@@ -171,7 +187,7 @@ class VehicleSubscription:
                 can_classes=sorted({r['can_type'] for r in rows}),api_count=168 if api_ids is None else len(api_ids),
                 settings_count=4 if scope=='diagnostics' else int(bool(rows)),
                 part=index+1, parts=len(payloads), receive_only=True, status='pending', protocol=protocol,
-                authorization_session=sid, transport_status='pending')
+                authorization_session=sid, transport_status='pending', speed_retries=speed_retries)
             request['transactions'].append(events[-1]['transaction'])
         request['transaction'] = request['transactions'][0]
 
@@ -214,7 +230,10 @@ class VehicleSubscription:
                     error=str(exc), bytes=len(payload), preview=payload[:64].hex()))
                 return
             request['received'] = True
-            if payload[11] == 0:request['normal_received'] = True
+            if payload[11] == 0:
+                request['normal_received'] = True
+                if any(0 <= record['signals'].get('152', -1) <= 400 for record in records):
+                    request['speed_received'] = True
             events.append(dict(state='honda_can_data', session=sid, sequence=payload[2],
                 data_type=payload[11], vehicle_date=int.from_bytes(payload[3:7],'big'),
                 vehicle_time=int.from_bytes(payload[7:11],'big'), header=payload[3:11].hex(),

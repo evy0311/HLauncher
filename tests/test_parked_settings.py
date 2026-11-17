@@ -107,6 +107,24 @@ class ParkedSettings(unittest.TestCase):
         self.assertTrue(self.monitor.parked_for_setup(106))
         self.assertFalse(self.monitor.parked_for_setup(108))
 
+    def test_first_real_zero_speed_sample_is_enough_with_existing_brake_confirmation(self):
+        self.prefs.data['setup_complete'] = True
+        self.prefs.accept_safety_notice()
+        self.monitor.observe(dict(state='connected', uuid='test-cafe'))
+        self.brake(True, time.monotonic())
+        self.ui.settings()
+        self.assertTrue(self.ui.parked_screen_locked)
+        self.assertEqual(self.monitor.parked_setup_readings(), (None, True))
+
+        self.monitor.vehicle.signals.update(
+            [dict(can_id=0x158, data='00000000', api_ids=[152])], time.monotonic(), 1)
+        self.ui.tick()
+        self.assertTrue(self.ui.parked_screen_locked)
+        self.speed(0, time.monotonic())
+        self.ui.tick()
+        self.assertFalse(self.ui.parked_screen_locked)
+        self.assertIn(self.ui.diagnostics_menu, [callback for _, callback in self.ui.actions])
+
     def test_settings_waits_for_first_brake_status(self):
         self.ui.start()
         self.monitor.observe(dict(state='connected', uuid='test-cafe'))

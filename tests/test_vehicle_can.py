@@ -235,6 +235,38 @@ class VehicleCAN(unittest.TestCase):
         self.assertEqual(len(p.vehicle_subscription.tick(r['at']+11)),1)
         self.assertEqual(p.vehicle_subscription.tick(r['at']+12),[])
 
+    def test_driving_subscription_retries_missing_speed_and_stops_after_one_valid_sample(self):
+        for send_speed in (True, False):
+            with self.subTest(send_speed=send_speed):
+                probe = self.probe()
+                probe.vehicle_scope = lambda: 'illumination_driving'
+                self.authenticate(probe)
+                sid = 257
+                requests = probe.vehicle_subscription.requests
+                key = probe.vehicle_subscription.keys[sid]
+
+                # Headlight data and a short speed record do not confirm that speed arrived.
+                raw = can_data([(ILLUMINATION_ID, bytes(8)), (0x158, bytes(4))], key=key)
+                events, _ = probe.feed(incoming(sid, 0xC1, raw))
+                data = next(event for event in events if event['state'] == 'honda_can_data')
+                self.assertNotIn('152', data['records'][-1]['signals'])
+                self.assertEqual(probe.sync_vehicle_scope(), ([], []))
+                requests[sid]['at'] -= 3
+                events, replies = probe.sync_vehicle_scope()
+                self.assertEqual(len(replies), 1)
+                self.assertEqual(events[-1]['speed_retries'], 1)
+
+                if send_speed:
+                    raw = can_data([(0x12F85050, bytes(1))], key=key)
+                    probe.feed(incoming(sid, 0xC1, raw))
+                requests[sid]['at'] -= 5
+                events, replies = probe.sync_vehicle_scope()
+                self.assertEqual(len(replies), 0 if send_speed else 1)
+                if not send_speed:
+                    self.assertEqual(events[-1]['speed_retries'], 2)
+                requests[sid]['at'] -= 10
+                self.assertEqual(probe.sync_vehicle_scope(), ([], []))
+
     def test_diagnostics_acknowledged_and_never_replace_live_readings(self):
         p=self.probe();self.authenticate(p);key=p.vehicle_subscription.keys[257]
         with tempfile.TemporaryDirectory() as folder:

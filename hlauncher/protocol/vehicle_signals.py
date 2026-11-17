@@ -59,9 +59,16 @@ def decode_value(info, source, raw):
     return value
 
 
+def speed_field_present(source, byte_count):
+    # Variable-length records may omit trailing bytes. Zero padding must not create a speed reading.
+    return byte_count * 8 >= source['length'] * 8 - source['trailing_offset']
+
+
 def record_signals(mid, raw, api_ids=None):
     return {str(info['api_id']): decode_value(info, source, raw)
-            for info, source in BY_MESSAGE.get(mid, ()) if (api_ids is None and info['api_id']<=168) or (api_ids is not None and info['api_id'] in api_ids)}
+            for info, source in BY_MESSAGE.get(mid, ())
+            if ((api_ids is None and info['api_id'] <= 168) or (api_ids is not None and info['api_id'] in api_ids))
+            and (info['api_id'] != 152 or speed_field_present(source, len(raw)))}
 
 
 GAUGE_API_IDS = (44,40,167,1002,12,1003)
@@ -112,6 +119,8 @@ class SignalCache:
                 record = self.records.get(source['message_id'])
                 if record and info['api_id']>168 and record.get('api_ids') is None:continue
                 if record and record.get('api_ids') is not None and info['api_id'] not in record['api_ids']:continue
+                if record and info['api_id'] == 152 and not speed_field_present(source, len(record['data']) // 2):
+                    continue
                 if record and (selected is None or record['at']-selected[0]['at'] > 30):
                     selected = (record, source)
             row = dict(api_id=info['api_id'], name=info['name'], label=label(info),

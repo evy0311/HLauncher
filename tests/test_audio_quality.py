@@ -8,6 +8,9 @@ import numpy as np
 from hlauncher.resample import Resampler
 
 
+from test_architecture import parked_radio
+
+
 class AudioQuality(unittest.TestCase):
     def test_streaming_flush_preserves_frame_count_and_chunk_boundaries(self):
         signal=(.1*np.sin(2*np.pi*997*np.arange(44100)/44100)).astype(np.float32)
@@ -44,6 +47,7 @@ class AudioQuality(unittest.TestCase):
         self.assertLess(float(np.sqrt(np.mean(converted[-16000:]**2))),1e-6)
 
 
+@parked_radio
 class ShutdownUI(unittest.TestCase):
     def test_shutdown_action_uses_orderly_systemd_poweroff(self):
         from hlauncher.launcher import Launcher

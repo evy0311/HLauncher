@@ -16,6 +16,7 @@ from hlauncher.config import Preferences
 from hlauncher.launcher import Launcher
 from hlauncher.audio import AudioBroker
 from hlauncher.plugin_host import Worker, PluginHost
+from hlauncher.protocol_diagnostics import ProtocolDiagnostics
 from hlauncher.plugins import install
 
 
@@ -35,6 +36,11 @@ class Display:
         self.frame = frame
 
 
+# UI tests unrelated to the lock run with a parked radio.
+parked_radio = patch.object(ProtocolDiagnostics, "parked_for_setup", lambda self: True)
+
+
+@parked_radio
 class Architecture(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
@@ -320,12 +326,14 @@ class Architecture(unittest.TestCase):
             saved = ui.prefs.path.read_bytes()
             about_box, open_about = ui.actions[3]
             self.assertEqual(about_box, (24,232,352,308))
-            self.assertFalse(any(action == ui.obd_settings for _, action in ui.actions))
             open_about()
             self.assertEqual(ui.mode, 'about_settings')
             ui.actions[1][1]()
             self.assertEqual(ui.mode, 'legal_info')
-            self.assertEqual(len(ui.actions), 1)
+            ui.actions[1][1]()
+            self.assertEqual(ui.mode, 'safety_agreement')
+            ui.actions[0][1]()
+            self.assertEqual(ui.mode, 'legal_info')
             ui.actions[0][1]()
             self.assertEqual(ui.mode, 'about_settings')
             ui.actions[0][1]()
@@ -334,25 +342,6 @@ class Architecture(unittest.TestCase):
             ui.settings();ui.actions[0][1]()
             self.assertEqual(ui.mode,'home')
         finally:ui.close()
-
-    def test_themed_obd_adapter_actions_and_scrolling(self):
-        ui=Launcher(framebuffer=Display(),preferences=self.preferences(),manifests={})
-        try:
-            ui.obd.state=dict(message='Ready',devices=[dict(name='Adapter '+str(i),address=str(i)) for i in range(4)])
-            with patch.object(ui.obd,'command') as command:
-                ui.obd_settings()
-                ui.actions[1][1]();command.assert_called_with('scan')
-                ui.actions[2][1]();command.assert_called_with('disconnect')
-                ui.actions[3][1]();command.assert_called_with('connect',address='0')
-                self.assertGreater(ui.scroll_view['maximum'],0)
-                ui.actions[-1][1]()
-                self.assertEqual(ui.scroll_view['offset'],ui.scroll_view['maximum'])
-                next(action for box,action in ui.actions if box[0]==24 and box[1]>=360)()
-                command.assert_called_with('connect',address='3')
-                ui.actions[0][1]()
-                self.assertEqual(ui.mode,'home')
-        finally:ui.close()
-
 
 if __name__ == "__main__":
     unittest.main()

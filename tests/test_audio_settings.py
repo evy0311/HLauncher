@@ -7,6 +7,10 @@ from unittest.mock import patch
 from hlauncher.audio_settings import AudioSettings, EQ_BANDS, PRESETS
 
 
+from test_architecture import parked_radio
+
+
+@parked_radio
 class AudioSettingsTests(unittest.TestCase):
     def test_persistence_bounds_and_independent_gains(self):
         with tempfile.TemporaryDirectory() as folder:

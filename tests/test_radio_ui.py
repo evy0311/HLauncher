@@ -10,6 +10,7 @@ from unittest.mock import Mock, patch
 from PIL import ImageChops
 from hlauncher.launcher import Launcher
 from hlauncher.config import Preferences,ROOT
+from hlauncher.protocol_diagnostics import ProtocolDiagnostics
 from hlauncher.catalog import Manifest
 from hlauncher.recovery import sample_network,network_status
 from test_architecture import Display
@@ -17,6 +18,7 @@ from test_architecture import Display
 
 class RadioUI(unittest.TestCase):
     def setUp(self):
+        self.enterContext(patch.object(ProtocolDiagnostics, "parked_for_setup", return_value=True))
         self.temp=tempfile.TemporaryDirectory();self.folder=Path(self.temp.name)
         prefs=Preferences(self.folder/'settings.json');prefs.data.update(setup_complete=True,debug_mode=True,tile_color='Red')
         prefs.accept_safety_notice()
@@ -141,13 +143,14 @@ class RadioUI(unittest.TestCase):
         ui.protocols.observe(dict(state='iap_data_session_closed',session=257))
         self.assertFalse(ui.protocols.snapshot()['vehicle_signals'][43]['received'])
 
-    def test_opening_gauges_stops_ble_and_does_not_start_it(self):
+    def test_obd_tile_shows_placeholder_without_starting_worker(self):
         ui=self.ui
-        ui.obd.enabled=True
-        with patch.object(ui.obd,'close') as close,patch.object(ui.obd,'start') as start,patch.object(ui.host,'activate'):
+        self.assertIn('obd', [entry for page in ui.home_pages() for entry in page])
+        with patch.object(ui.host,'activate') as activate:
             ui.open_plugin('obd')
-        close.assert_called_once();start.assert_not_called()
-        self.assertFalse(ui.obd.enabled)
+            activate.assert_not_called()
+        self.assertEqual(ui.mode,'obd_coming_soon')
+        self.assertEqual([action for _,action in ui.actions],[ui.home])
 
     def test_network_sampling_prefers_lan_and_handles_missing_wifi(self):
         def run(args,**kwargs):
@@ -202,9 +205,8 @@ class RadioUI(unittest.TestCase):
         self.assertEqual(ui.mode,'colors')
         ui.actions[0][1]()
         self.assertEqual(ui.mode,'appearance_settings')
-        ui.plugin_detail('obd');ui.actions[-1][1]()
-        self.assertEqual(ui.mode,'obd_settings')
-        ui.actions[0][1]()
+        ui.plugin_detail('obd')
+        self.assertIsNone(ui.actions[-1][1])
         self.assertEqual(ui.mode,'plugin_detail')
         self.assertEqual(ui.settings_plugin_id,'obd')
         ui.appearance_settings()

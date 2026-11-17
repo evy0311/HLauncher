@@ -7,6 +7,7 @@ import os
 from pathlib import Path
 import re
 import tempfile
+from . import __version__
 
 ROOT = Path(__file__).resolve().parents[1]
 STATE_DIR = Path(os.environ.get("HLAUNCHER_STATE_DIR", "/var/lib/hlauncher"))
@@ -37,7 +38,7 @@ def serial_number():
         return b"HLauncher"
 
 
-SAFETY_NOTICE_VERSION = 2
+SAFETY_NOTICE_VERSION = 3
 CARPLAY_FRAME_RATES = (30, 60)
 WIFI_POWER_MODES = ('on', 'off', 'sleep')
 
@@ -47,6 +48,7 @@ class Preferences:
         self.path = Path(path) if path else STATE_DIR / "settings.json"
         self.data = {"enabled": {}, "background": {}, "default_plugin": None, "tile_color": "Red", "custom_color": "#198B96",
                      "setup_complete": False, "setup_step": 0, "safety_notice_version": 0,
+                     "safety_notice_app_version": "",
                      "debug_mode": False, "show_clock": False, "ssh_enabled": False, "wifi_power": "on",
                      "wifi_delay_boot": False,
                      "home_pages": [], "carplay_fps": CARPLAY_FRAME_RATES[0],
@@ -63,6 +65,8 @@ class Preferences:
             version = loaded.get('safety_notice_version')
             if type(version) is int:
                 self.data['safety_notice_version'] = version
+            if isinstance(loaded.get('safety_notice_app_version'), str):
+                self.data['safety_notice_app_version'] = loaded['safety_notice_app_version']
             self.data['debug_mode'] = loaded.get('debug_mode', False) is True
             self.data['show_clock'] = loaded.get('show_clock', False) is True
             self.data['ssh_enabled'] = loaded.get('ssh_enabled', False) is True
@@ -116,12 +120,14 @@ class Preferences:
         return type(version) is int and version == SAFETY_NOTICE_VERSION
 
     def accept_safety_notice(self):
-        previous = self.data['safety_notice_version']
-        self.data['safety_notice_version'] = SAFETY_NOTICE_VERSION
+        accepted = dict(safety_notice_version=SAFETY_NOTICE_VERSION,
+                        safety_notice_app_version=__version__)
+        previous = {key: self.data[key] for key in accepted}
+        self.data.update(accepted)
         try:
-            self.save(force=('safety_notice_version',))
+            self.save(force=tuple(accepted))
         except OSError:
-            self.data['safety_notice_version'] = previous
+            self.data.update(previous)
             raise
 
     def enabled(self, manifest):

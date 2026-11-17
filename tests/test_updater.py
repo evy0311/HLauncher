@@ -18,6 +18,9 @@ spec=importlib.util.spec_from_file_location('package_release',ROOT/'scripts/pack
 package_release=importlib.util.module_from_spec(spec);spec.loader.exec_module(package_release)
 
 
+from test_architecture import parked_radio
+
+
 class Updates(unittest.TestCase):
     def setUp(self):
         self.temp=tempfile.TemporaryDirectory();self.folder=Path(self.temp.name)
@@ -328,6 +331,7 @@ class ContractCompatibility(unittest.TestCase):
         with self.assertRaises(ValueError):updater.validate_manifest(item,config)
 
 
+@parked_radio
 class ReleaseImage(unittest.TestCase):
     def test_packaged_image_and_update_are_identical_and_exclude_user_state(self):
         import shutil
@@ -399,6 +403,7 @@ class ReleaseImage(unittest.TestCase):
             finally:ui.close()
 
 
+@parked_radio
 class ReleaseNotes(unittest.TestCase):
     def test_notes_are_readable_wrapped_and_not_truncated_to_the_first_page(self):
         from hlauncher.ui.release_notes import lines

@@ -33,14 +33,23 @@ Fresh images include FFmpeg. If a camera plugin uses FFmpeg on an older image, i
 
 ## Author and package a plugin
 
-Start with `examples/hello`. The source directory contains a manifest, entrypoint, and any private code or assets it needs:
+Start with [examples/hello](../examples/hello), a Python plugin that draws a
+message and returns to Home when tapped. From the root of an HLauncher checkout,
+copy its two files into a new folder.
+
+```bash
+mkdir my-plugin
+cp examples/hello/plugin.json examples/hello/worker.py my-plugin/
+```
+
+Edit `my-plugin/plugin.json` with your own ID and tile name.
 
 ```json
 {
   "api_version": 1,
   "version": "1.0.0",
-  "id": "hello",
-  "name": "Hello",
+  "id": "my-plugin",
+  "name": "My Plugin",
   "entrypoint": ["python3", "worker.py"],
   "capabilities": ["display", "touch"],
   "permissions": [],
@@ -48,22 +57,62 @@ Start with `examples/hello`. The source directory contains a manifest, entrypoin
 }
 ```
 
-Choose a unique lowercase ID and keep it for later versions. The ID, entrypoint, and API describe the interface with the launcher. The three-part version describes the plugin release. Use Python with the HLauncher SDK or Node with the documented wire protocol. For Node, ship any dependencies as regular files within the package. Use the target's runtime and installed system dependencies. Installation runs no build scripts or dependency installers. External workers run only while their app is open.
+Keep the ID for later versions and increase the three-part version number for
+each update. Edit `worker.py` to draw your first screen using the viewport
+dimensions from `Client`. Keep the sample's host event loop and heartbeat as
+you add input handling. Store settings and other persistent files in
+`HLAUNCHER_DATA_DIR`.
 
-From the HLauncher checkout on a development computer with Python and Pillow:
+Use Python with the [HLauncher SDK](../sdk/hlauncher_sdk) or Node with the
+[API 1 wire protocol](#api-1). Ship any bundled dependencies as regular files
+inside the package. Use dependencies that work on the target Pi. Installation
+runs no build scripts or dependency installers. External workers run only while
+their app is open.
+
+From the HLauncher checkout with Python 3 and Pillow, validate the source,
+preview its first frame, and build and validate the package.
 
 ```bash
-python3 -m hlauncher plugins validate examples/hello
-python3 -m hlauncher plugins preview examples/hello /tmp/hello.png
-python3 -m hlauncher plugins pack examples/hello /tmp/hello.hlp
-python3 -m hlauncher plugins validate /tmp/hello.hlp
+python3 -m hlauncher plugins validate my-plugin
+python3 -m hlauncher plugins preview my-plugin /tmp/my-plugin.png
+python3 -m hlauncher plugins pack my-plugin /tmp/my-plugin.hlp
+python3 -m hlauncher plugins validate /tmp/my-plugin.hlp
 ```
 
-Preview runs your worker as your local user and captures its first frame. Use it with source you authored or reviewed. Verify camera, network, and Pi-specific dependencies on the target. For an AI agent, provide this guide and `examples/hello` as references, then ask it to build and validate a package targeting API 1.
+Open `/tmp/my-plugin.png` and inspect the first frame. Preview executes the
+worker as your local user, so review the source first. For a plugin without a
+display, skip the preview and check its behavior on the Pi.
+
+[Install and enable the package](#install-on-the-radio) on your Pi. While
+parked, open its Home tile, exercise its controls, return to Home, and reopen
+it. Check any camera, network, audio, or Pi-specific dependencies you use. To
+share the plugin, attach the validated `.hlp` to a stable release in your
+public GitHub repository, or share the file directly for USB installation.
 
 A `.hlp` is a ZIP containing regular files at its root, including `plugin.json`. The installer limits packages to 64 MiB and 4,096 files, rejects links and paths outside the package, and reserves the bundled IDs. The package digest identifies the exact installed revision. To supply tile art, set `"icon": "icon.png"` in the manifest and include a static PNG up to 256 × 256 and 64 KiB.
 
 External plugins can request `display`, `touch`, `session`, `audio.playback`, and `media.publish`. Each worker has its own `HLAUNCHER_DATA_DIR`. The manifest’s `camera` option enables a USB capture picker and provides the chosen device through `HLAUNCHER_CAMERA_DEVICE`. Camera workers receive the viewport below the standard launcher header and Back button. The `network` option configures the endpoint used by Python SDK `Client.connect()`. Plugins can also use the system’s ordinary network and device APIs directly.
+
+## Build a plugin with an AI agent
+
+Open an HLauncher checkout in your coding agent and replace the bracketed text
+with the behavior you want. State what should appear on screen, what a tap or
+other input should do, and any hardware or data source the app needs.
+
+> Create a third-party HLauncher plugin called **[tile name]** in `my-plugin/`.
+> It should **[describe the screen, controls, and any device or data source]**.
+> Read `docs/plugins.md`, `examples/hello`, and `sdk/hlauncher_sdk/__init__.py`.
+> Target plugin API 1 and use only the external capabilities the app needs.
+> Keep the implementation in `my-plugin/`. Show me the source and dependencies
+> for review before executing the worker. Then validate the source, capture a
+> preview if the app draws a screen, pack it as `/tmp/my-plugin.hlp`, and validate
+> the archive using the commands in the guide. Report the files, checks you ran,
+> and anything I need to test on my Pi.
+
+Before running generated code, review its file access, network requests,
+subprocesses, and dependencies. External workers run as root on the Pi.
+Keep device credentials out of the prompt and package. Use the preview to
+inspect layout, then follow the Pi test steps above to check input and hardware.
 
 ## API 1
 

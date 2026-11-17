@@ -80,7 +80,8 @@ network and change the SSH password with `passwd`. See [first boot and recovery]
 ## Development and documentation
 
 - [Source installation and troubleshooting](docs/setup.md)
-- [Plugin installation, API and example](docs/plugins.md)
+- [Contributing to HLauncher](CONTRIBUTING.md)
+- [Installing plugins](docs/plugins.md#install-on-the-radio) · [Creating a plugin](docs/plugins.md#author-and-package-a-plugin) · [Building with an AI agent](docs/plugins.md#build-a-plugin-with-an-ai-agent)
 - [Audio and EQ](docs/audio.md) · [Radio controls](docs/radio-buttons.md)
 - [Development and checks](docs/development.md)
 - [Building images and signed releases](docs/updates.md#build-a-complete-release)

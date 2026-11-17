@@ -17,7 +17,7 @@ class Protocol(unittest.TestCase):
         b=BootstrapLauncher.__new__(BootstrapLauncher);b.ui=None
         self.assertEqual(b.vehicle_scope(),'off')
         b.ui=SimpleNamespace(mode='home',protocol_page=1,host=SimpleNamespace(active=None))
-        self.assertEqual(b.vehicle_scope(),'off')
+        self.assertEqual(b.vehicle_scope(),'driving')
         b.ui.mode='plugin';b.ui.host.active='obd'
         self.assertEqual(b.vehicle_scope(),'gauges')
         b.ui.mode='protocol_tests';b.ui.protocol_page=0

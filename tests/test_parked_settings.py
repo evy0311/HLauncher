@@ -105,6 +105,75 @@ class ParkedSettings(unittest.TestCase):
         self.assertTrue(self.monitor.parked_for_setup(106))
         self.assertFalse(self.monitor.parked_for_setup(108))
 
+    def test_settings_waits_for_first_brake_status(self):
+        self.ui.start()
+        self.monitor.observe(dict(state='connected', uuid='test-cafe'))
+        self.speed(0, time.monotonic())
+        self.ui.tick()
+        self.assertTrue(self.ui.parked_screen_locked)
+        self.assertIsNone(self.ui.parked_overlay_at)
+
+        self.brake(False, time.monotonic())
+        self.ui.tick()
+        self.assertTrue(self.ui.parked_screen_locked)
+        self.brake(True, time.monotonic())
+        self.ui.tick()
+        self.assertFalse(self.ui.parked_screen_locked)
+
+    def test_short_reading_gap_blocks_touches_without_flashing_the_overlay(self):
+        self.prefs.data['setup_complete'] = True
+        self.prefs.accept_safety_notice()
+        self.monitor.observe(dict(state='connected', uuid='test-cafe'))
+        now = time.monotonic()
+        self.brake(True, now)
+        self.speed(0, now)
+        self.ui.home()
+        bootstrap = BootstrapLauncher.__new__(BootstrapLauncher)
+        bootstrap.ui = self.ui
+        self.assertEqual(bootstrap.vehicle_scope(), 'driving')
+        self.ui.appearance_settings()
+        self.assertEqual(bootstrap.vehicle_scope(), 'driving')
+        box = next(box for box, callback in self.ui.actions if callback == self.ui.toggle_clock)
+        x, y = (box[0] + box[2]) / 2, (box[1] + box[3]) / 2
+        self.touch('down', x, y)
+        settings_frame = self.ui.fb.last
+        with patch('hlauncher.launcher.time.monotonic', return_value=now + 2.2):
+            self.touch('up', x, y)
+            self.assertTrue(self.ui.parked_screen_locked)
+            self.assertIs(self.ui.fb.last, settings_frame)
+            self.assertFalse(self.prefs.data['show_clock'])
+
+            self.speed(0, now + 2.2)
+            self.ui.tick()
+            self.assertFalse(self.ui.parked_screen_locked)
+            self.assertIn(self.ui.toggle_clock, [callback for _, callback in self.ui.actions])
+
+        with patch('hlauncher.launcher.time.monotonic', return_value=now + 4.3):
+            self.ui.tick()
+            self.assertIsNotNone(self.ui.parked_overlay_at)
+            self.speed(5, now + 4.3)
+            self.ui.tick()
+            self.assertIsNone(self.ui.parked_overlay_at)
+            self.assertEqual([callback for _, callback in self.ui.actions], [self.ui.home])
+
+    def test_sustained_reading_gap_shows_the_overlay(self):
+        self.prefs.data['setup_complete'] = True
+        self.prefs.accept_safety_notice()
+        self.monitor.observe(dict(state='connected', uuid='test-cafe'))
+        now = time.monotonic()
+        self.brake(True, now)
+        self.speed(0, now)
+        self.ui.appearance_settings()
+
+        with patch('hlauncher.launcher.time.monotonic', return_value=now + 2):
+            self.ui.tick()
+            self.assertTrue(self.ui.parked_screen_locked)
+            self.assertEqual(self.ui.actions, [])
+        with patch('hlauncher.launcher.time.monotonic', return_value=now + 3):
+            self.ui.tick()
+            self.assertTrue(self.ui.parked_screen_locked)
+            self.assertEqual([callback for _, callback in self.ui.actions], [self.ui.home])
+
     def test_brake_release_cancels_a_pressed_setting_and_home_is_available(self):
         self.prefs.data['setup_complete'] = True
         self.prefs.accept_safety_notice()

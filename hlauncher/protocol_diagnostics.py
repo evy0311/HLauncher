@@ -186,6 +186,14 @@ class ProtocolDiagnostics:
             speed, _ = self.projection_speed(now)
             return speed == 0
 
+    def parked_setup_refresh_pending(self):
+        """Allow the overlay to wait briefly while a parked page awaits fresh data."""
+        with self.lock:
+            if not self.connected or self.vehicle.status.get('parking_brake_engaged') is not True:
+                return False
+            speed, = self.vehicle.signals.snapshot(time.monotonic(), {152})
+            return speed['value'] in (0, None)
+
     def illumination_night_mode(self, now=None):
         now = time.monotonic() if now is None else now
         with self.lock:

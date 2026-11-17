@@ -103,6 +103,8 @@ class Launcher:
         self.setup_list_page = 0
         self.mode = "home" if self.prefs.safety_notice_accepted else "safety_notice"
         self.parked_screen_locked = False
+        self.parked_page_visible = False
+        self.parked_overlay_at = None
         self.page = 0
         self.settings_page = 0
         self.actions = []
@@ -991,17 +993,34 @@ class Launcher:
         self.home_editor.gesture = None
         if self.mode == 'custom_color':
             self.color_picker.drag = None
+        self.parked_overlay_at = None
         if locked:
             self.tone_test.stop()
+            # Cancel input immediately, but leave the current page visible during a brief
+            # telemetry gap. Movement, brake release or disconnect shows the overlay at once.
+            if self.parked_page_visible and self.protocols.parked_setup_refresh_pending():
+                self.parked_overlay_at = time.monotonic() + 1
         return True
+
+    def parked_overlay_due(self):
+        return self.parked_overlay_at is not None and (
+            time.monotonic() >= self.parked_overlay_at
+            or not self.protocols.parked_setup_refresh_pending()
+        )
 
     def draw(self):
         self.scroll_view=None
         self.sync_parked_screen()
         if self.parked_screen_locked:
+            if self.parked_overlay_at is not None and not self.parked_overlay_due():
+                self.actions = []
+                return
+            self.parked_overlay_at = None
+            self.parked_page_visible = False
             from .ui.pages import parked_only
             parked_only(self)
             return
+        self.parked_page_visible = self.parked_only_screen
         if self.mode == "safety_notice":
             from .ui.onboarding import draw_safety_notice
             draw_safety_notice(self)
@@ -1131,7 +1150,7 @@ class Launcher:
         self.draw()
 
     def update(self, touch):
-        if self.sync_parked_screen():
+        if self.sync_parked_screen() or self.parked_overlay_due():
             self.draw()
         touch = for_viewport(touch, self.fb.w, self.fb.h)
         primary = touch.get("contacts", [])
@@ -1227,7 +1246,7 @@ class Launcher:
                 self.plugin_checked = time.monotonic()
                 self.refresh_plugins()
         now = time.monotonic()
-        if self.sync_parked_screen():
+        if self.sync_parked_screen() or self.parked_overlay_due():
             self.draw()
         if not self.parked_screen_locked:
             self.home_editor.tick(now)

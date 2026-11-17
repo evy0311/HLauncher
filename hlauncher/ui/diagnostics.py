@@ -34,7 +34,8 @@ def parking_status(ui):
     link = 'Connected' if data['connected'] else 'Disconnected'
     gate = 'Parked confirmed' if data['parked'] else 'Parked unconfirmed'
     p.text((24, 113), f'HondaLink: {link}  ·  {gate}', 16, fill='#efedf6')
-    p.text((696, 115), 'Gate uses speed + radio brake', 13, anchor='rt')
+    if data['brake_only']:
+        p.text((696, 115), 'Using parking brake only', 13, anchor='rt')
 
     def row(index, label, identifier, source, value, age, raw, max_age=SPEED_MAX_AGE):
         y = 144 + index * 36

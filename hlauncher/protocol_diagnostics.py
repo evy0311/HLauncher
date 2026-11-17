@@ -35,6 +35,7 @@ class ProtocolDiagnostics:
         self.recent=deque(maxlen=12);self.voice={};self.mic={};self.connected=False
         self.last_marker='';self.sequence=0
         self.vehicle=VehicleTraffic()
+        self.last_reported_speed = None
         self.app_keys = deque(maxlen=6)
         self.display_trials = deque(maxlen=4)
 
@@ -56,9 +57,15 @@ class ProtocolDiagnostics:
             if state=='iap_data_session_closed':
                 self.sessions.pop(str(item.get('session')),None)
                 self.vehicle.clear(item.get('session'))
+            if state == 'honda_can_data' and self.connected and event.get('data_type', 0) == 0:
+                speeds = [record.get('signals', {}).get('152', -1) for record in event['records']]
+                valid_speeds = [speed for speed in speeds if 0 <= speed <= 400]
+                if valid_speeds:
+                    self.last_reported_speed = max(valid_speeds)
             if state=='connected' and str(item.get('uuid','')).endswith('cafe'):self.connected=True
             if state in ('closed','released') and str(item.get('uuid','')).endswith('cafe'):
                 self.connected=False;self.sessions.clear();self.vehicle.clear()
+                self.last_reported_speed = None
             if state=='iap_remote_reset':
                 self.advertised.clear();self.sessions.clear();self.vehicle.clear()
             if state=='honda_app_disconnect_received':self.vehicle.clear()
@@ -176,9 +183,9 @@ class ProtocolDiagnostics:
         return state
 
     def parked_for_setup(self, now=None):
-        """Require live zero speed and an engaged brake from the radio."""
+        """Use the radio brake when speed is missing, with reported motion taking priority."""
         speed, brake = self.parked_setup_readings(now)
-        return speed == 0 and brake is True
+        return brake is True and speed in (None, 0)
 
     def parked_setup_readings(self, now=None):
         now = time.monotonic() if now is None else now
@@ -191,6 +198,9 @@ class ProtocolDiagnostics:
             if 'at' in brake and 0 <= now - brake['at'] < SETUP_BRAKE_MAX_AGE:
                 engaged = brake['parking_brake_engaged']
             speed, _ = self.projection_speed(now)
+            # Losing the speed feed or changing subscriptions must not erase reported motion.
+            if self.last_reported_speed:
+                speed = self.last_reported_speed
             return speed, engaged
 
     def parking_snapshot(self, now=None):
@@ -198,7 +208,9 @@ class ProtocolDiagnostics:
         now = time.monotonic() if now is None else now
         with self.lock:
             brake = self.vehicle.status
+            speed, engaged = self.parked_setup_readings(now)
             return dict(connected=self.connected, parked=self.parked_for_setup(now),
+                        brake_only=engaged is True and speed is None,
                         radio_brake=brake.get('parking_brake_engaged'),
                         radio_flags=brake.get('flags'),
                         radio_age=now - brake['at'] if 'at' in brake else None,
@@ -210,8 +222,8 @@ class ProtocolDiagnostics:
         with self.lock:
             if not self.connected or self.vehicle.status.get('parking_brake_engaged') is not True:
                 return False
-            speed, = self.vehicle.signals.snapshot(time.monotonic(), {152})
-            return speed['value'] in (0, None)
+            speed, _ = self.parked_setup_readings()
+            return speed in (0, None)
 
     def illumination_night_mode(self, now=None):
         now = time.monotonic() if now is None else now

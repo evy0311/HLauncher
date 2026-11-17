@@ -25,7 +25,7 @@ The builder strips application state, Bluetooth bonds, Wi-Fi profiles and SSH ho
 4. Park safely, engage the parking brake, and open HLauncher through HondaLink. Read the safety notice and agreement. Scroll to the end if needed, then select **I acknowledge and agree**. HLauncher saves the notice version locally. After an update changes the agreement, acknowledge it again before using the launcher. **Cancel** opens Wi-Fi for recovery. Complete **Welcome → Apps → Startup → Appearance → Network → Finish**. Enable the installed plugins you want, choose Home or an enabled startup app, and pick a preset or Custom theme. Network setup is optional. Choices and the current step save as you go.
 5. At Finish, choose whether to enable storage protection. The application only offers it when the persistent-data layout is verified. Configuration and reboot are separate actions.
 
-Setup and on-radio Settings require recent readings of zero speed and an engaged parking brake from HondaLink. If the readings are unavailable, the screen stays locked. Review the notice and agreement under **Settings → About → Legal info**.
+Setup and on-radio Settings require a recent HondaLink reading that confirms the parking brake is engaged. When speed is unavailable, the parking brake is enough to continue. If the radio last reported movement, it must report zero speed before you can continue on that connection. Review the notice and agreement under **Settings → About → Legal info**.
 
 For help with the parked check, open **Settings → Diagnostics → Parking Status**. From the warning, double-tap **Park safely to continue** to open the read-only page directly. Take a photo of the readings for support, then tap **×** to return.
 

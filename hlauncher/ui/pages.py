@@ -71,11 +71,9 @@ def parked_only(ui):
     page.draw = ImageDraw.Draw(page.image)
     page.text((360, 148), 'Park safely to continue', 30, fill='#ffffff', anchor='mm')
     page.text((360, 203), 'Come to a complete stop and engage the parking brake.', 19, anchor='mm')
-    speed, brake = ui.protocols.parked_setup_readings()
+    speed, _ = ui.protocols.parked_setup_readings()
     if speed is not None and speed > 0:
-        page.text((360, 254), 'The radio reports that the vehicle is moving.', 17, anchor='mm')
-    elif brake is True:
-        page.text((360, 254), 'Parking brake confirmed. Waiting for vehicle speed from the radio.', 17, anchor='mm')
+        page.text((360, 254), 'Waiting for the radio to confirm the vehicle has stopped.', 17, anchor='mm')
     else:
         page.text((360, 254), 'Waiting for the radio to confirm the parking brake.', 17, anchor='mm')
         page.text((360, 284), 'If it is already engaged, keep the brake pedal pressed.', 17, anchor='mm')

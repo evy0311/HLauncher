@@ -30,9 +30,9 @@ class ParkedSettings(unittest.TestCase):
         ))
 
     def speed(self, kph, at):
-        self.monitor.vehicle.signals.update([
-            dict(can_id=0x12F85050, data=bytes([kph, 0, 0, 0, 0, 0]).hex(), api_ids=[152]),
-        ], at, 1)
+        records = decode_records(can_data([(0x12F85050, bytes([kph]))]), api_ids=[152])
+        with patch('hlauncher.protocol_diagnostics.time.monotonic', return_value=at):
+            self.monitor.observe(dict(state='honda_can_data', session=1, records=records))
 
     def test_setup_requires_connection_brake_and_zero_speed(self):
         self.ui.start()
@@ -94,7 +94,7 @@ class ParkedSettings(unittest.TestCase):
             self.touch('up', 556, 434)
         self.assertTrue(self.prefs.safety_notice_accepted)
 
-    def test_brake_heartbeat_and_stale_speed(self):
+    def test_brake_heartbeat_and_brake_only_with_stale_zero_speed(self):
         self.monitor.observe(dict(state='connected', uuid='test-cafe'))
         self.brake(True, 100)
         self.speed(0, 104)
@@ -105,25 +105,38 @@ class ParkedSettings(unittest.TestCase):
         self.assertFalse(self.monitor.parked_for_setup(106))
         self.brake(True, 106)
         self.assertTrue(self.monitor.parked_for_setup(106))
-        self.assertFalse(self.monitor.parked_for_setup(108))
+        self.assertTrue(self.monitor.parked_for_setup(108))
+        self.assertTrue(self.monitor.parking_snapshot(108)['brake_only'])
 
-    def test_first_real_zero_speed_sample_is_enough_with_existing_brake_confirmation(self):
+    def test_confirmed_brake_unlocks_settings_without_speed(self):
         self.prefs.data['setup_complete'] = True
         self.prefs.accept_safety_notice()
         self.monitor.observe(dict(state='connected', uuid='test-cafe'))
         self.brake(True, time.monotonic())
         self.ui.settings()
-        self.assertTrue(self.ui.parked_screen_locked)
-        self.assertEqual(self.monitor.parked_setup_readings(), (None, True))
-
-        self.monitor.vehicle.signals.update(
-            [dict(can_id=0x158, data='00000000', api_ids=[152])], time.monotonic(), 1)
-        self.ui.tick()
-        self.assertTrue(self.ui.parked_screen_locked)
-        self.speed(0, time.monotonic())
-        self.ui.tick()
         self.assertFalse(self.ui.parked_screen_locked)
+        self.assertEqual(self.monitor.parked_setup_readings(), (None, True))
+        self.assertTrue(self.monitor.parking_snapshot()['brake_only'])
         self.assertIn(self.ui.diagnostics_menu, [callback for _, callback in self.ui.actions])
+        self.assertIsNone(self.monitor.projection_vehicle_state()['speed_kph'])
+
+    def test_last_moving_speed_vetoes_brake_only_after_subscription_changes(self):
+        self.monitor.observe(dict(state='connected', uuid='test-cafe'))
+        self.brake(True, 100)
+        self.speed(10, 100)
+        self.assertFalse(self.monitor.parked_for_setup(100))
+        self.assertFalse(self.monitor.parked_for_setup(103))
+        self.monitor.observe(dict(state='honda_can_subscription_queued', session=1))
+        self.assertFalse(self.monitor.parked_for_setup(103))
+        self.speed(0, 103)
+        self.assertTrue(self.monitor.parked_for_setup(103))
+
+        self.speed(10, 104)
+        self.monitor.observe(dict(state='closed', uuid='test-cafe'))
+        self.monitor.observe(dict(state='connected', uuid='test-cafe'))
+        self.assertFalse(self.monitor.parked_for_setup(105))
+        self.brake(True, 105)
+        self.assertTrue(self.monitor.parked_for_setup(105))
 
     def test_settings_waits_for_first_brake_status(self):
         self.ui.start()
@@ -216,21 +229,21 @@ class ParkedSettings(unittest.TestCase):
         x, y = (box[0] + box[2]) / 2, (box[1] + box[3]) / 2
         self.touch('down', x, y)
         settings_frame = self.ui.fb.last
-        with patch('hlauncher.launcher.time.monotonic', return_value=now + 2.2):
+        with patch('hlauncher.launcher.time.monotonic', return_value=now + 6.2):
             self.touch('up', x, y)
             self.assertTrue(self.ui.parked_screen_locked)
             self.assertIs(self.ui.fb.last, settings_frame)
             self.assertFalse(self.prefs.data['show_clock'])
 
-            self.speed(0, now + 2.2)
+            self.brake(True, now + 6.2)
             self.ui.tick()
             self.assertFalse(self.ui.parked_screen_locked)
             self.assertIn(self.ui.toggle_clock, [callback for _, callback in self.ui.actions])
 
-        with patch('hlauncher.launcher.time.monotonic', return_value=now + 4.3):
+        with patch('hlauncher.launcher.time.monotonic', return_value=now + 12.3):
             self.ui.tick()
             self.assertIsNotNone(self.ui.parked_overlay_at)
-            self.speed(5, now + 4.3)
+            self.speed(5, now + 12.3)
             self.ui.tick()
             self.assertIsNone(self.ui.parked_overlay_at)
             self.assertEqual([callback for _, callback in self.ui.actions], [self.ui.home])
@@ -244,11 +257,11 @@ class ParkedSettings(unittest.TestCase):
         self.speed(0, now)
         self.ui.appearance_settings()
 
-        with patch('hlauncher.launcher.time.monotonic', return_value=now + 2):
+        with patch('hlauncher.launcher.time.monotonic', return_value=now + 6):
             self.ui.tick()
             self.assertTrue(self.ui.parked_screen_locked)
             self.assertEqual(self.ui.actions, [])
-        with patch('hlauncher.launcher.time.monotonic', return_value=now + 3):
+        with patch('hlauncher.launcher.time.monotonic', return_value=now + 7):
             self.ui.tick()
             self.assertTrue(self.ui.parked_screen_locked)
             self.assertEqual([callback for _, callback in self.ui.actions], [self.ui.home])

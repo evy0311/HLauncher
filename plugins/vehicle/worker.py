@@ -3,6 +3,7 @@
 import time
 
 from hlauncher_sdk import Client
+from hlauncher_sdk.theme import dither_rgb565
 from hlauncher.display import encode
 
 from dashboard import Dashboard
@@ -30,7 +31,8 @@ def main():
                     if revision != message['revision']:
                         revision = message['revision']
                         dashboard.reports.clear()
-                    dashboard.update(message['snapshot'], message['hidden'], message['colors'], message['layout'])
+                    dashboard.update(message['snapshot'], message['hidden'], message['colors'],
+                                     message['layout'], oem_color=message.get('oem_color'))
                     dirty = True
                 elif kind == 'vehicle.report' and message['revision'] == revision:
                     report = message['kind']
@@ -50,9 +52,13 @@ def main():
                         client.home()
                         active = False
                     dirty = True
-            if active and dirty and client.free and client.present(encode(dashboard.render())):
-                dirty = False
-                frames += 1
+            if active and dirty and client.free:
+                frame = dashboard.render()
+                if dashboard.oem_color:
+                    frame = dither_rgb565(frame)
+                if client.present(encode(frame)):
+                    dirty = False
+                    frames += 1
             now = time.monotonic()
             if now-last_health >= 2:
                 client.send(type='health', metrics={'frames': frames})

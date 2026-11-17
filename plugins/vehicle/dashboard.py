@@ -3,6 +3,10 @@ from math import cos, radians, sin
 
 from PIL import Image, ImageColor, ImageDraw
 from hlauncher_sdk.fonts import font
+from hlauncher.ui import home_art
+from hlauncher.ui.chrome import BACK_BOUNDS
+from hlauncher.ui.controls import Page
+from hlauncher.ui.home import caption
 from hlauncher.vehicle_fields import (
     DIAGNOSTIC_FIELDS, DIAGNOSTIC_KEYS, GROUPS, MINDER_IDS, SERVICE_ITEMS,
     field_label, unit, visible,
@@ -11,7 +15,7 @@ from diagnostics import fault_codes, record_title
 
 WIDTH, HEIGHT = 720, 480
 TABS = ('Maintenance', 'Health', 'Diagnostics', 'Readings')
-OEM = dict(background='#101318', panel='#1b2129', accent='#f4b36a', text='#f3f2ee', muted='#aeb9c6')
+FALLBACK_COLORS = dict(background='#101318', panel='#1b2129', accent='#f4b36a', text='#f3f2ee', muted='#aeb9c6')
 
 
 def blend(low, high, fraction):
@@ -33,12 +37,14 @@ class Dashboard:
         self.last_updated = 'No readings yet'
         self.colors = {}
         self.layout = 'menu'
+        self.oem_color = None
 
-    def update(self, snapshot, hidden, colors, layout):
+    def update(self, snapshot, hidden, colors, layout, *, oem_color=None):
         self.hidden = set(hidden)
         self.readings = snapshot['readings']
         self.last_updated = snapshot['last_updated']
-        self.colors = {**OEM, **colors}
+        self.colors = {**FALLBACK_COLORS, **colors}
+        self.oem_color = oem_color
         self.layout = layout
 
     def navigate(self, view=None, *, tab=None):
@@ -72,17 +78,28 @@ class Dashboard:
         return box[0] <= x < box[2] and box[1] <= y < box[3]
 
     def render(self):
-        colors = self.colors or OEM
+        colors = self.colors or FALLBACK_COLORS
         self.c = {k: ImageColor.getrgb(v) if isinstance(v, str) else tuple(v) for k, v in colors.items()}
         self.c['edge'] = blend(self.c['panel'], self.c['text'], .15)
         self.c['raised'] = blend(self.c['panel'], self.c['text'], .08)
-        self.image = Image.new('RGB', (WIDTH, HEIGHT), self.c['background'])
-        self.d = ImageDraw.Draw(self.image)
         self.actions = []
-        bottom = self.layout in ('console', 'dock')
-        self.top = 80 if bottom else 128
+        self.oem_page = None
+        if self.oem_color:
+            self.c['accent'] = home_art.blend(home_art.accent(self.oem_color), (245, 243, 255), .62)
+            self.c['edge'] = home_art.blend(home_art.accent(self.oem_color), (62, 55, 66), .6)
+            pressed = BACK_BOUNDS if self.down == 'home' and self.inside(BACK_BOUNDS) else None
+            self.oem_page = Page('Vehicle', self.home, self.oem_color, (WIDTH, HEIGHT), pressed=pressed, heading_y=60)
+            self.image, self.d = self.oem_page.image, self.oem_page.draw
+            self.top = 144
+            nav_y = 96
+        else:
+            self.image = Image.new('RGB', (WIDTH, HEIGHT), self.c['background'])
+            self.d = ImageDraw.Draw(self.image)
+            bottom = self.layout in ('console', 'dock')
+            self.top = 80 if bottom else 128
+            nav_y = 432 if bottom else 68
         self.bottom = self.top + 328
-        self.header(432 if bottom else 68)
+        self.header(nav_y)
         if self.tab == 0:
             self.maintenance()
         elif self.tab == 1:
@@ -94,8 +111,16 @@ class Dashboard:
         return self.image if self.size == self.image.size else self.image.resize(self.size, Image.Resampling.LANCZOS)
 
     def text(self, x, y, value, size=18, role='text', *, weight=400, width=None, anchor='lm'):
-        face = font(size, weight)
         value = str(value)
+        if self.oem_page and weight >= 500 and role == 'text':
+            label = caption(value, size)
+            while width is not None and label.width > width and value:
+                value = value[:-1]
+                label = caption(value+'…', size)
+            offset = {'lm': 0, 'mm': label.width//2, 'rm': label.width}.get(anchor, 0)
+            self.image.paste(label, (x-offset, y-label.height//2), label)
+            return
+        face = font(size, weight)
         if width is not None and self.d.textlength(value, font=face) > width:
             while value and self.d.textlength(value+'…', font=face) > width:
                 value = value[:-1]
@@ -103,7 +128,12 @@ class Dashboard:
         self.d.text((x, y), value, fill=self.c[role], font=face, anchor=anchor)
 
     def panel(self, box, *, fill='panel', radius=12):
-        self.d.rounded_rectangle(box, radius=radius, fill=self.c[fill], outline=self.c['edge'])
+        if self.oem_page:
+            x, y, right, bottom = box
+            tile = home_art.tile(self.oem_color, right-x, bottom-y, radius=6, control=fill == 'raised')
+            self.image.paste(tile, (x, y), tile)
+        else:
+            self.d.rounded_rectangle(box, radius=radius, fill=self.c[fill], outline=self.c['edge'])
 
     def rule(self, x, y, right):
         self.d.line((x, y, right, y), fill=self.c['edge'])
@@ -115,6 +145,10 @@ class Dashboard:
     def button(self, box, key, label, action, *, selected=False, size=16):
         x, y, right, bottom = box
         pressed = self.hit(box, key, action)
+        if self.oem_page:
+            self.oem_page.pressed = box if pressed else None
+            self.oem_page.button(box, label, action, selected=selected, size=size+3)
+            return
         if selected or pressed:
             self.panel(box, fill='raised', radius=8)
         self.text((x+right)//2, (y+bottom)//2, label, size, weight=500 if selected else 400,
@@ -124,18 +158,25 @@ class Dashboard:
         delta = 4 if right else -4
         self.d.line([(x-delta, y-5), (x, y), (x-delta, y+5)], fill=self.c['muted'], width=2)
 
+    @staticmethod
+    def home():
+        return 'home'
+
     def header(self, nav_y):
-        home = (24, 12, 104, 56)
-        self.button(home, 'home', '‹  Home', lambda: 'home')
-        self.text(116, 34, 'Vehicle', 30, weight=500)
-        self.text(696, 22, 'Last updated', 13, 'muted', anchor='rm')
-        self.text(696, 42, self.last_updated, 16, width=420, anchor='rm')
-        self.rule(24, 60 if nav_y == 68 else 64, 696)
+        if self.oem_page:
+            self.hit(BACK_BOUNDS, 'home', self.home)
+            self.text(696, 74, f'Last updated · {self.last_updated}', 15, 'muted', anchor='rm')
+        else:
+            self.button((24, 12, 104, 56), 'home', '‹  Home', self.home)
+            self.text(116, 34, 'Vehicle', 30, weight=500)
+            self.text(696, 22, 'Last updated', 13, 'muted', anchor='rm')
+            self.text(696, 42, self.last_updated, 16, width=420, anchor='rm')
+            self.rule(24, 60 if nav_y == 68 else 64, 696)
         for i, tab in enumerate(TABS):
             left = 24 + i*170
             self.button((left, nav_y, left+162, nav_y+40), ('tab', i), tab,
                         lambda i=i: self.navigate(tab=i), selected=self.tab == i, size=17)
-            if self.tab == i:
+            if self.tab == i and not self.oem_page:
                 self.d.rounded_rectangle((left+60, nav_y+36, left+102, nav_y+38), radius=1, fill=self.c['accent'])
 
     def has(self, key):
@@ -286,6 +327,11 @@ class Dashboard:
 
     def list_row(self, y, key, label, value='', *, action=None, role='muted'):
         box = (24, y, 696, y+44)
+        if self.oem_page and action:
+            box = (24, y, 696, y+40)
+            self.oem_page.pressed = box if self.hit(box, key, action) else None
+            self.oem_page.bar(box, label, action, value=value, size=22)
+            return
         if action:
             pressed = self.hit(box, key, action)
             if pressed:

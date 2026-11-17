@@ -1344,14 +1344,10 @@ class Launcher:
             theme = self.layout_theme
             layout = theme.layouts.get('vehicle', 'menu')
             color = self.prefs.data['tile_color']
-            if theme.colors:
-                colors = resolved_colors(theme, layout, color)
-            else:
-                from .ui.home_art import accent, blend
-
-                colors = {'accent': blend(accent(color), (243, 242, 238), .62)}
+            oem_color = color if theme.id == 'oem' else None
+            colors = resolved_colors(theme, layout, color) if theme.colors else {}
             self.host.vehicle_dashboard(*self.protocols.vehicle_plugin_snapshot(now), colors,
-                                        layout, self.prefs.data['vehicle_hidden'])
+                                        layout, self.prefs.data['vehicle_hidden'], oem_color=oem_color)
         if self.host.active=='obd' and time.monotonic()-getattr(self,'vehicle_gauge_sent',0)>=1/30:
             self.vehicle_gauge_sent=time.monotonic()
             self.host.vehicle_gauges(self.protocols.gauge_snapshot())

@@ -463,12 +463,12 @@ class PluginHost:
             return worker.send(type='vehicle.gauges',snapshot=snapshot)
         return False
 
-    def vehicle_dashboard(self, snapshot, revision, reports, colors, layout, hidden):
+    def vehicle_dashboard(self, snapshot, revision, reports, colors, layout, hidden, *, oem_color=None):
         worker = self.workers.get('vehicle')
         if self.active != 'vehicle' or worker is None or not worker.manifest.bundled or not worker.ready:
             return
         if not worker.send(type='vehicle.dashboard', snapshot=snapshot, colors=colors,
-                           layout=layout, hidden=hidden, revision=revision):
+                           layout=layout, hidden=hidden, revision=revision, oem_color=oem_color):
             return
         if getattr(worker, 'vehicle_revision', None) != revision:
             # Keep each message under the SDK packet limit, even at the maximum record size.

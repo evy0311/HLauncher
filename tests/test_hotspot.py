@@ -8,7 +8,7 @@ import tempfile
 from types import SimpleNamespace
 import unittest
 from unittest.mock import patch,PropertyMock
-from hlauncher.recovery import Maintenance
+from hlauncher.recovery import Maintenance,parse_wifi_scan
 from hlauncher.setup_state import SetupState
 
 
@@ -16,6 +16,7 @@ class Hotspot(unittest.TestCase):
     def setUp(self):
         self.temp=tempfile.TemporaryDirectory();self.folder=Path(self.temp.name)
         self.state=SetupState(self.folder);self.creds=self.state.credentials();self.calls=[]
+        self.enterContext(patch('hlauncher.captive_portal.configure_dns'))
     def tearDown(self):self.temp.cleanup()
     def fake_run(self,args,**kwargs):
         self.calls.append(args)
@@ -26,11 +27,54 @@ class Hotspot(unittest.TestCase):
         m.hotspot();self.assertTrue(m.ap)
         self.assertLess(self.calls.index(['rfkill','unblock','wifi']),self.calls.index(['nmcli','radio','wifi','on']))
         self.assertLess(self.calls.index(['nmcli','radio','wifi','on']),next(i for i,a in enumerate(self.calls) if 'up' in a))
-    def test_unknown_country_does_not_enable_radio(self):
-        calls=[]
-        def run(args,**kw):calls.append(args);return SimpleNamespace(stdout='country 00: DFS-UNSET\n')
-        with self.assertRaisesRegex(ValueError,'country'):Maintenance(self.state,run).hotspot()
-        self.assertEqual(calls,[['iw','reg','get']])
+    def test_unknown_country_defaults_to_us_before_enabling_radio(self):
+        def run(args,**kw):
+            if args==['iw','reg','get']:
+                self.calls.append(args)
+                return SimpleNamespace(stdout='country 00: DFS-UNSET\n')
+            return self.fake_run(args, **kw)
+        with patch.dict('os.environ', HLAUNCHER_WIFI_COUNTRY=''):
+            Maintenance(self.state,run).hotspot()
+        self.assertEqual(self.calls[:3], [['iw','reg','get'],
+            ['raspi-config','nonint','do_wifi_country','US'], ['rfkill','unblock','wifi']])
+
+    def test_scan_preserves_names_and_strength_and_retains_pre_hotspot_results(self):
+        output = r"""50:Garage
+90:Wi\:Fi
+40:Garage
+75:Literal\\Backslash
+99:
+"""
+        self.assertEqual(parse_wifi_scan(output), ['Wi:Fi', r'Literal\Backslash', 'Garage'])
+        def run(args,**kwargs):
+            if '--rescan' in args:
+                if m.ap:
+                    raise subprocess.CalledProcessError(4,args)
+                return SimpleNamespace(stdout=output)
+            return self.fake_run(args,**kwargs)
+        m=Maintenance(self.state,run)
+        m.hotspot()
+        m.scan_at = float('-inf')
+        scan = m.wifi_scan(refresh=True)
+        self.assertEqual(scan['networks'], ['Wi:Fi', r'Literal\Backslash', 'Garage'])
+        self.assertIn('last scan', scan['message'])
+
+    def test_failed_wifi_join_restores_hotspot_and_previous_profile(self):
+        profile = self.folder/'wifi.nmconnection'
+        profile.write_text('previous profile')
+        def run(args,**kwargs):
+            if 'uuid' in args and 'up' in args:
+                raise subprocess.CalledProcessError(4,args)
+            return self.fake_run(args,**kwargs)
+        m=Maintenance(self.state,run)
+        m.ap = True
+        with patch('hlauncher.recovery.WIFI_PROFILE',profile):
+            with self.assertRaisesRegex(ValueError,'Could not join'):
+                m.perform(dict(operation='wifi',ssid='Hidden network',password='personal-pass',hidden=True))
+        self.assertEqual(profile.read_text(), 'previous profile')
+        self.assertTrue(m.ap)
+        self.assertIn(['nmcli','--wait','15','connection','up','HLauncher Recovery'],self.calls)
+
     def test_failure_preserves_stage_and_error_but_not_password_or_ssid(self):
         def run(args,**kwargs):
             if 'add' in args:

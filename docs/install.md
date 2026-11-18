@@ -86,11 +86,12 @@ The image already includes both projection engines, the services and the tested
 The initial HDMI welcome may be invisible until the radio is paired. Wi-Fi starts
 off on a fresh install. Use Ethernet if you need the setup page before you can
 reach the wizard. From the wizard's Network step or **Settings → System → Wi-Fi**,
-open **Setup hotspot** and select **Start setup hotspot**. Connect using the device
-password in `HLAUNCHER-SETUP.txt` or on the radio, then open
-[http://192.168.4.1:8080](http://192.168.4.1:8080). On Ethernet or personal Wi-Fi, use
-`http://PI_ADDRESS:8080`. The page can reopen pairing or select a radio manually.
-Sign in as `hlauncher` with the device password. Use the setup hotspot or a trusted local network.
+open **Setup hotspot** and select **Start setup hotspot**. Join the hotspot with
+`ilovevtec1234`. If the setup page does not open automatically, visit
+[http://192.168.4.1/](http://192.168.4.1/). On Ethernet or personal Wi-Fi, open
+[http://hlauncher.local/](http://hlauncher.local/) or the Pi's IP address.
+The recovery page opens without a login and can reopen pairing or select a
+radio manually.
 
 After first boot, `HLAUNCHER-SETUP.txt` on the card's boot partition lists this
 Pi's connection details. Shut down before removing the card to read it on another

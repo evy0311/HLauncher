@@ -157,8 +157,8 @@ power-loss hardware acceptance are required in addition to the local tests.
 
 Open Settings → System → Software updates → Install local update file, or open
 Settings → System → Wi-Fi. Connect your computer to the Pi's network and visit its recovery
-page (`http://PI_ADDRESS:8080`, or `http://192.168.4.1:8080` on its hotspot).
-Sign in as `hlauncher` with the device’s setup password on the setup hotspot or a trusted local network. Choose a `.hlu` file
+page (`http://hlauncher.local/`, or `http://192.168.4.1/` on its hotspot).
+Choose a `.hlu` file
 under Local update and install it. The file is streamed to disk, checked with the
 same pinned signing key, platform and version rules, and installed through the
 same transactional installer. No Internet or GitHub release is required.

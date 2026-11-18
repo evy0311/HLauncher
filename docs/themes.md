@@ -28,8 +28,7 @@ apps into open slots on the remaining pages.
 
 1. On the radio, open **Settings → System → Wi-Fi**. Open the address shown
    there from a phone or computer on the same network. You can also start the
-   **Setup hotspot**, join it, and open `http://192.168.4.1:8080`.
-   Sign in as `hlauncher` with the setup password.
+   **Setup hotspot**, join it, and open `http://192.168.4.1/`.
 2. Expand **Layout themes** and select **Download Touring starter** or
    **Download Drive starter**. The downloaded file already has a new ID and
    display name. Open it in any text editor and change the name, layouts,

@@ -1,19 +1,22 @@
 """Local network setup/recovery site and serialized maintenance jobs."""
-import base64
-import hmac
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+import io
 import json
 import os
 from pathlib import Path
 import re
+import socket
 import subprocess
 import tempfile
 import threading
 import time
+from . import captive_portal
 from .config import RUNTIME_DIR, STATE_DIR, WIFI_POWER_MODES, Preferences
 from .setup_state import SetupState, atomic_json, address
 from .storage import configure, execute, status as storage_status
 from .wifi_power import BOOT_HOLD, WifiPower
+
+WIFI_PROFILE = Path('/etc/NetworkManager/system-connections/hlauncher-wifi.nmconnection')
 
 UPDATER_CONFIG=Path('/etc/hlauncher-updater/config.json')
 
@@ -76,11 +79,108 @@ def sample_network(run=execute):
     return result
 
 
+def parse_wifi_scan(output):
+    networks = {}
+    for line in output.splitlines():
+        strength, separator, encoded = line.partition(':')
+        if not separator or not re.fullmatch(r'[0-9]{1,3}', strength):
+            continue
+        ssid = re.sub(r'\\([\\:])', r'\1', encoded)
+        if not valid_ssid(ssid):
+            continue
+        networks[ssid] = max(networks.get(ssid, 0), min(100, int(strength)))
+    return sorted(networks, key=lambda ssid: (-networks[ssid], ssid.casefold()))[:100]
+
+
+def valid_ssid(ssid):
+    if not isinstance(ssid, str) or any(ord(char) < 32 or ord(char) == 127 for char in ssid):
+        return False
+    try:
+        return 1 <= len(ssid.encode()) <= 32
+    except UnicodeEncodeError:
+        return False
+
+
+def escape_keyfile(value):
+    # GKeyFile trims leading whitespace and interprets backslash escapes.
+    left = len(value) - len(value.lstrip(' '))
+    return r'\s' * left + value[left:].replace('\\', r'\\')
+
+
 class Maintenance:
-    def __init__(self, state=None, run=execute, portal=None):
-        self.state = state or SetupState(); self.run = run; self.portal = portal
+    def __init__(self, state=None, run=execute):
+        self.state = state or SetupState(); self.run = run
         self.lock = threading.Lock(); self.ap = False; self.ap_automatic = False
         self.wifi_power = WifiPower(run)
+        self.scan_lock = threading.Lock()
+        self.networks = []
+        self.scan_at = float('-inf')
+
+    def wifi_country(self):
+        domain = self.run(['iw', 'reg', 'get'], timeout=5).stdout
+        # Some regulatory dumps list a self-managed device below an unset
+        # global domain. Use any configured country as the current default.
+        match = re.search(r'^country ([A-Z]{2}):', domain, re.MULTILINE)
+        return match[1] if match else None
+
+    def default_country(self):
+        try:
+            country = self.wifi_country()
+        except (OSError, subprocess.SubprocessError):
+            country = None
+        configured = os.environ.get('HLAUNCHER_WIFI_COUNTRY', 'US')
+        return country or (configured if re.fullmatch('[A-Z]{2}', configured) else 'US')
+
+    def wifi_scan(self, *, refresh=False):
+        # A single radio may reject scans in AP mode. Keep the last successful
+        # results from before AP activation and allow manual entry at any time.
+        if not self.scan_lock.acquire(blocking=False):
+            return dict(networks=self.networks, message='Wi-Fi scan in progress')
+        try:
+            if self.lock.locked():
+                return dict(networks=self.networks, message='Wi-Fi setup is busy')
+            if not refresh or self.ap:
+                return self._wifi_scan(refresh=refresh)
+            # An explicit scan from Ethernet can temporarily wake disabled Wi-Fi.
+            try:
+                radio = self.run(['nmcli', 'radio', 'wifi'], timeout=3).stdout.strip()
+                if radio == 'disabled':
+                    self.wifi_power.set_radio(True)
+                    try:
+                        self.scan_at = float('-inf')
+                        return self._wifi_scan(refresh=True)
+                    finally:
+                        self.wifi_power.set_radio(False)
+            except (OSError, subprocess.SubprocessError):
+                pass
+            return self._wifi_scan(refresh=True)
+        finally:
+            self.scan_lock.release()
+
+    def _wifi_scan(self, *, refresh):
+        if time.monotonic() - self.scan_at < (8 if refresh else 25):
+            return self.scan_result
+        found = None
+        for mode in (('yes', 'no') if refresh else ('auto', 'no')):
+            try:
+                result = self.run(['nmcli', '--wait', '5', '-t', '-f', 'SIGNAL,SSID',
+                                   'device', 'wifi', 'list', 'ifname', 'wlan0', '--rescan', mode],
+                                  timeout=6)
+                found = parse_wifi_scan(result.stdout)
+                if found:
+                    break
+            except (OSError, subprocess.SubprocessError):
+                continue
+        if found:
+            self.networks = found
+            message = ''
+        elif self.networks:
+            message = 'Showing the last scan. You can also enter a Wi-Fi name.'
+        else:
+            message = 'No networks found. Enter a Wi-Fi name or try scanning again.'
+        self.scan_result = dict(networks=self.networks, message=message)
+        self.scan_at = time.monotonic()
+        return self.scan_result
 
     def perform(self, item):
         op = item.get('operation')
@@ -104,7 +204,8 @@ class Maintenance:
                 raise ValueError('Unknown Wi-Fi mode')
             enabled = mode != 'off'
             prefs = Preferences(self.state.folder/'settings.json')
-            self.wifi_power.set_radio(enabled)
+            with self.scan_lock:
+                self.wifi_power.set_radio(enabled)
             try:
                 prefs.set_wifi_power(mode)
             except OSError:
@@ -133,10 +234,11 @@ class Maintenance:
             return 'Restarting'
         if op == 'wifi':
             ssid, password, country = item.get('ssid'), item.get('password'), item.get('country')
-            if not isinstance(ssid,str) or not 1 <= len(ssid.encode()) <= 32 or any(ord(c)<32 or ord(c)==127 for c in ssid):
+            if not valid_ssid(ssid):
                 raise ValueError('Enter a valid Wi-Fi name')
             if not isinstance(password,str) or not 8 <= len(password) <= 63 or any(ord(c)<32 or ord(c)==127 for c in password):
                 raise ValueError('Use an 8–63 character Wi-Fi password')
+            country = self.default_country() if country in (None, '') else country
             if not isinstance(country,str) or not re.fullmatch('[A-Z]{2}', country):
                 raise ValueError('Choose a two-letter Wi-Fi country')
             # Password goes to an NM keyfile, never process arguments or logs.
@@ -144,22 +246,12 @@ class Maintenance:
             import uuid
             connection = configparser.ConfigParser(interpolation=None)
             connection.read_dict({'connection': {'id':'HLauncher Wi-Fi','uuid':str(uuid.uuid4()),'type':'wifi'},
-                'wifi': {'mode':'infrastructure','ssid':ssid},
-                'wifi-security': {'key-mgmt':'wpa-psk','psk':password},
+                'wifi': {'mode':'infrastructure','ssid':';'.join(map(str, ssid.encode()))+';',
+                         'hidden':'true' if item.get('hidden') is True else 'false'},
+                'wifi-security': {'key-mgmt':'wpa-psk','psk':escape_keyfile(password)},
                 'ipv4': {'method':'auto'}, 'ipv6': {'method':'auto'}})
-            path = Path('/etc/NetworkManager/system-connections/hlauncher-wifi.nmconnection')
-            self.run(['raspi-config','nonint','do_wifi_country',country], timeout=15)
-            fd, name = tempfile.mkstemp(prefix='.hlauncher-', dir=path.parent)
-            try:
-                with os.fdopen(fd,'w') as f:
-                    connection.write(f, space_around_delimiters=False); f.flush(); os.fsync(f.fileno())
-                os.replace(name,path)
-            finally:
-                if os.path.exists(name): os.unlink(name)
-            self.run(['nmcli','connection','load',str(path)],timeout=10)
-            self.wifi_power.set_radio(True)
-            self.run(['nmcli','--wait','20','connection','up','HLauncher Wi-Fi'],timeout=25)
-            self.ap = False
+            with self.scan_lock:
+                self.join_wifi(connection, country)
             prefs = Preferences(self.state.folder/'settings.json')
             if prefs.data['wifi_power'] == 'off':
                 prefs.set_wifi_power('on')
@@ -168,9 +260,52 @@ class Maintenance:
             return 'Wi-Fi connected; reconnect your phone to your normal network'
         raise ValueError('Unknown setup operation')
 
+    def join_wifi(self, connection, country):
+        path = WIFI_PROFILE
+        previous = path.read_bytes() if path.exists() else None
+        was_hotspot = self.ap
+        try:
+            if self.wifi_country() != country:
+                self.run(['raspi-config', 'nonint', 'do_wifi_country', country], timeout=15)
+            with tempfile.NamedTemporaryFile(dir=path.parent, prefix='.hlauncher-', delete=False) as pending:
+                name = Path(pending.name)
+                try:
+                    profile = io.StringIO()
+                    connection.write(profile, space_around_delimiters=False)
+                    pending.write(profile.getvalue().encode())
+                    pending.flush()
+                    os.fsync(pending.fileno())
+                    os.replace(name, path)
+                finally:
+                    name.unlink(missing_ok=True)
+            self.run(['nmcli','connection','load',str(path)],timeout=10)
+            self.wifi_power.set_radio(True)
+            self.run(['nmcli','--wait','20','connection','up','uuid',connection['connection']['uuid']],timeout=25)
+        except (OSError, subprocess.SubprocessError):
+            try:
+                self.run(['nmcli', 'connection', 'delete', 'uuid', connection['connection']['uuid']],
+                         timeout=5)
+            except (OSError, subprocess.SubprocessError):
+                pass
+            try:
+                if previous is None:
+                    path.unlink(missing_ok=True)
+                else:
+                    path.write_bytes(previous)
+                    self.run(['nmcli','connection','load',str(path)],timeout=10)
+            except (OSError, subprocess.SubprocessError):
+                pass
+            if was_hotspot:
+                try:
+                    self.run(['nmcli','--wait','15','connection','up','HLauncher Recovery'],timeout=20)
+                except (OSError, subprocess.SubprocessError):
+                    self.ap = self.ap_automatic = False
+            raise ValueError('Could not join Wi-Fi. Check the network name and password, then try again.') from None
+        self.ap = self.ap_automatic = False
+
     def hotspot(self):
         creds = self.state.credentials()
-        if self.portal:self.portal.configure_dns()
+        captive_portal.configure_dns()
         def run(args, stage, **kwargs):
             try:return self.run(args, **kwargs)
             except (OSError, subprocess.SubprocessError) as exc:
@@ -189,14 +324,17 @@ class Maintenance:
                 atomic_json(self.state.folder/'maintenance-failure.json',failure)
                 print(json.dumps(dict(state='hotspot_failed',**failure)),flush=True)
                 raise ValueError('Hotspot '+stage+': '+reason) from None
-        # Image prep / Imager must set country first; never guess a regulatory domain.
         domain = run(['iw','reg','get'],'country check',timeout=5).stdout
-        if not re.search(r'country (?!00:)[A-Z]{2}:', domain):
-            raise ValueError('Set Wi-Fi country in Raspberry Pi Imager or connect Ethernet for setup')
+        if not re.search(r'^country [A-Z]{2}:', domain, re.MULTILINE):
+            configured = os.environ.get('HLAUNCHER_WIFI_COUNTRY', 'US')
+            country = configured if re.fullmatch('[A-Z]{2}', configured) else 'US'
+            run(['raspi-config', 'nonint', 'do_wifi_country', country], 'country setup', timeout=15)
         # rfkill and NetworkManager keep separate radio state. Enable both, even
         # if the initial boot unblocked rfkill before NM restored a disabled state.
-        run(['rfkill','unblock','wifi'],'radio enable',timeout=5)
-        run(['nmcli','radio','wifi','on'],'radio enable',timeout=10)
+        with self.scan_lock:
+            run(['rfkill','unblock','wifi'],'radio enable',timeout=5)
+            run(['nmcli','radio','wifi','on'],'radio enable',timeout=10)
+            self._wifi_scan(refresh=True)
         rc = run(['nmcli','-t','-f','NAME','connection','show'],'profile check',timeout=5).stdout.splitlines()
         if 'HLauncher Recovery' not in rc:
             run(['nmcli','connection','add','type','wifi','ifname','wlan0','con-name','HLauncher Recovery',
@@ -209,7 +347,6 @@ class Maintenance:
                  'wifi-sec.psk',creds['password']], 'profile update', timeout=10)
         run(['nmcli','--wait','15','connection','up','HLauncher Recovery'],'activation',timeout=20)
         self.ap = True
-        if self.portal:self.portal.start()
         (self.state.folder/'maintenance-failure.json').unlink(missing_ok=True)
 
     def finish_initial_hotspot(self, setup_complete):
@@ -238,14 +375,24 @@ class Maintenance:
 
 PAGE = '''<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>HLauncher setup</title>
 <style>
-@font-face{font-family:Radio;src:url('/ui-font.ttf');font-weight:700}*{box-sizing:border-box}[hidden]{display:none!important}body{margin:0;background:#09090d;color:#f5f4fb;font:16px system-ui,sans-serif;--accent:112,12,29}header{height:64px;border-bottom:1px solid rgba(var(--accent),.8);display:flex;align-items:center;gap:12px;padding:0 20px;background:linear-gradient(#25232d,#111017)}header b{font-size:24px;font-weight:500}header small{font-size:12px;color:#a5a0ae}header time{margin-left:auto;font-size:26px}.grid{display:grid;grid-template-columns:repeat(3,5px);gap:3px;margin-right:12px}.grid i{height:5px;background:#eee}main{max-width:640px;padding:24px 20px 48px;margin:auto}h1,h2,button,summary{font-family:Radio,system-ui,sans-serif;font-weight:700}h1{font-size:28px;margin:0 0 12px}h2{font-size:23px;margin:0 0 12px}section,details{margin:28px 0}p{line-height:1.5;margin:8px 0 16px;color:#c2c0cc}.status{padding:12px 0;border-bottom:1px solid #38333f;color:#ddd8e8}label{display:block;color:#c2c0cc;font-size:14px;margin:14px 0 6px}input::file-selector-button{background:#302a39;color:#f5f4fb;border:1px solid #756a82;border-radius:4px;padding:8px 12px;margin-right:12px;font:inherit}input{width:100%;padding:13px 12px;background:#17151d;color:#f4f2fa;border:1px solid #61586b;border-radius:5px;font:inherit}button{display:block;width:100%;min-height:46px;padding:10px 14px;margin:14px 0;background:linear-gradient(rgba(var(--accent),.22),rgba(var(--accent),.10) 50%,rgba(var(--accent),.28)),#161419;border:1px solid rgba(var(--accent),.95);border-radius:6px;color:#f5f4fb;font-size:20px;cursor:pointer}button.secondary{background:#27242e;border-color:#6d6479}button:disabled{opacity:.55;cursor:wait}button:focus-visible,input:focus-visible,summary:focus-visible{outline:2px solid #e5dcef;outline-offset:3px}.row{display:flex;gap:12px}.row>*{flex:1}summary{font-size:22px;cursor:pointer}small{color:#a9a2b4}#notice{color:#e3c397}footer{border-top:1px solid #38333f;padding-top:16px;color:#a9a2b4;font-size:13px}
+@font-face{font-family:Radio;src:url('/ui-font.ttf');font-weight:700;font-display:swap}*{box-sizing:border-box}[hidden]{display:none!important}body{margin:0;background:#09090d;color:#f5f4fb;font:16px system-ui,sans-serif;--accent:112,12,29}header{height:64px;border-bottom:1px solid rgba(var(--accent),.8);display:flex;align-items:center;gap:12px;padding:0 20px;background:linear-gradient(#25232d,#111017)}header b{font-size:24px;font-weight:500}header small{font-size:12px;color:#a5a0ae}header time{margin-left:auto;font-size:26px}.grid{display:grid;grid-template-columns:repeat(3,5px);gap:3px;margin-right:12px}.grid i{height:5px;background:#eee}main{max-width:640px;padding:24px 20px 48px;margin:auto}h1,h2,button,summary{font-family:Radio,system-ui,sans-serif;font-weight:700}h1{font-size:28px;margin:0 0 12px}h2{font-size:23px;margin:0 0 12px}section,details{margin:28px 0}p{line-height:1.5;margin:8px 0 16px;color:#c2c0cc}.status{padding:12px 0;border-bottom:1px solid #38333f;color:#ddd8e8}label{display:block;color:#c2c0cc;font-size:14px;margin:14px 0 6px}input::file-selector-button{background:#302a39;color:#f5f4fb;border:1px solid #756a82;border-radius:4px;padding:8px 12px;margin-right:12px;font:inherit}input:not([type=checkbox]),select{width:100%;padding:13px 12px;background:#17151d;color:#f4f2fa;border:1px solid #61586b;border-radius:5px;font:inherit}button{display:block;width:100%;min-height:46px;padding:10px 14px;margin:14px 0;background:linear-gradient(rgba(var(--accent),.22),rgba(var(--accent),.10) 50%,rgba(var(--accent),.28)),#161419;border:1px solid rgba(var(--accent),.95);border-radius:6px;color:#f5f4fb;font-size:20px;cursor:pointer}button.secondary{background:#27242e;border-color:#6d6479}button:disabled{opacity:.55;cursor:wait}button:focus-visible,input:focus-visible,summary:focus-visible{outline:2px solid #e5dcef;outline-offset:3px}.row{display:flex;gap:12px}.row>*{flex:1}summary{font-size:22px;cursor:pointer}small{color:#a9a2b4}#notice{color:#e3c397}footer{border-top:1px solid #38333f;padding-top:16px;color:#a9a2b4;font-size:13px}
 </style></head><body><header><span class="grid" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></span><b>HLauncher</b><small>by Evan Horsley</small></header><main>
 <h1>Wi-Fi</h1><p id="notice" role="status"></p>
-<section><h2>Connect the Pi to Wi-Fi</h2><p>Choose the network the Pi should use. After connecting, join that same network on your phone or computer.</p>
+<section><h2>Connect the Pi to Wi-Fi</h2><p>Choose a nearby network or enter its name manually.</p>
+<form id="wifi-form">
+<label for="networks">Nearby networks</label>
+<select id="networks"><option value="">Enter Wi-Fi name manually</option></select>
+<button id="scan-button" type="button" class="secondary">Scan again</button>
+<p id="scan-status" role="status">Scanning for Wi-Fi…</p>
+<div id="manual-network">
 <label for="ssid">Wi-Fi name</label><input id="ssid" autocomplete="off" placeholder="Network name">
-<label for="password">Wi-Fi password</label><input id="password" type="password" autocomplete="new-password">
-<label for="country">Country code</label><input id="country" placeholder="US" maxlength="2" autocapitalize="characters">
-<button onclick="wifi()">Connect to Wi-Fi</button></section>
+<label><input id="hidden-network" type="checkbox"> Hidden network</label>
+</div>
+<label for="password">Wi-Fi password</label><input id="password" type="password" autocomplete="new-password" required minlength="8" maxlength="63">
+<details><summary>Wi-Fi country</summary><label for="country">Two-letter country code</label>
+<input id="country" value="US" maxlength="2" pattern="[a-zA-Z]{2}" autocapitalize="characters"></details>
+<button id="connect-button" type="submit">Connect to Wi-Fi</button>
+</form></section>
 <section><h2>Local update</h2><p>Install a signed .hlu file from your computer. Your settings stay saved; HLauncher restarts after verification.</p>
 <label for="updatefile">Update file</label><input type="file" id="updatefile" accept=".hlu"><button id="uploadbutton" onclick="uploadUpdate()">Install local update</button><p id="uploadstatus" role="status"></p></section>
 
@@ -268,7 +415,51 @@ const themes={Blue:'34,20,170',Red:'112,12,29',Green:'10,105,59',Amber:'148,81,9
 async function post(path,data){try{let r=await fetch(path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)});let v=await r.json();if(!r.ok)throw new Error(v.error||'Request failed');document.getElementById('notice').textContent='Requested';refresh();return true}catch(e){document.getElementById('notice').textContent=e.message;return false}}
 function act(operation){if(operation==='pair'&&!confirm('Forget the saved radio and restart pairing?'))return;post('/api/job',{operation})}
 function manual(){post('/api/manual',{address:document.getElementById('peer').value})}
-async function wifi(){if(!document.getElementById('ssid').value)return;let queued=await post('/api/job',{operation:'wifi',ssid:document.getElementById('ssid').value,password:document.getElementById('password').value,country:document.getElementById('country').value.toUpperCase()});if(queued){document.getElementById('password').value='';document.getElementById('notice').textContent='The Pi is switching networks. Reconnect this device to the same Wi-Fi afterward.'}}
+const wifiForm=document.getElementById('wifi-form');
+const networks=document.getElementById('networks');
+const ssid=document.getElementById('ssid');
+const country=document.getElementById('country');
+const password=document.getElementById('password');
+const scanButton=document.getElementById('scan-button');
+let countryEdited=false;
+country.addEventListener('input',()=>countryEdited=true);
+networks.addEventListener('change',()=>{document.getElementById('manual-network').hidden=Boolean(networks.value)});
+async function scanWifi(refresh=false){
+    const status=document.getElementById('scan-status');
+    scanButton.disabled=true;
+    status.textContent='Scanning for Wi-Fi…';
+    try{
+        const response=await fetch(refresh?'/api/wifi-networks?refresh=1':'/api/wifi-networks');
+        if(!response.ok)throw new Error('Could not scan. Enter a Wi-Fi name or try again.');
+        const scan=await response.json();
+        const picked=networks.value;
+        networks.replaceChildren(new Option('Enter Wi-Fi name manually',''));
+        for(const name of scan.networks)networks.add(new Option(name,name));
+        if(scan.networks.includes(picked))networks.value=picked;
+        networks.dispatchEvent(new Event('change'));
+        if(!countryEdited)country.value=scan.country;
+        status.textContent=scan.message;
+    }catch(error){status.textContent=error.message}
+    finally{scanButton.disabled=false}
+}
+scanButton.onclick=()=>scanWifi(true);
+wifiForm.onsubmit=async event=>{
+    event.preventDefault();
+    const name=networks.value||ssid.value;
+    if(!name){document.getElementById('notice').textContent='Choose a network or enter its name.';ssid.focus();return}
+    const button=document.getElementById('connect-button');
+    button.disabled=true;
+    try{
+        const queued=await post('/api/job',{operation:'wifi',ssid:name,password:password.value,
+            country:countryEdited?country.value.toUpperCase():null,
+            hidden:!networks.value&&document.getElementById('hidden-network').checked});
+        if(queued){
+            password.value='';
+            document.getElementById('notice').textContent='The Pi is switching networks. Join that Wi-Fi and open hlauncher.local. If connection fails, rejoin the setup hotspot.';
+        }
+    }finally{button.disabled=false}
+};
+scanWifi();
 async function uploadUpdate(){let file=document.getElementById('updatefile').files[0];if(!file){document.getElementById('uploadstatus').textContent='Choose a .hlu file';return}if(!confirm('Install this signed update and restart HLauncher? Your plugins and their data will be kept. Some plugins may stop working after this update.'))return;let button=document.getElementById('uploadbutton');button.disabled=true;document.getElementById('uploadstatus').textContent='Uploading…';try{let response=await fetch('/api/update-file',{method:'POST',headers:{'Content-Type':'application/octet-stream'},body:file});let data=await response.json();if(!response.ok)throw new Error(data.error||'Upload failed');document.getElementById('uploadstatus').textContent='Uploaded. Verifying and installing; HLauncher will restart.'}catch(error){document.getElementById('uploadstatus').textContent=error.message}finally{button.disabled=false}}
 function debug(){post('/api/debug',{})}
 async function loadThemeDownloads(){
@@ -314,8 +505,7 @@ refresh();setInterval(refresh,3000)
 
 
 def handler_for(state, maintenance):
-    login = base64.b64encode(('hlauncher:'+state.credentials()['password']).encode()).decode()
-    expected = 'Basic '+login
+    names = {'hlauncher.local', socket.gethostname().lower().removesuffix('.local') + '.local'}
 
     class Handler(BaseHTTPRequestHandler):
         def setup(self):
@@ -325,29 +515,44 @@ def handler_for(state, maintenance):
             raw = data.encode() if isinstance(data,str) else json.dumps(data).encode()
             self.send_response(code); self.send_header('Content-Type',kind)
             self.send_header('Cache-Control','no-store'); self.send_header('X-Content-Type-Options','nosniff')
-            self.send_header('Content-Length',str(len(raw))); self.end_headers(); self.wfile.write(raw)
-        def authorized(self):
-            supplied = self.headers.get('Authorization', '')
-            if hmac.compare_digest(supplied.encode(), expected.encode()):
-                return True
-            self.send_response(401)
-            self.send_header('WWW-Authenticate', 'Basic realm="HLauncher setup"')
-            self.send_header('Cache-Control', 'no-store')
-            self.send_header('Content-Length', '0')
-            self.end_headers()
-            return False
+            self.send_header('Content-Length',str(len(raw))); self.end_headers()
+            if getattr(self, 'command', None) != 'HEAD':
+                self.wfile.write(raw)
+        def local_host(self):
+            address, port = self.connection.getsockname()[:2]
+            authority = self.headers.get('Host', '').lower()
+            allowed = {f'{name}:{port}' for name in names | {address}}
+            if port == 80:
+                allowed.update(names | {address})
+            return authority in allowed
+
+        def do_HEAD(self):
+            self.do_GET()
 
         def do_GET(self):
-            if not self.authorized():
-                return
-            if self.path == '/': return self.send(200,PAGE,'text/html; charset=utf-8')
+            hotspot = self.connection.getsockname()[0] == captive_portal.ADDRESS
+            if not self.local_host() or (hotspot and self.path in (
+                    '/hotspot-detect.html', '/generate_204', '/gen_204', '/connecttest.txt', '/ncsi.txt')):
+                if hotspot:
+                    return captive_portal.redirect(self)
+                return self.send(403, {'error':'Host rejected'})
+            if self.path == '/':
+                return self.send(200,PAGE,'text/html; charset=utf-8')
+            if getattr(self, 'command', None) == 'HEAD':
+                return self.send(404, {'error':'Not found'})
+            if self.path in ('/api/wifi-networks', '/api/wifi-networks?refresh=1'):
+                refresh = self.path.endswith('?refresh=1')
+                if refresh and self.headers.get('Sec-Fetch-Site') in ('cross-site', 'same-site'):
+                    return self.send(403, {'error':'Origin rejected'})
+                scan = maintenance.wifi_scan(refresh=refresh)
+                return self.send(200, dict(scan, country=maintenance.default_country()))
             if self.path == '/api/layout-themes':
                 from .themes import OEM, Themes
                 themes = Themes(state.folder)
                 return self.send(200, {'themes': [theme.document() for theme in themes.choices.values()
                                                   if theme is not OEM], 'templates': themes.templates()})
             if self.path == '/ui-font.ttf':
-                path=Path(__file__).parent/'ui/assets/fonts/NotoSansJP.ttf'
+                path=Path(__file__).parent/'ui/assets/fonts/BarlowCondensed-SemiBold.ttf'
                 self.send_response(200);self.send_header('Content-Type','font/ttf')
                 self.send_header('Content-Length',str(path.stat().st_size));self.end_headers()
                 with path.open('rb') as source:
@@ -426,8 +631,8 @@ def handler_for(state, maintenance):
             if (self.headers.get('Sec-Fetch-Site') in ('cross-site', 'same-site')
                     or (origin and origin != 'http://'+self.headers.get('Host', ''))):
                 return self.send(403,{'error':'Origin rejected'})
-            if not self.authorized():
-                return
+            if not self.local_host():
+                return self.send(403, {'error':'Host rejected'})
             if self.path=='/api/update-file':return self.upload_update()
             if self.headers.get('Content-Type','').split(';')[0] != 'application/json':
                 return self.send(415,{'error':'JSON required'})
@@ -458,7 +663,8 @@ def handler_for(state, maintenance):
                     if data['operation'] == 'pair':
                         request_job('pair')
                     else:
-                        request_job('wifi', ssid=data.get('ssid'), password=data.get('password'), country=data.get('country'))
+                        request_job('wifi', ssid=data.get('ssid'), password=data.get('password'),
+                                    country=data.get('country'), hidden=data.get('hidden') is True)
                 else: return self.send(404,{'error':'Not found'})
                 self.send(202,{'status':'Requested'})
             except (ValueError,TypeError,OSError,RecursionError): self.send(400,{'error':'Invalid setup request'})
@@ -484,17 +690,14 @@ class RecoveryServer(ThreadingHTTPServer):
 
 
 def main():
-    from .captive_portal import Portal
     from .update_client import status as update_status
-    portal=Portal(RecoveryServer)
-    state = SetupState(); state.credentials(); maintenance = Maintenance(state,portal=portal)
+    state = SetupState()
+    maintenance = Maintenance(state)
     def worker():
         seen = None; hotspot_attempted = False
         boot_deadline = time.monotonic() + 45
         manager_ready = False
         while True:
-            try:portal.start()
-            except OSError:pass
             try:
                 if not manager_ready:
                     manager = maintenance.run(['systemctl', 'show', '-p', 'ActiveState', '--value',
@@ -503,6 +706,18 @@ def main():
                         time.sleep(2)
                         continue
                     manager_ready = True
+                    try:
+                        active = maintenance.run(['nmcli', '-g', 'GENERAL.CONNECTION',
+                                                  'device', 'show', 'wlan0'], timeout=3).stdout.strip()
+                        if active == 'HLauncher Recovery':
+                            maintenance.ap = True
+                            maintenance.wifi_power.hotspot_started()
+                            saved = maintenance.run(['nmcli', '--show-secrets', '-g', 'wifi-sec.psk',
+                                                     'connection', 'show', active], timeout=3).stdout.strip()
+                            if saved and saved != state.credentials()['password']:
+                                maintenance.process({'operation':'hotspot'})
+                    except (OSError, subprocess.SubprocessError):
+                        pass
                 released_boot_hold = False
                 if BOOT_HOLD.exists():
                     if time.monotonic() < boot_deadline:
@@ -546,7 +761,7 @@ def main():
             wifi_mode = prefs.data['wifi_power']
             try:
                 wifi_state = maintenance.wifi_power.tick(
-                    wifi_mode, setup_hotspot=maintenance.ap and maintenance.ap_automatic,
+                    wifi_mode, setup_hotspot=maintenance.ap,
                     updating=update_status(state.folder).get('phase') in ('checking','downloading','installing'))
                 if wifi_state in ('off', 'asleep'):
                     maintenance.ap = maintenance.ap_automatic = False
@@ -559,10 +774,23 @@ def main():
                                  wifi_delay_boot=prefs.data['wifi_delay_boot']), durable=False)
             except OSError:pass
             time.sleep(2)
-    threading.Thread(target=worker,daemon=True).start()
-    server = RecoveryServer(('0.0.0.0',8080),handler_for(state,maintenance))
-    server.timeout = 5
-    server.serve_forever()
+    handler = handler_for(state, maintenance)
+    legacy = RecoveryServer(('0.0.0.0', 8080), handler)
+    try:
+        server = RecoveryServer(('0.0.0.0', 80), handler)
+    except OSError as exc:
+        print(json.dumps(dict(state='recovery_port_unavailable', port=80, errno=exc.errno)), flush=True)
+        with legacy:
+            threading.Thread(target=worker, daemon=True).start()
+            legacy.serve_forever()
+        return
+    with server, legacy:
+        threading.Thread(target=worker, daemon=True).start()
+        threading.Thread(target=legacy.serve_forever, daemon=True).start()
+        try:
+            server.serve_forever()
+        finally:
+            legacy.shutdown()
 
 
 if __name__ == '__main__': main()

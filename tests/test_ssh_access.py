@@ -37,6 +37,19 @@ class SSHAccess(unittest.TestCase):
         self.assertIn('PasswordAuthentication yes',config)
         count=len(self.commands);ssh_access.initialize(self.folder,self.fake_run,self.system)
         self.assertEqual(len(self.commands),count)
+    def test_development_image_with_old_key_only_setup_gets_default_password(self):
+        (self.system/'etc/hlauncher-ssh-managed').touch()
+        (self.system/'etc/hlauncher-ssh-autostart').touch()
+        old_config = self.system/'etc/ssh/sshd_config.d/00-hlauncher-local-test.conf'
+        old_config.write_text('PasswordAuthentication no\n')
+        self.folder.mkdir()
+        (self.folder/'ssh-initialized.json').write_text('{"username":"hlauncher","configured":true}')
+        ssh_access.initialize(self.folder,self.fake_run,self.system)
+        self.assertIn((['chpasswd'],{'input':'hlauncher:ilovevtec1234\n'}),self.commands)
+        config = self.system/'etc/ssh/sshd_config.d/00-hlauncher.conf'
+        self.assertIn('PubkeyAuthentication yes',config.read_text())
+        self.assertFalse(old_config.exists())
+
     def test_toggle_persists_choice_and_boot_marker(self):
         self.folder.mkdir();(self.folder/'ssh-initialized.json').write_text('{}')
         managed = self.system/'etc/hlauncher-ssh-managed'

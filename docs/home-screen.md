@@ -119,9 +119,9 @@ setup is a separate child flow and Back returns to the wizard's Network step.
 
 The Wi-Fi menu shows the Pi's current LAN setup address and opens Wi-Fi power,
 setup hotspot and SSH access. The hotspot
-page shows the device password, which also signs in to the web setup page.
+page shows the Wi-Fi password and recovery address. The web page opens without a login.
 The radio has a separate SSH access page. NetworkManager sampling happens
-in the recovery worker, not in the UI/audio loop. The authenticated recovery
+in the recovery worker, not in the UI/audio loop. The recovery
 website shares the theme and separates Wi-Fi, local update, pairing and support.
 Storage restart is offered only after the protection job has completed.
 

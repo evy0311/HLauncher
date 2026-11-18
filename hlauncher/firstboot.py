@@ -24,10 +24,10 @@ def write_recovery_card(credentials, boot):
     boot = Path(boot)
     text = ('HLauncher setup\n\nRadio pairing: Settings > Phone > Connect a phone > Add Bluetooth device.\nSelect HLauncher.\n\n'
             'Wi-Fi starts off. From HLauncher, open Settings > System > Wi-Fi > Setup hotspot and select Start setup hotspot.\n'
-            'If the radio screen is unavailable, use Ethernet to reach the setup page on port 8080.\n\n'
+            'If the radio screen is unavailable, connect Ethernet and open http://hlauncher.local/.\n\n'
             'Connect to Wi-Fi: '+credentials['ssid']+
             '\nWi-Fi password: '+credentials['password']+
-            '\nOpen: http://192.168.4.1:8080\nSetup username: hlauncher\nUse the Wi-Fi password above to sign in.\n'
+            '\nOpen: http://192.168.4.1/ if the setup page does not appear.\n'
             '\nSSH is off by default. Turn it on from the Wi-Fi menu on the radio.\n')
     import tempfile
     fd,name=tempfile.mkstemp(prefix='.hlauncher-setup-',dir=boot)
@@ -51,8 +51,14 @@ def main():
     if first_boot:
         # Device identity is generated on first boot.
         subprocess.run(['systemd-machine-id-setup'],check=True,timeout=10)
-        boot = Path('/boot/firmware') if Path('/boot/firmware/config.txt').exists() else Path('/boot')
-        write_recovery_card(credentials, boot)
+    boot = Path('/boot/firmware') if Path('/boot/firmware/config.txt').exists() else Path('/boot')
+    card = boot/'HLAUNCHER-SETUP.txt'
+    try:
+        if not card.exists() or 'Setup username:' in card.read_text():
+            write_recovery_card(credentials, boot)
+    except OSError:
+        if first_boot:
+            raise
     country = os.environ.get('HLAUNCHER_WIFI_COUNTRY','')
     from .config import Preferences
     prefs = Preferences(state.folder/'settings.json')

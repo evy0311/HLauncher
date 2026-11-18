@@ -87,10 +87,11 @@ from a phone/computer through the local setup page. See [updates](docs/updates.m
 
 Wi-Fi starts off on a fresh install. To set it up, open **Settings → System →
 Wi-Fi → Setup hotspot** and select **Start setup hotspot**. Join the
-**HLauncher-XXXX** hotspot with the device's setup password, then open
-[the setup page](http://192.168.4.1:8080). Sign in as **`hlauncher`** with that
-same device password. The radio's hotspot screen and the SD card's
-`HLAUNCHER-SETUP.txt` show it.
+**HLauncher-XXXX** hotspot with **`ilovevtec1234`**. If setup does not open
+automatically, open [the hotspot setup page](http://192.168.4.1/). On your
+regular network, open [hlauncher.local](http://hlauncher.local/). Choose a
+nearby Wi-Fi network or enter its name manually. The recovery page opens
+without a login.
 
 SSH starts off. Enable it from **Wi-Fi → SSH access** on the radio.
 The initial SSH credentials are **`hlauncher` / `ilovevtec1234`**. Use a trusted

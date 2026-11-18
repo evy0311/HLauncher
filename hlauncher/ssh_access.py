@@ -4,10 +4,9 @@ from pathlib import Path
 import shutil
 import subprocess
 from .config import RUNTIME_DIR
-from .setup_state import atomic_json
+from .setup_state import DEFAULT_PASSWORD, atomic_json
 
 USERNAME='hlauncher'
-DEFAULT_PASSWORD='ilovevtec1234'
 MANAGED=Path('/etc/hlauncher-ssh-managed')
 
 
@@ -37,9 +36,12 @@ def initialize(folder,run=execute,system=Path('/')):
     """Configure only an explicitly managed image; never reset a later password."""
     folder=Path(folder);system=Path(system)
     marker=folder/'ssh-initialized.json'
+    dev_image = (system/'etc/hlauncher-ssh-autostart').is_file()
     if marker.exists():
         try:
-            if json.loads(marker.read_text()).get('username') == USERNAME:return
+            initialized = json.loads(marker.read_text())
+            if initialized.get('username') == USERNAME and (not dev_image or initialized.get('password_enabled')):
+                return
         except (OSError, ValueError, AttributeError):pass
     if not (system/'etc/hlauncher-ssh-managed').exists():return
     users=(system/'etc/passwd').read_text().splitlines()
@@ -50,17 +52,16 @@ def initialize(folder,run=execute,system=Path('/')):
         run(['passwd','-l','pi'])
     # Passwords never enter process arguments or logs.
     dropin=system/'etc/ssh/sshd_config.d';dropin.mkdir(parents=True,exist_ok=True)
-    if not (system/'etc/hlauncher-ssh-autostart').is_file():
-        run(['chpasswd'],input=USERNAME+':'+DEFAULT_PASSWORD+'\n')
-        (dropin/'00-hlauncher.conf').write_text(
-            'PasswordAuthentication yes\nKbdInteractiveAuthentication no\nPermitRootLogin no\n'
-            'PubkeyAuthentication yes\nAllowUsers hlauncher\n')
-        (dropin/'00-hlauncher-local-test.conf').unlink(missing_ok=True)
+    run(['chpasswd'],input=USERNAME+':'+DEFAULT_PASSWORD+'\n')
+    (dropin/'00-hlauncher.conf').write_text(
+        'PasswordAuthentication yes\nKbdInteractiveAuthentication no\nPermitRootLogin no\n'
+        'PubkeyAuthentication yes\nAllowUsers hlauncher\n')
+    (dropin/'00-hlauncher-local-test.conf').unlink(missing_ok=True)
     (dropin/'rename_user.conf').unlink(missing_ok=True)
     (system/'run/sshd').mkdir(mode=0o755,parents=True,exist_ok=True)
     run(['ssh-keygen','-A'])
     run(['/usr/sbin/sshd','-t'])
-    atomic_json(marker,dict(username=USERNAME,configured=True))
+    atomic_json(marker,dict(username=USERNAME,configured=True,password_enabled=True))
 
 
 def apply(enabled,folder,run=execute,boot=False, *, runtime=None):

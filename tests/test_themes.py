@@ -1,6 +1,5 @@
 """Layout themes are persistent data and never replace launcher routes."""
 
-import base64
 from io import BytesIO
 import json
 from pathlib import Path
@@ -27,16 +26,14 @@ class ThemeTests(unittest.TestCase):
         self.themes = Themes(self.state.folder)
         self.document = theme_document(home='grid', settings='list')
 
-    def request(self, method, data=None, *, origin=None, authorized=True):
+    def request(self, method, data=None, *, origin=None, host='192.168.4.1'):
         handler_type = handler_for(self.state, Mock())
         handler = handler_type.__new__(handler_type)
         raw = json.dumps(data).encode()
-        password = self.state.credentials()['password']
-        auth = base64.b64encode(f'hlauncher:{password}'.encode()).decode()
         handler.headers = {'Content-Type': 'application/json', 'Content-Length': str(len(raw)),
-                           'Host': '192.168.4.1'}
-        if authorized:
-            handler.headers['Authorization'] = 'Basic ' + auth
+                           'Host': host}
+        handler.connection = Mock()
+        handler.connection.getsockname.return_value = ('192.168.4.1', 80)
         if origin:
             handler.headers['Origin'] = origin
         handler.path = '/api/layout-themes'
@@ -65,8 +62,8 @@ class ThemeTests(unittest.TestCase):
         self.assertIn(starter, response['themes'])
         self.assertEqual(response['templates']['touring']['id'], 'touring-copy-2')
 
-    def test_import_respects_authentication_and_falls_back_on_corrupt_files(self):
-        self.request('GET', authorized=False).send_response.assert_called_once_with(401)
+    def test_import_rejects_foreign_hosts_and_falls_back_on_corrupt_files(self):
+        self.request('POST', self.document, host='untrusted.example').send.assert_called_once_with(403, {'error': 'Host rejected'})
         rejected = self.request('POST', self.document, origin='http://other.example')
         rejected.send.assert_called_once_with(403, {'error': 'Origin rejected'})
         for data in (dict(self.document, id='../main'),

@@ -140,11 +140,11 @@ def network(ui):
             Item('Setup hotspot', ui.hotspot_page),
             Item('Wi-Fi power', ui.wifi_power_page),
             Item('SSH access', ui.ssh_settings, ssh_value),
-    ), footer=f'http://{address}:8080' if address else 'No network connection'):
+    ), footer=f'http://{address}' if address else 'No network connection'):
         return
     p=page_for(ui,'Wi-Fi',back)
     if address:
-        p.label((24,128),'http://'+address+':8080',26)
+        p.label((24,128),'http://'+address,26)
         p.text((24,176),'Open this page on a device on the same network as the Pi',17)
     else:
         p.label((24,128),'No network connection',26)
@@ -190,8 +190,8 @@ def hotspot(ui):
     p.panel((24,156,696,244))
     for y,label,value in ((172,'Network',creds['ssid']),(208,'Password',creds['password'])):
         p.text((42,y),label,16);p.text((240,y),p.fit(value,432,17),17,fill='#efedf6')
-    p.label((24,266),'http://192.168.4.1:8080',25)
-    p.text((24,298),'Setup login: hlauncher and the password above',16)
+    p.label((24,266),'http://192.168.4.1',25)
+    p.text((24,298),'If setup does not open automatically, use this address',16)
     result=job_status(ui.prefs.path.parent)
     queued=(ui.prefs.path.parent/'maintenance-request.json').exists()
     busy=queued or result.get('status')=='Working'

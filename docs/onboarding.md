@@ -15,7 +15,7 @@ sudo bash scripts/build_image.sh /path/to/base.img /path/to/HLauncher.img US
 
 Replace `US` with the installation country's two-letter regulatory code. The builder requires a new output filename, copies the base, adds 3 GiB to root and a 4096 MiB persistent-data partition, installs HLauncher and the Android Auto engine, and writes an image checksum. It requires ARM64 Linux; it does not perform an emulated build on macOS. Allow additional temporary disk space and time for the Android Auto native build and downloads.
 
-The builder strips application state, Bluetooth bonds, Wi-Fi profiles and SSH host keys. Each Pi gets its own hotspot name and setup password. The setup page uses that password. SSH starts off and can be enabled in Wi-Fi on the radio. The builder removes build tools/caches and compacts the filesystems. On first boot, a separate background service expands the final persistent-data partition to use the remaining SD-card capacity. The OS partition stays fixed for read-only protection. Expansion is retried safely if interrupted and does not delay Bluetooth registration. Flash the resulting image as a custom image with Raspberry Pi Imager. The image forces the tested HDMI0 720×480 mode; other radios may need different display settings.
+The builder strips application state, Bluetooth bonds, Wi-Fi profiles and SSH host keys. Each Pi gets its own hotspot name. The hotspot password is `ilovevtec1234`. SSH starts off and can be enabled in Wi-Fi on the radio. The builder removes build tools/caches and compacts the filesystems. On first boot, a separate background service expands the final persistent-data partition to use the remaining SD-card capacity. The OS partition stays fixed for read-only protection. Expansion is retried safely if interrupted and does not delay Bluetooth registration. Flash the resulting image as a custom image with Raspberry Pi Imager. The image forces the tested HDMI0 720×480 mode; other radios may need different display settings.
 
 ## Pair and complete setup
 
@@ -33,20 +33,31 @@ CarPlay needs a supported USB CarPlay adapter. Android Auto uses an Android phon
 
 Enrollment recognizes HandsFreeLink/HondaLink names or the radio's audio-service combination. These are compatibility hints, not cryptographic Honda identification. Only one candidate is admitted at a time, for up to 90 seconds within the enrollment window. It becomes the saved radio only after a successful HondaLink handshake. Subsequent connections are restricted to the saved peer, and discovery closes. Failed candidate bonds are removed; unrelated existing bonds are left alone. An expired candidate cannot survive a reboot.
 
-The themed early HDMI welcome shares the wizard’s pairing instructions and is shown while a saved radio reconnects too. Red is the default theme for new setups; saved colors are preserved. Some radios show HDMI only after pairing. With a saved radio, HLauncher can start the selected app at boot after setup is complete and the safety notice has been accepted. A per-device **HLAUNCHER-SETUP.txt** is also written to the SD card's boot partition on first boot. If necessary, shut down, read that file on another computer, then return the card to the Pi. It lists the setup address and the device’s hotspot and setup credentials.
+The themed early HDMI welcome shares the wizard’s pairing instructions and is shown while a saved radio reconnects too. Red is the default theme for new setups; saved colors are preserved. Some radios show HDMI only after pairing. With a saved radio, HLauncher can start the selected app at boot after setup is complete and the safety notice has been accepted. A per-device **HLAUNCHER-SETUP.txt** is also written to the SD card's boot partition on first boot. If necessary, shut down, read that file on another computer, then return the card to the Pi. It lists the setup address and the hotspot name and password.
 
 ## Phone recovery and network setup
 
-Open the wizard’s Network step or **Settings → System → Wi-Fi**, then select **Setup hotspot → Start setup hotspot**. Connect to the displayed **HLauncher-XXXX** network and open **http://192.168.4.1:8080**. Sign in as `hlauncher` with the displayed hotspot password. On a trusted LAN, use `http://PI_ADDRESS:8080`. Enable SSH from the radio’s **Wi-Fi → SSH access** page. The initial SSH credentials are `hlauncher` / `ilovevtec1234`. Change the password with `passwd` while storage protection is off so the change survives reboot.
+Open the wizard’s Network step or **Settings → System → Wi-Fi**, then select
+**Setup hotspot → Start setup hotspot**. Join the displayed **HLauncher-XXXX**
+network with `ilovevtec1234`. If your phone does not open setup automatically,
+visit [http://192.168.4.1/](http://192.168.4.1/). Over Ethernet or personal
+Wi-Fi, open [http://hlauncher.local/](http://hlauncher.local/) or the Pi's IP
+address. There is no web login.
 
-Wi-Fi starts off on a fresh install. Starting the hotspot enables Wi-Fi temporarily. Successfully connecting to personal Wi-Fi saves the network and turns Wi-Fi on. A valid Wi-Fi regulatory country is required for the hotspot. Use Ethernet to reach the setup page if the radio screen is unavailable. Starting the hotspot can replace an active Wi-Fi connection.
+Choose a nearby WPA/WPA2 Personal network or enter the network name manually.
+The **Wi-Fi country** field uses the configured country, with US as the
+fallback. The Pi returns to the setup hotspot if it cannot join. When the Pi
+connects successfully, join the same Wi-Fi on your phone or computer.
 
-The recovery page can reopen pairing/replace the saved radio, admit a specific radio address when automatic recognition fails, configure personal Wi-Fi with a country code, toggle Debug and download a diagnostic summary. WPA/WPA2 personal passwords are supported; open and enterprise Wi-Fi are not implemented. Wi-Fi passwords are written to a root-only NetworkManager keyfile rather than command arguments. The setup hotspot can end if Wi-Fi is turned off, sleeps, or joins another network.
+Wi-Fi starts off on a fresh install. Starting the hotspot enables Wi-Fi
+temporarily and can replace an active Wi-Fi connection. The recovery page can
+reopen radio pairing, accept a manually entered radio address, toggle Debug
+and download a diagnostic summary. It also accepts signed local updates.
+When Debug is enabled, it can download the latest protocol capture.
 
-The recovery page and API require the device password. The service sends it over HTTP. Use it
-on the setup hotspot or a trusted local network. Requests are
-size/time bounded and browser writes enforce same-origin checks. It can install
-signed local update files, but does not provide a general shell. With Debug enabled, it can download the latest recorded protocol capture (up to 8 MiB per download); captures may contain private/device data.
+Enable SSH under **Wi-Fi → SSH access** on the radio. The default system and SSH
+login is `hlauncher` / `ilovevtec1234`. With storage protection off, changes
+made with `passwd` survive a reboot.
 
 ## Production and Debug
 

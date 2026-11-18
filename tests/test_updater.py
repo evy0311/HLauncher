@@ -355,7 +355,7 @@ class Updates(unittest.TestCase):
         self.assertFalse((self.root/'escaped').exists())
 
     def test_local_network_upload_queues_signed_import(self):
-        import base64,http.client,threading
+        import http.client,threading
         from http.server import ThreadingHTTPServer
         from hlauncher import recovery
         from hlauncher.setup_state import SetupState
@@ -368,8 +368,7 @@ class Updates(unittest.TestCase):
             with patch.object(recovery,'UPDATER_CONFIG',config_path):
                 connection.request('POST','/api/update-file',b'file',{'Content-Type':'application/octet-stream','Origin':'http://unrelated.invalid'})
                 response=connection.getresponse();self.assertEqual(response.status,403);response.read()
-                auth='Basic '+base64.b64encode(('hlauncher:'+state.credentials()['password']).encode()).decode()
-                headers={'Content-Type':'application/octet-stream','Authorization':auth}
+                headers={'Content-Type':'application/octet-stream'}
                 connection.request('POST','/api/update-file',b'container bytes',headers)
                 response=connection.getresponse();self.assertEqual(response.status,202);response.read()
                 self.assertEqual((self.root/'inbox/local-update.hlu').read_bytes(),b'container bytes')

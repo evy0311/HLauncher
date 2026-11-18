@@ -11,6 +11,7 @@ from .config import STATE_DIR
 
 ADDRESS = re.compile(r'(?:[0-9A-F]{2}:){5}[0-9A-F]{2}')
 EMPTY = '00:00:00:00:00:00'
+DEFAULT_PASSWORD = 'ilovevtec1234'
 try: BOOT_ID = Path('/proc/sys/kernel/random/boot_id').read_text().strip()
 except OSError: BOOT_ID = 'local-test'
 
@@ -139,9 +140,7 @@ class SetupState:
             ssid = item.get('ssid')
             if not isinstance(ssid, str) or not re.fullmatch(r'HLauncher-[0-9A-F]{4}', ssid):
                 ssid = 'HLauncher-'+secrets.token_hex(2).upper()
-            password = item.get('password')
-            if isinstance(password, str) and re.fullmatch(r'[A-Za-z0-9_-]{16}', password) and ssid == item.get('ssid'):
-                return {'ssid': ssid, 'password': password}
-            item = {'ssid': ssid, 'password': secrets.token_urlsafe(12)}
-            atomic_json(path, item)
-            return item
+            credentials = {'ssid': ssid, 'password': DEFAULT_PASSWORD}
+            if item != credentials:
+                atomic_json(path, credentials)
+            return credentials

@@ -1,5 +1,4 @@
 """Fresh setup, pairing ownership, production logging and recovery access contracts."""
-import base64
 import http.client
 import json
 from pathlib import Path
@@ -203,8 +202,9 @@ class Setup(unittest.TestCase):
         first=SetupState(self.root).credentials()
         self.assertEqual(first,SetupState(self.root).credentials())
         self.assertNotEqual(first,SetupState(self.root/'other').credentials())
-        self.assertEqual(len(first['password']),16)
-        self.assertNotEqual(first['password'], SetupState(self.root/'other').credentials()['password'])
+        self.assertEqual(first['password'], 'ilovevtec1234')
+        (self.root/'recovery.json').write_text(json.dumps(dict(first, password='old-password')))
+        self.assertEqual(SetupState(self.root).credentials(), first)
         self.assertEqual((self.root/'recovery.json').stat().st_mode & 0o777,0o600)
 
     def test_bootstrap_defers_heavy_ui_and_restores_session(self):
@@ -298,18 +298,35 @@ class Setup(unittest.TestCase):
                 finish.reset_mock();left[1]();finish.assert_called_once_with()
         finally:ui.close()
 
-    def test_recovery_http_requires_device_password_and_rejects_cross_origin_posts(self):
+    def test_recovery_http_has_no_login_and_rejects_cross_origin_posts(self):
         state=SetupState(self.root);maintenance=Maintenance(state)
+        self.enterContext(patch.object(maintenance, 'wifi_scan', return_value={
+            'networks': ['Home Wi-Fi'], 'message': ''}))
+        self.enterContext(patch.object(maintenance, 'default_country', return_value='US'))
         server=ThreadingHTTPServer(('127.0.0.1',0),handler_for(state,maintenance))
         thread=threading.Thread(target=server.serve_forever,daemon=True);thread.start()
         connection=http.client.HTTPConnection(*server.server_address,timeout=3)
         try:
-            connection.request('GET','/');response=connection.getresponse();self.assertEqual(response.status,401);response.read()
-            auth='Basic '+base64.b64encode(('hlauncher:'+state.credentials()['password']).encode()).decode()
-            headers={'Content-Type':'application/json','Origin':'http://evil.invalid','Authorization':auth}
+            connection.request('GET','/');response=connection.getresponse()
+            self.assertEqual(response.status,200)
+            self.assertIsNone(response.getheader('WWW-Authenticate'))
+            self.assertIn(b'Nearby networks', response.read())
+            port = server.server_address[1]
+            connection.request('GET','/',headers={'Host':f'hlauncher.local:{port}'})
+            response=connection.getresponse();self.assertEqual(response.status,200);response.read()
+            connection.request('GET','/api/wifi-networks')
+            response=connection.getresponse()
+            self.assertEqual(response.status,200)
+            self.assertEqual(json.loads(response.read()),{
+                'networks':['Home Wi-Fi'], 'message':'', 'country':'US'})
+            headers={'Content-Type':'application/json','Origin':'http://evil.invalid'}
             connection.request('POST','/api/debug','{}',headers)
             response=connection.getresponse();self.assertEqual(response.status,403);response.read()
             headers.pop('Origin')
+            connection.request('POST','/api/debug','{}',dict(headers, Host='untrusted.example'))
+            response=connection.getresponse();self.assertEqual(response.status,403);response.read()
+            connection.request('POST','/api/debug','{}',headers)
+            response=connection.getresponse();self.assertEqual(response.status,202);response.read()
             connection.request('POST','/api/job',json.dumps({'operation':'reboot'}),headers)
             response=connection.getresponse();self.assertEqual(response.status,400);response.read()
             connection.request('POST','/api/job','{"operation":"ssh","enabled":true}',headers)

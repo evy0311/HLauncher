@@ -163,8 +163,9 @@ The BlueZ workaround is `/etc/systemd/system/bluetooth.service.d/90-hlauncher.co
 
 ### Audio & EQ settings
 
-See [audio output and PipeWire EQ](audio.md) for Settings → Audio & EQ and the
-12-band controls and Flat/EDM Bass presets. Main media output is fixed to HDMI; old Bluetooth output
+See [audio output and PipeWire EQ](audio.md) for Settings → Audio and the
+12-band controls, shown six at a time, with Flat, Bass lift, Vocal clarity and
+Softer treble presets. Main media output is fixed to HDMI; old Bluetooth output
 preferences and environment overrides are ignored. The page has no output
 selector or test-tone controls. Bluetooth continues carrying HondaLink control
 and the existing hands-free profiles.

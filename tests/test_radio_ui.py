@@ -506,9 +506,9 @@ class RadioUI(unittest.TestCase):
 
     def test_audio_returns_to_the_page_that_opened_it(self):
         ui=self.ui;ui.settings()
-        next(action for _, action in ui.actions if action == ui.audio_coming_soon)()
-        self.assertEqual(ui.mode, 'audio_coming_soon')
-        self.assertEqual(len(ui.actions), 1)
+        next(action for _, action in ui.actions if action == ui.audio_page)()
+        self.assertEqual(ui.mode, 'audio_settings')
+        self.assertGreater(len(ui.actions), 1)
         ui.actions[0][1]()
         self.assertEqual(ui.mode,'settings')
         ui.audio_page();ui.actions[0][1]()

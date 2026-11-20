@@ -56,7 +56,7 @@ def categories(launcher):
             Row('About','',launcher.about_settings),
             Row('Startup','',launcher.startup_settings),
             Row('System','',launcher.system_settings),
-            Row('Audio','',launcher.audio_coming_soon),
+            Row('Audio','',launcher.audio_page),
             Row('Diagnostics','',launcher.diagnostics_menu)]
 
 

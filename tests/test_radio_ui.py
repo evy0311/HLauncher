@@ -28,6 +28,25 @@ class RadioUI(unittest.TestCase):
         self.ui=Launcher(framebuffer=Display(),preferences=prefs,manifests=manifests)
     def tearDown(self):self.ui.close();self.temp.cleanup()
 
+    def test_phone_favorite_and_connect_controls_use_known_paired_identity(self):
+        import hashlib
+        ui = self.ui
+        address = '02:00:00:00:00:01'
+        key = hashlib.sha256(address.encode()).hexdigest()[:24]
+        ui.host.projection_phones.update([dict(id=key, address=address, name='Fixture phone', paired=True)])
+        ui.projection_phone_page(key)
+        self.assertIn(ui.connect_projection_phone, [action for _, action in ui.actions])
+        self.assertIn(ui.favorite_projection_phone, [action for _, action in ui.actions])
+        ui.favorite_projection_phone()
+        self.assertEqual(ui.host.projection_phones.favorite, key)
+        with patch.object(ui.host, 'connect_phone', return_value='fixture-request') as connect:
+            ui.connect_projection_phone()
+            connect.assert_called_once_with(key)
+        self.assertEqual(ui.projection_phone_request[:2], (key, 'fixture-request'))
+        ui.favorite_projection_phone()
+        self.assertIsNone(ui.host.projection_phones.favorite)
+
+
     def test_projection_has_one_tile_and_one_settings_destination(self):
         ui = self.ui
         projections = [m for m in ui.home_manifests() if m.id in ('carplay', 'android-auto')]

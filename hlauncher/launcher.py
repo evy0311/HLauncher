@@ -673,8 +673,27 @@ class Launcher:
 
     def projection_phone_page(self, key):
         self.projection_phone_id = key
+        self.banner = ''
         self.mode = 'projection_phone'
         self.press = None
+        self.draw()
+
+    def favorite_projection_phone(self):
+        key = getattr(self, 'projection_phone_id', None)
+        try:
+            self.host.set_favorite_phone(None if self.host.projection_phones.favorite == key else key)
+            self.banner = 'Favorite saved for the next dongle startup' if self.host.projection_phones.favorite else 'Favorite cleared'
+        except (OSError, ValueError) as exc:
+            self.banner = str(exc) if isinstance(exc, ValueError) else 'Could not save favorite phone'
+        self.draw()
+
+    def connect_projection_phone(self):
+        try:
+            request = self.host.connect_phone(self.projection_phone_id)
+            self.projection_phone_request = (self.projection_phone_id, request, time.monotonic()+45)
+            self.banner = 'Connection requested'
+        except (OSError, ValueError) as exc:
+            self.banner = str(exc)
         self.draw()
 
     def start_projection(self, engine):

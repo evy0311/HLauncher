@@ -34,7 +34,7 @@ def channel():
 
 
 class Worker:
-    def __init__(self, manifest, width, height, event, playback=None, log_dir=None, *, carplay_fps=None, car_gps=False):
+    def __init__(self, manifest, width, height, event, playback=None, log_dir=None, *, carplay_fps=None, car_gps=False, favorite_phone=""):
         self.network = None
         self.lease=ProjectionLease() if manifest.bundled and manifest.id in PROJECTIONS else None
         self.manifest = manifest
@@ -67,6 +67,7 @@ class Worker:
         self.video_available = False
         self.ready = False
         self.metrics = {}
+        self.favorite_sent = favorite_phone
         self.button_subscription = frozenset()
         self.closed = False
         self.active = False
@@ -86,6 +87,9 @@ class Worker:
             PYTHONPATH=os.pathsep.join(filter(None, (str(ROOT / "sdk"), str(ROOT), env.get("PYTHONPATH")))),
         )
         env.pop("HLAUNCHER_RADIO_ADDRESS", None)
+        env.pop('HLAUNCHER_PHONE_FAVORITE', None)
+        if manifest.bundled and manifest.id == 'carplay':
+            env['HLAUNCHER_PHONE_FAVORITE'] = favorite_phone
         env['HLAUNCHER_CAR_GPS'] = '1' if car_gps else '0'
         if carplay_fps is not None:
             env['CIVIC_CARPLAY_FPS'] = str(carplay_fps)
@@ -340,6 +344,7 @@ class PluginHost:
                 height -= camera_top(self.height)
             options = {}
             if manifest.bundled and plugin_id == 'carplay':
+                options['favorite_phone'] = self.projection_phones.favorite_address
                 options['carplay_fps'] = Preferences(self.state_dir/'settings.json').carplay_fps
             if getattr(manifest, 'bundled', False) and plugin_id in PROJECTIONS:
                 options['car_gps'] = Preferences(self.state_dir/'settings.json').car_gps(plugin_id)
@@ -404,6 +409,44 @@ class PluginHost:
         if self.projection_request or any(key in PROJECTIONS for key in self.workers):return
         self.request_projection('carplay',False)
 
+    def set_favorite_phone(self, key):
+        self.projection_phones.set_favorite(key)
+        worker = self.workers.get('carplay')
+        if worker:
+            worker.favorite_sent = None
+        self._phone_favorite_tick()
+        self.event(state='projection_favorite_changed', selected=key is not None)
+
+    def _phone_favorite_tick(self):
+        worker = self.workers.get('carplay')
+        favorite = self.projection_phones.favorite_address
+        if worker and getattr(worker, 'ready', False) and getattr(worker, 'favorite_sent', None) != favorite:
+            if worker.send(type='host.adapter.favorite', address=favorite):
+                worker.favorite_sent = favorite
+
+    def connect_phone(self, key):
+        phones = self.projection_phones
+        address = phones.addresses.get(key)
+        worker = self.workers.get('carplay')
+        if not worker or not worker.ready or key not in phones.observed or not address:
+            raise ValueError('Connect the dongle and wait for its paired phone list first')
+        if self.projection_request or 'android-auto' in self.workers:
+            raise ValueError('Stop direct USB Android Auto before selecting a dongle phone')
+        attempt = worker.metrics.get('phone_connection', {})
+        if (attempt.get('result') in ('connecting', 'disconnecting')
+                and time.monotonic()-attempt.get('updated_at', time.monotonic()) < 45):
+            raise ValueError('Another phone connection attempt is running')
+        pending = getattr(self, 'phone_connect_pending', None)
+        if pending and pending[0] is worker and time.monotonic() < pending[2]:
+            if attempt.get('request_id') != pending[1] or attempt.get('result') not in ('failed', 'connected', 'skipped'):
+                raise ValueError('Another phone connection attempt is running')
+        request = str(time.time_ns())
+        if not worker.send(type='host.adapter.connect', request_id=request, address=address):
+            raise ValueError('Could not send the connection request')
+        self.phone_connect_pending = (worker, request, time.monotonic()+45)
+        self.event(state='projection_phone_requested', request_id=request)
+        return request
+
     def request_branding(self):
         if 'carplay' not in self.manifests:raise ValueError('CarPlay is not installed')
         request=self.branding.request();self.branding_sent=None
@@ -442,6 +485,7 @@ class PluginHost:
         if plugin_id == 'carplay':
             self.projection_phones.live.clear()
             self.projection_phones.observed.clear()
+            self.projection_phones.addresses.clear()
         if self.projection_request==plugin_id:self.projection_request=None
         if self.active == plugin_id:
             self.active = None
@@ -639,6 +683,7 @@ class PluginHost:
     def tick(self):
         self._projection_tick()
         self._branding_tick()
+        self._phone_favorite_tick()
         for sequence, (record, deadline) in list(self.button_pending.items()):
             if time.monotonic() >= deadline:
                 record['result'] = 'Plugin command acknowledgement timed out'

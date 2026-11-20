@@ -16,6 +16,7 @@ class AdapterInfo:
         self.connected = False
         self.peer = None
         self.paired = set()
+        self.addresses = {}
 
     def phone_reports(self):
         return [dict(phone, connected=self.connected and key == self.peer, paired=key in self.paired)
@@ -28,12 +29,14 @@ class AdapterInfo:
         if identity == '00:00:00:00:00:00' or not re.fullmatch(r'(?:[0-9A-F]{2}:){5}[0-9A-F]{2}', identity):
             return None
         key = hashlib.sha256(identity.encode()).hexdigest()[:24]
+        self.addresses[key] = identity
         previous = self.phones.get(key, {})
         self.phones[key] = dict(previous, id=key,
             name=text(report.get('btName') or report.get('name')) or previous.get('name', 'Phone'),
             protocol=text(report.get('MDLinkType') or report.get('type')) or previous.get('protocol', ''),
             transport=self.fields.get('transport', '') if key == self.peer else previous.get('transport', ''))
         self.phones = dict(list(self.phones.items())[-32:])
+        self.addresses = {key: value for key, value in self.addresses.items() if key in self.phones}
         return key
 
     def update(self, event):
@@ -44,6 +47,7 @@ class AdapterInfo:
             self.connected = False
             self.peer = None
             self.paired.clear()
+            self.addresses.clear()
         elif kind == 'dongle_identity':
             vendor, product = event.get('vendor_id'), event.get('product_id')
             if all(type(v) is int and 0 <= v <= 65535 for v in (vendor, product)):

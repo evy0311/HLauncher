@@ -123,6 +123,7 @@ class CarplayHDMI:
         self.frame = None
         self.phone_connected = False
         self.adapter_info = AdapterInfo()
+        self.phone_connection = {}
         self.last_decoded_at = None
         self.connection_epoch = 0
         self.version = 0
@@ -153,6 +154,7 @@ class CarplayHDMI:
         self.adapter_branding_request_id=None
         self.adapter_branding_error=""
         self.pending_branding=None
+        self.phone_favorite = os.environ.get('HLAUNCHER_PHONE_FAVORITE', '')
         self.night_mode = False
         self.gps = None
 
@@ -177,6 +179,7 @@ class CarplayHDMI:
         self.frame = None
         self.phone_connected = False
         self.adapter_info = AdapterInfo()
+        self.phone_connection = {}
         self.last_decoded_at = None
         self.frames = 0
         self.host_ui_requested = False
@@ -276,6 +279,24 @@ class CarplayHDMI:
             self.cond.notify()
         return True
 
+    def phone_command(self, kind, address='', request_id=''):
+        if (kind not in ('phone.connect', 'phone.favorite') or not isinstance(address, str)
+                or (kind == 'phone.connect' and not address)):
+            return False
+        from hlauncher.projection_phones import ProjectionPhones
+        import hashlib
+        key = hashlib.sha256(address.upper().encode()).hexdigest()[:24] if isinstance(address, str) else ''
+        if address and not ProjectionPhones.valid_address(key, address):
+            return False
+        with self.cond:
+            if kind == 'phone.favorite':
+                self.phone_favorite = address
+            if len(self.queue) >= 64:
+                return False
+            self.queue.append(dict(type=kind, address=address, request_id=request_id))
+            self.cond.notify()
+        return True
+
     def set_night_mode(self, night_mode):
         with self.cond:
             self.night_mode = night_mode
@@ -315,7 +336,7 @@ class CarplayHDMI:
                 self.finish_button(item.get('sequence'), 'CarPlay USB bridge write failed')
                 return
             if item.get('type') not in ('microphone', 'projection.gps'):
-                self.notify("carplay_input_forwarded", **item)
+                self.notify("carplay_input_forwarded", **{k:v for k,v in item.items() if k != "address"})
 
     def microphone(self, pcm):
         if self.mic_format!=(16000,1) or len(pcm)%2:return False
@@ -361,7 +382,9 @@ class CarplayHDMI:
         with self.lock:
             return {
                 "adapter_info": self.adapter_info.snapshot(),
-                "projection_phones": self.adapter_info.phone_reports(),
+                "projection_phones": [dict(phone, address=self.adapter_info.addresses.get(phone["id"], ""))
+                                     for phone in self.adapter_info.phone_reports()],
+                "phone_connection": dict(self.phone_connection),
                 "phone_connected": self.phone_connected,
                 "adapter_branding": self.adapter_branding,
                 "adapter_branding_request_id":self.adapter_branding_request_id,
@@ -454,6 +477,10 @@ class CarplayHDMI:
         with self.lock:
             self.adapter_info.update(state)
         self.receive_connection_state(state)
+        if state.get('state') == 'phone_connection':
+            with self.lock:
+                self.phone_connection = {key: state.get(key) for key in ('request_id', 'phone_id', 'automatic', 'result', 'reason')}
+                self.phone_connection['updated_at'] = time.monotonic()
         if state.get('state') == 'stream_stats':
             with self.lock:
                 self.bridge_audio = {key: state[key] for key in
@@ -509,6 +536,7 @@ class CarplayHDMI:
                 pcm = stack.enter_context(pcm_reader.makefile('rb', buffering=0))
                 initial_night_mode = self.night_mode
                 env = dict(os.environ, CIVIC_CARPLAY_RESET="0",
+                           HLAUNCHER_PHONE_FAVORITE=self.phone_favorite,
                            HLAUNCHER_NIGHT_MODE='1' if initial_night_mode else '0',
                            HLAUNCHER_CARPLAY_PCM_FD=str(pcm_writer.fileno()))
                 proc = subprocess.Popen(

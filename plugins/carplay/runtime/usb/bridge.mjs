@@ -7,6 +7,7 @@ import {monitorEventLoopDelay} from 'node:perf_hooks';
 import {Socket} from 'node:net';
 import {VideoOutput} from './video_output.mjs';
 import readline from 'node:readline';
+import {PhoneConnections} from './phone_connections.mjs';
 import {applyBranding} from './branding.mjs';
 import {SendGpsReporting, SendVehicleGps} from './vehicle_gps.mjs';
 import { format } from 'node:util';
@@ -84,6 +85,7 @@ process.stdout.on('error',()=>{ if (realtime === process.stdout) process.exit(0)
 if (realtime !== process.stdout) realtime.on('error',()=>process.exit(0));
 let touchChain=Promise.resolve(), touchSequence=0;
 let voice={call_audio:false,siri:false,recording:false};
+const phones=new PhoneConnections(message=>driver.send(message),status,process.env.HLAUNCHER_PHONE_FAVORITE);
 let micChain=Promise.resolve(),micPending=0,micBytes=0,micDropped=0,micErrors=0;
 let mediaSchema='',mediaState='';
 let brandingBusy=false, brandingPending=null, adapterOpened=false, initialBrandingOK=false;
@@ -206,6 +208,10 @@ if (!process.argv.includes('--self-test')) readline.createInterface({input:proce
   if (line.length>1024) return;
   try { const m=JSON.parse(line);if(m.type==='adapter.branding') {
     requestBranding(m.request_id);
+  }else if(m.type==='phone.connect') {
+    void phones.request(m.address,m.request_id);
+  }else if(m.type==='phone.favorite') {
+    phones.setFavorite(m.address);
   }else if(m.type==='projection.appearance' && typeof m.night_mode==='boolean') {
     nightMode=m.night_mode;
     void syncNightMode();
@@ -214,7 +220,7 @@ if (!process.argv.includes('--self-test')) readline.createInterface({input:proce
   }else if(m.type==='microphone')microphone(m);else touch(m); } catch(e) { console.error('Bridge input:',String(e)); }
 });
 async function stop() {
-  if (shutting) return; shutting=true;
+  if (shutting) return; phones.close(); shutting=true;
   if (driver) {
     await touchChain;
     if (down) await driver.send(new SendTouch(0,0,16));
@@ -398,7 +404,7 @@ driver.on('protocol_message',m=>{
     if(mediaSubtypes[m.subtype]===1) console.error(JSON.stringify({state:'media_packet_seen',...m}));
   }
 });
-driver.on('failure',()=>{status('usb_failure');process.exit(75);});
+driver.on('failure',()=>{phones.close();status('usb_failure');process.exit(75);});
 const loopDelay=monitorEventLoopDelay({resolution:20});loopDelay.enable();
 let lastUsbAt=performance.now();
 driver.on('message',message=>{
@@ -413,6 +419,7 @@ driver.on('message',message=>{
     console.error(JSON.stringify({state:'dongle_manufacturer_info',a:message.a,b:message.b}));
   }
   else if(message instanceof BoxInfo) {
+    void phones.observe(message.settings);
     // Phone names and identifiers stay on the local control channel, out of logs.
     const settings=Object.fromEntries(['productType','hwVersion','boxType','supportLinkType','btName','btMacAddr','MDLinkType']
       .filter(key=>typeof message.settings?.[key]==='string')
@@ -428,13 +435,14 @@ driver.on('message',message=>{
   }
   else if(message instanceof MediaData) { handleMedia(message); }
   else if(message instanceof Plugged) {
+    phones.plugged();
     video.reset();lastPCM.clear();status('phone_connected',{phone_type:message.phoneType,wifi:message.wifi});
     appliedNightMode = undefined;
     void syncNightMode();
     gpsPhoneConnected = true;
     void driver.send(new SendGpsReporting(carGps)).catch(() => {});
   }
-  else if(message instanceof Unplugged) { gpsPhoneConnected=false;lastPCM.clear();voiceChange({call_audio:false,siri:false,recording:false});status('phone_disconnected'); }
+  else if(message instanceof Unplugged) { void phones.unplugged();gpsPhoneConnected=false;lastPCM.clear();voiceChange({call_audio:false,siri:false,recording:false});status('phone_disconnected'); }
   else if(message instanceof VideoData && message.data?.length) {
     videoPackets++;
     const receivedAt=Date.now();
@@ -478,7 +486,8 @@ const config={...DEFAULT_CONFIG,width:800,height:480,fps,
 await driver.initialise(device);
 initialBrandingOK=await brandAdapter();
 appliedNightMode=config.nightMode;
-await driver.start(config);connected=true;
+await driver.start(config);connected=true;phones.ready=true;
+void phones.autoConnect();
 void syncNightMode();
 if(adapterOpened && brandingPending!==null){const pending=brandingPending;brandingPending=null;void brandAdapter(pending);}
 status('metadata_requested',{DashboardInfo:1});
@@ -491,6 +500,7 @@ setTimeout(()=>driver.send(new SendCommand('wifiPair')),15000).unref();
 process.on('exit',()=>clearInterval(keyframe));
 
 const watchdog=setInterval(()=>{
+  phones.tick();
   const gap=performance.now()-lastUsbAt;
   if(gap>=1000) status('usb_receive_gap',{gap_ms:Math.round(gap),event_loop_max_ms:Math.round(loopDelay.max/1e6),pcm_backlog_bytes:realtime.writableLength});
 },1000);

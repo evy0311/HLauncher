@@ -1,15 +1,80 @@
 import json
+import hashlib
 from pathlib import Path
 import tempfile
 import unittest
-from unittest.mock import patch
+from unittest.mock import patch, Mock
+from types import SimpleNamespace
 
 from hlauncher.adapter_info import AdapterInfo
 from hlauncher.projection_phones import ProjectionPhones
 from hlauncher.projection import direct_android_devices
+from hlauncher.plugin_host import PluginHost
 
 
 class Phones(unittest.TestCase):
+    def test_host_requests_are_paired_only_bounded_and_retry_favorite_sync(self):
+        with tempfile.TemporaryDirectory() as folder:
+            host = PluginHost({}, 720, 480, lambda **kw: None, lambda *a: None,
+                              SimpleNamespace(stop=lambda _: None), state_dir=folder)
+            address = '02:00:00:00:00:01'
+            key = hashlib.sha256(address.encode()).hexdigest()[:24]
+            host.projection_phones.update([dict(id=key, address=address, name='Fixture', paired=True)])
+            with self.assertRaises(ValueError):
+                host.connect_phone(key)
+            worker = SimpleNamespace(ready=True, metrics={}, send=Mock(return_value=True))
+            host.workers['carplay'] = worker
+            request = host.connect_phone(key)
+            worker.send.assert_called_with(type='host.adapter.connect', request_id=request, address=address)
+            with self.assertRaises(ValueError):
+                host.connect_phone(key)
+            worker.metrics = dict(phone_connection=dict(request_id=request, result='failed'))
+            host.connect_phone(key)
+            worker.send.side_effect = [False, True]
+            host.set_favorite_phone(key)
+            self.assertIsNone(worker.favorite_sent)
+            host._phone_favorite_tick()
+            self.assertEqual(worker.favorite_sent, address)
+            host.projection_phones.update([])
+            with self.assertRaises(ValueError):
+                host.connect_phone(key)
+            host.workers.clear()
+            host.close()
+
+    def test_favorite_survives_restart_and_raw_address_is_not_in_history(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder)/'projection-phones.json'
+            phones = ProjectionPhones(path)
+            address = '02:00:00:00:00:01'
+            key = hashlib.sha256(address.encode()).hexdigest()[:24]
+            phones.update([dict(id=key, address=address, name='Fixture', paired=True)])
+            phones.set_favorite(key)
+            self.assertNotIn(address, path.read_text())
+            self.assertNotIn(address, json.dumps(phones.snapshot()))
+            restored = ProjectionPhones(path)
+            self.assertEqual(restored.favorite, key)
+            self.assertEqual(restored.favorite_address, address)
+            self.assertEqual(restored.favorite_path.stat().st_mode & 0o777, 0o600)
+            restored.set_favorite(None)
+            self.assertIsNone(ProjectionPhones(path).favorite)
+
+    def test_favorite_requires_a_verified_peer_and_failed_save_keeps_previous(self):
+        with tempfile.TemporaryDirectory() as folder:
+            phones = ProjectionPhones(Path(folder)/'projection-phones.json')
+            with self.assertRaises(ValueError):
+                phones.set_favorite('a'*24)
+            address = '02:00:00:00:00:01'
+            key = hashlib.sha256(address.encode()).hexdigest()[:24]
+            phones.update([dict(id=key, address='02:00:00:00:00:02', name='Fixture', paired=True)])
+            self.assertNotIn(key, phones.addresses)
+            phones.update([dict(id=key, address=address, name='Fixture', paired=True)])
+            with patch('hlauncher.projection_phones.atomic_json', side_effect=OSError('fixture')):
+                with self.assertRaises(OSError):
+                    phones.set_favorite(key)
+            self.assertIsNone(phones.favorite)
+            phones.update([])
+            self.assertFalse(phones.addresses)
+
     def test_paired_is_not_connected_and_peer_identity_is_required(self):
         info = AdapterInfo()
         phone = dict(id='02:00:00:00:00:01', name='Fixture phone', type='CarPlay')

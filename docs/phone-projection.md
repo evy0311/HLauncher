@@ -45,11 +45,44 @@ name, last protocol/transport and last observed connection time. Live/paired
 flags are not restored across reboot. Repeated reports do not rewrite storage.
 Phone details are removed from normal health/status logging. The direct USB
 engine currently shows a generic session row; it does not expose a durable phone
-identity. No remote phone switching or unpairing is claimed.
+identity. Targeted dongle reconnect controls are implemented below; unpairing
+is not implemented.
 
 Dongle info shows live USB/product/hardware, firmware, advertised AA support,
 negotiated protocol and reported transport. Unknown facts remain Unknown;
 advertised AA is not a successful AA connection test.
+
+### Favorite phone and Connect now
+
+Open Settings → Phones → a paired phone. **Favorite phone** saves a preferred
+peer for subsequent dongle startups. **Connect now** requests that particular
+paired phone; it disconnects the current dongle session first and waits up to
+10 seconds for Unplugged before requesting the new peer. Native direct USB AA
+is not preempted by this dongle control.
+
+The local `projection-favorite.json` stores the selected hashed identity and its
+Bluetooth address with mode 0600, needed to select it before the normal startup
+connection trigger. Ordinary history still omits raw addresses. Only addresses
+whose hashes match fresh paired reports can be selected; the bridge independently
+checks the dongle's current DevList. Raw peer addresses are omitted from normal
+status, command and health logs. Clearing the favorite affects future startup
+attempts and does not disconnect the current phone.
+
+The new wire path uses type 0x19 `{autoConn:true}` followed by type 0x11 with the
+NUL-terminated peer Bluetooth address, as documented in the CCPA protocol
+research. A manual handoff first sends empty type 0x0F. USB transfer success
+leaves the state Connecting; successful completion requires Plugged plus a
+matching current-peer BoxInfo report. Attempts time out after 30 seconds of
+connection negotiation, and duplicate requests are rejected. A favorite is
+attempted once per bridge startup and never replaces an established session.
+On favorite failure the driver receives one normal `wifiConnect` request; this
+is best-effort fallback, not proof of a successful alternate connection.
+
+The existing pinned driver did not expose these targeted controls, and this
+implementation has **not been verified on the owner's 2026.07.31 firmware**.
+Test startup with two paired phones, unavailable favorite, manual switching,
+request timeout and reconnect before treating this as proven hardware support.
+Initial pairing/phone approval is still required for a new phone.
 
 ### Audio dropout diagnostics
 
@@ -192,11 +225,13 @@ before publishing this as a release.
 
 ## Validation and remaining hardware checks
 
-79 focused tests pass, including waiting-screen/cog navigation, automatic
+82 focused tests pass, including waiting-screen/cog navigation, automatic
 foreground connection, idle USB fallback versus an established session,
 negotiation timeout, lease handoff, phone identity/history and PCM gap logging.
-The full Mac suite ran 376 tests: 368 passed, three skipped, and five errored
-because libsoxr is not installed. The bridge self-test, Python compilation,
+The full Mac suite ran 380 tests: 372 passed, three skipped, and five errored
+because libsoxr is not installed. Targeted-connect Node tests cover exact wire framing, paired-only requests,
+manual handoff, stale peer reports, unavailable favorites, fallback, timeouts
+and USB cancellation. The bridge self-test, Python compilation,
 shell syntax and whitespace checks pass. The native USB exclusion patch applies
 and reverses against the pinned aasdk source. OEM, Touring and Drive previews
 were rendered and reviewed at 720×480.

@@ -1,5 +1,6 @@
 """Shared settings, connection and picture pages; no display or service ownership."""
 import math
+import time
 from datetime import datetime
 from functools import lru_cache
 from pathlib import Path
@@ -417,7 +418,7 @@ def projection_phones(ui):
     for phone in ui.host.projection_phones.snapshot():
         status = 'Connected' if phone['connected'] else 'Paired with dongle' if phone['paired'] else 'Previously connected' if phone.get('last_connected') else 'Previously reported'
         detail = status
-        rows.append(Row(phone['name'], lambda key=phone['id']: ui.projection_phone_page(key), value=detail))
+        rows.append(Row(('Favorite · ' if phone.get('favorite') else '') + phone['name'], lambda key=phone['id']: ui.projection_phone_page(key), value=detail))
     if 'android-auto' in ui.host.workers:
         worker = ui.host.workers['android-auto']
         rows.insert(0, Row('Direct USB Android Auto', None, value='Connected' if (getattr(worker, 'video_available', False) or getattr(worker, 'metrics', {}).get('phone_connected') is True) else 'Waiting for phone'))
@@ -439,12 +440,45 @@ def projection_phone(ui):
         last = datetime.fromtimestamp(last).strftime('%b %d, %Y %H:%M') if last else 'Not observed'
     except (ValueError, OverflowError, OSError):
         last = 'Unknown'
-    rows = [Row('Status', None, value='Connected' if phone.get('connected') else 'Disconnected'),
-            Row('Last protocol', None, value=phone.get('protocol') or 'Unknown'),
-            Row('Last transport', None, value=phone.get('transport') or 'Unknown'),
-            Row('Last connected', None, value=last)]
+    key = phone.get('id')
+    known = key in ui.host.projection_phones.addresses and phone.get('paired')
+    favorite = phone.get('favorite', False)
+    rows = [Row('Connect now', ui.connect_projection_phone if known else None,
+                value='Connected' if phone.get('connected') else '' if known else 'Connect dongle')]
+    if favorite or known:
+        rows.append(Row('Favorite phone', ui.favorite_projection_phone, toggle=favorite))
+    else:
+        rows.append(Row('Favorite phone', None, value='Connect dongle'))
+    worker = ui.host.workers.get('carplay')
+    attempt = getattr(worker, 'metrics', {}).get('phone_connection', {})
+    request = getattr(ui, 'projection_phone_request', None)
+    detail = ui.banner or 'Connect now switches away from the current dongle phone'
+    if (not ui.banner or ui.banner == 'Connection requested') and isinstance(attempt, dict) and attempt.get('phone_id') == key:
+        result = attempt.get('result')
+        labels = {'disconnecting':'Disconnecting current phone', 'connecting':'Connecting to phone',
+                  'connected':'Selected phone connected', 'failed':'Connection failed',
+                  'skipped':'Current session kept'}
+        if not request or request[0] != key or attempt.get('request_id') == request[1]:
+            detail = labels.get(result, 'Waiting for dongle')
+            reasons = {'busy':'Another connection attempt is running', 'not_paired':'Phone is not in the dongle paired list',
+                       'disconnect_send_failed':'Dongle rejected the disconnect request',
+                       'connect_send_failed':'Dongle rejected the connection request',
+                       'autoconnect_send_failed':'Dongle rejected auto-connect setup',
+                       'disconnect_timeout':'Current phone did not disconnect',
+                       'connection_timeout':'Selected phone did not connect',
+                       'adapter_disconnected':'Dongle connection lost', 'worker_queue_full':'Dongle command queue is full'}
+            if attempt.get('reason') in reasons:
+                detail = reasons[attempt['reason']]
+    if request and request[0] == key and time.monotonic() > request[2] and (attempt.get('request_id') != request[1] or attempt.get('result') in ('connecting', 'disconnecting')):
+        detail = 'Connection request timed out · no dongle response'
+    rows += [Row('Status', None, value='Connected' if phone.get('connected') else 'Disconnected'),
+             Row('Last protocol', None, value=phone.get('protocol') or 'Unknown'),
+             Row('Last transport', None, value=phone.get('transport') or 'Unknown'),
+             Row('Last connected', None, value=last)]
+    if settings_menu(ui, phone.get('name', 'Phone'), ui.projection_phones_page, row_items(rows), footer=detail):
+        return
     draw_rows(ui, p, rows, bottom=422, key='projection-phone', size=22)
-    p.notice('Reported by the dongle; paired phones may not have connected here yet')
+    p.notice(detail)
     present(ui, p)
 
 

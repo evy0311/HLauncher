@@ -532,8 +532,6 @@ def shutdown(ui):
     title=('Restarting' if restarting else 'Shutting down') if pending else 'Shut down or restart'
     p=page_for(ui,title,getattr(ui,'shutdown_return',ui.system_settings))
     p.label((24,144),('Restarting the Pi…' if restarting else 'Shutting down the Pi…') if pending else 'Shut down or restart the Pi?',28)
-    p.text((24,208),'Keep power connected while the Pi restarts' if pending and restarting else
-           'Wait for shutdown to finish before disconnecting power',18)
     if not pending:
         p.button((24,320,240,380),'Cancel',getattr(ui,'shutdown_return',ui.system_settings),secondary=True,size=22)
         p.button((252,320,468,380),'Restart',ui.restart_pi,secondary=True,size=22)

@@ -53,7 +53,7 @@ def render(rows, back, *, theme='Red', size=(720,480), clock=None,
 def categories(launcher):
     return [Row('Plugins','',launcher.plugin_settings),
             Row('About','',launcher.about_settings),
-            Row('Audio','',launcher.audio_coming_soon),
+            Row('Audio','',launcher.audio_page),
             Row('Startup','',launcher.startup_settings),
             Row('Appearance','',launcher.appearance_settings),
             Row('System','',launcher.system_settings)]

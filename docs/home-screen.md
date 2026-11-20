@@ -87,7 +87,7 @@ The clock updates while this page is open. All child settings and diagnostics sc
 
 ## Audio and OBD pages
 
-The Audio settings page shows Coming soon. The bundled OBD dashboard shares
+The Audio settings page provides the equalizer and saved presets. The bundled OBD dashboard shares
 the UI artwork and typography and uses vehicle data from HondaLink. Missing or disconnected readings
 remain unavailable, and the dashboard caches its header until the minute or
 pressed state changes.

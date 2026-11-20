@@ -681,12 +681,14 @@ def hdmi(ui):
 
 def shutdown(ui):
     pending=ui.mode=='shutdown_pending'
-    p=page_for(ui,'Shutting down' if pending else 'Shut down',getattr(ui,'shutdown_return',ui.system_settings))
-    p.label((24,144),'Shutting down the Pi…' if pending else 'Shut down the Pi?',28)
-    p.text((24,208),'Wait for shutdown to finish before disconnecting power',18)
+    restarting=getattr(ui,'shutdown_action','poweroff')=='reboot'
+    title=('Restarting' if restarting else 'Shutting down') if pending else 'Shut down or restart'
+    p=page_for(ui,title,getattr(ui,'shutdown_return',ui.system_settings))
+    p.label((24,144),('Restarting the Pi…' if restarting else 'Shutting down the Pi…') if pending else 'Shut down or restart the Pi?',28)
     if not pending:
-        p.button((24,320,348,380),'Cancel',getattr(ui,'shutdown_return',ui.system_settings),secondary=True,size=22)
-        p.button((372,320,696,380),'Shut down',ui.shutdown_pi,selected=True,size=22)
+        p.button((24,320,240,380),'Cancel',getattr(ui,'shutdown_return',ui.system_settings),secondary=True,size=22)
+        p.button((252,320,468,380),'Restart',ui.restart_pi,secondary=True,size=22)
+        p.button((480,320,696,380),'Shut down',ui.shutdown_pi,selected=True,size=22)
     else:p.actions=[]
     p.notice(ui.banner)
     present(ui,p)

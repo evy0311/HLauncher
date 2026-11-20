@@ -13,7 +13,7 @@ import numpy as np
 
 ROOT=Path(__file__).resolve().parents[1]
 RATE=48000
-# Fifteen float32 biquads have a measured numerical residual even at 0 dB.
+# Seventeen float32 biquads have a numerical residual even at 0 dB.
 # This tolerance is below -80 dBFS, far below a missing/misaligned test frame;
 # separate spectral checks enforce unity gain. Do not claim bit-exact DSP.
 PCM_ERROR_LIMIT=1e-4

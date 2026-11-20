@@ -654,9 +654,9 @@ class RadioUI(unittest.TestCase):
 
     def test_audio_returns_to_the_page_that_opened_it(self):
         ui=self.ui;ui.settings()
-        next(action for _, action in ui.actions if action == ui.audio_coming_soon)()
-        self.assertEqual(ui.mode, 'audio_coming_soon')
-        self.assertEqual(len(ui.actions), 1)
+        next(action for _, action in ui.actions if action == ui.audio_page)()
+        self.assertEqual(ui.mode, 'audio_settings')
+        self.assertGreater(len(ui.actions), 1)
         ui.actions[0][1]()
         self.assertEqual(ui.mode,'settings')
         ui.audio_page();ui.actions[0][1]()
@@ -684,6 +684,42 @@ class RadioUI(unittest.TestCase):
                 ui.actions[-2][1]()
                 self.assertLess(ui.scroll_view['offset'],ui.scroll_view['maximum'])
                 for (x,y,r,b),_ in ui.actions:self.assertTrue(0<=x<r<=width and 0<=y<b<=480)
+
+    def test_scroll_position_survives_redraws_but_resets_after_leaving(self):
+        from hlauncher.ui.scroll_list import move
+        ui=self.ui
+        for leave in (ui.settings,ui.home,ui.debug_tools):
+            ui.system_settings()
+            move(ui,32)
+            offset=ui.scroll_view['offset']
+            self.assertGreater(offset,0)
+            ui.draw()
+            self.assertEqual(ui.scroll_view['offset'],offset)
+            ui.toggle_debug()
+            self.assertEqual(ui.scroll_view['offset'],offset)
+            ui.toggle_debug()
+            ui.list_drag=dict(key=ui.scroll_view['key'],kind='content')
+            leave()
+            self.assertIsNone(ui.list_drag)
+            ui.system_settings()
+            self.assertEqual(ui.scroll_view['offset'],0)
+
+    def test_scroll_resets_between_sections_with_the_same_page_mode(self):
+        from hlauncher.ui.scroll_list import move
+        ui=self.ui
+        ui.manifests['vehicle']=Manifest.load(ROOT/'plugins/vehicle',bundled=True)
+        ui.plugin_detail('vehicle')
+        ui.vehicle_fields_page('tires');mode=ui.mode
+        move(ui,128)
+        self.assertGreater(ui.scroll_view['offset'],0)
+        ui.toggle_vehicle_field('126')
+        self.assertGreater(ui.scroll_view['offset'],0)
+        ui.vehicle_fields_page('warnings')
+        self.assertEqual(ui.mode,mode)
+        self.assertEqual(ui.scroll_view['offset'],0)
+        move(ui,128)
+        ui.vehicle_fields_page('tires')
+        self.assertEqual(ui.scroll_view['offset'],0)
 
     def test_clock_is_hidden_by_default_and_toggle_persists_across_pages(self):
         ui=self.ui

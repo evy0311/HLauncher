@@ -308,7 +308,7 @@ class Architecture(unittest.TestCase):
         try:
             ui.settings()
             self.assertEqual([action for _, action in ui.actions], [ui.home,
-                ui.plugin_settings, ui.about_settings, ui.audio_coming_soon,
+                ui.plugin_settings, ui.about_settings, ui.audio_page,
                 ui.startup_settings, ui.appearance_settings, ui.system_settings])
             ui.actions[4][1]()
             self.assertEqual(ui.mode,'startup_settings')

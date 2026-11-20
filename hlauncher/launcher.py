@@ -8,7 +8,7 @@ from . import __version__
 from .debug_tools import InputMonitor, ToneTest
 from . import config
 from .diagnostics import Diagnostics
-from .audio_settings import AudioSettings, EQ_BANDS
+from .audio_settings import AudioSettings, EQ_BANDS, EQ_GAIN_LIMIT
 from .audio import AudioBroker
 from .catalog import discover
 from .config import Preferences
@@ -588,6 +588,11 @@ class Launcher:
         self.host.deactivate()
         self.audio_settings.refresh()
         self.mode = 'audio_settings'
+        self.audio_bank = 0
+        self.audio_selected_bands = {0: 'b50', 1: 'b1k', 2: 'b8k'}
+        self.audio_presets_open = False
+        self.audio_swipe = None
+        self.audio_confirm_save = None
         self.press = None
         self.audio_notice = ''
         self.draw()
@@ -604,7 +609,13 @@ class Launcher:
     def adjust_eq(self, key, delta):
         if key in EQ_BANDS:
             bands = dict(self.audio_settings.values['bands'])
-            bands[key] = max(-12, min(12, bands[key]+delta))
+            gain = bands[key]
+            if gain > EQ_GAIN_LIMIT:
+                bands[key] = gain + min(0, delta)
+            elif gain < -EQ_GAIN_LIMIT:
+                bands[key] = gain + max(0, delta)
+            else:
+                bands[key] = max(-EQ_GAIN_LIMIT, min(EQ_GAIN_LIMIT, gain + delta))
             self.change_audio(bands=bands)
         else:
             self.change_audio(**{key: max(-12, min(12, self.audio_settings.values[key]+delta))})
@@ -878,24 +889,32 @@ class Launcher:
         self.tone_test.stop()
         self.diagnostics.stop()
         self.shutdown_return = self.system_diagnostics if self.mode in ('diagnostics','protocol_tests') or self.mode.startswith('debug_') else self.system_settings
+        self.shutdown_action = 'poweroff'
         self.mode = 'shutdown_confirm'
         self.press = self.pressed_box = None
         self.banner = ''
         self.draw()
 
     def shutdown_pi(self):
+        self.request_power_action('poweroff')
+
+    def restart_pi(self):
+        self.request_power_action('reboot')
+
+    def request_power_action(self, action):
         self.tone_test.stop()
+        self.shutdown_action = action
         self.mode = 'shutdown_pending'
         self.banner = ''
         self.draw()
         try:
-            subprocess.run(['systemctl','poweroff','--no-block'], check=True,
+            subprocess.run(['systemctl',action,'--no-block'], check=True,
                            capture_output=True, text=True, timeout=3)
-            self.event(state='system_poweroff_requested')
+            self.event(state='system_'+action+'_requested')
         except (OSError, subprocess.SubprocessError) as exc:
             self.mode = 'shutdown_confirm'
-            self.banner = 'Shutdown failed; Pi is still running.'
-            self.event(state='system_poweroff_failed', error=str(exc))
+            self.banner = ('Restart' if action=='reboot' else 'Shutdown')+' failed; Pi is still running.'
+            self.event(state='system_'+action+'_failed', error=str(exc))
             self.draw()
 
     def diagnostic_runtime(self):
@@ -1267,7 +1286,18 @@ class Launcher:
                            monotonic_ms=round(began*1000))
 
     def _draw(self):
+        previous_view=getattr(self,'scroll_view',None)
         self.scroll_view=None
+        try:
+            self.draw_page()
+        finally:
+            # Keep position during redraws, but forget a list once it is left.
+            # Compare list keys too: tabs/subsections can share the same mode.
+            if previous_view and (not self.scroll_view or previous_view['key']!=self.scroll_view['key']):
+                self.list_offsets.pop(previous_view['key'],None)
+                self.list_drag=None
+
+    def draw_page(self):
         self.sync_parked_screen()
         if self.parked_screen_locked:
             if self.parked_overlay_at is not None and not self.parked_overlay_due():
@@ -1466,6 +1496,9 @@ class Launcher:
             return
         if self.swipe_home(action, point):
             return
+        if self.mode=='audio_settings':
+            from .ui.audio import touch as audio_touch
+            if audio_touch(self,action,point):return
         from .ui.scroll_list import touch as scroll_touch
         if scroll_touch(self,action,point or self.last_xy):return
         if self.mode=='custom_color':

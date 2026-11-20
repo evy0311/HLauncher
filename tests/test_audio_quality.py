@@ -49,6 +49,31 @@ class AudioQuality(unittest.TestCase):
 
 @parked_radio
 class ShutdownUI(unittest.TestCase):
+    def test_restart_button_requests_reboot_and_recovers_from_failure(self):
+        from hlauncher.launcher import Launcher
+        from hlauncher.config import Preferences
+        from test_architecture import Display
+        for failure in (False,True):
+            with self.subTest(failure=failure),tempfile.TemporaryDirectory() as folder:
+                prefs=Preferences(Path(folder)/'settings.json');prefs.accept_safety_notice()
+                ui=Launcher(framebuffer=Display(),preferences=prefs,manifests={})
+                try:
+                    with patch('hlauncher.launcher.subprocess.run',side_effect=OSError('unavailable') if failure else None) as command:
+                        ui.shutdown_page()
+                        command.assert_not_called()
+                        next(action for _,action in ui.actions if action==ui.restart_pi)()
+                        command.assert_called_once_with(['systemctl','reboot','--no-block'],check=True,
+                                                        capture_output=True,text=True,timeout=3)
+                    if failure:
+                        self.assertEqual(ui.mode,'shutdown_confirm')
+                        self.assertIn('Restart failed',ui.banner)
+                        self.assertIn(ui.restart_pi,[action for _,action in ui.actions])
+                    else:
+                        self.assertEqual(ui.mode,'shutdown_pending')
+                        self.assertEqual(ui.shutdown_action,'reboot')
+                        self.assertFalse(ui.actions)
+                finally:ui.close()
+
     def test_shutdown_action_uses_orderly_systemd_poweroff(self):
         from hlauncher.launcher import Launcher
         from hlauncher.config import Preferences

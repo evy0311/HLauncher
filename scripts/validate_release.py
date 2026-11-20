@@ -10,6 +10,7 @@ import sys
 
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
 from hlauncher import updater
+from hlauncher.development_builds import metadata
 
 
 def assets(version):
@@ -31,7 +32,8 @@ def validate(folder, version):
     if item.get('local_test') is not False:
         raise ValueError('Publish a production image without developer SSH access')
     if item.get('version')!=version:raise ValueError('Release version mismatch')
-    if item.get('channel', 'stable') not in ('stable', 'beta'):raise ValueError('Invalid release channel')
+    if item.get('channel', 'stable') not in ('stable', 'beta', 'development'):raise ValueError('Invalid release channel')
+    if item.get('channel') == 'development':metadata(item)
     if not re.fullmatch('[0-9a-f]{64}',str(item.get('system_contract',''))):
         raise ValueError('Missing system compatibility contract')
     if not re.fullmatch('[0-9a-f]{40}',str(item.get('commit',''))):

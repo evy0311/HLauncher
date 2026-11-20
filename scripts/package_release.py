@@ -15,6 +15,7 @@ import tarfile
 
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
 from hlauncher import updater
+from hlauncher.development_builds import build_metadata, metadata
 from hlauncher.catalog import API_VERSION
 
 
@@ -88,8 +89,10 @@ def verify_storage_image(root):
 def package(root, persist, version, key, output, commit, *, channel='stable'):
     root,persist,output=Path(root).resolve(),Path(persist).resolve(),Path(output).resolve()
     updater.version(version)
-    if channel not in ('stable', 'beta'):
+    if channel not in ('stable', 'beta', 'development'):
         raise ValueError('Invalid release channel')
+    development = build_metadata(os.environ.get('HLAUNCHER_RELEASE_BRANCH'), commit, os.environ.get('HLAUNCHER_RELEASE_BUILD_ID', version)) if channel == 'development' else {}
+    if development:metadata(dict(version=version, **development))
     if root==Path('/') or not (root/'etc/os-release').is_file():raise ValueError('Use an offline OS root')
     if not (root/'opt/hlauncher').is_dir() or (root/'opt/hlauncher').is_symlink():raise ValueError('Image is already packaged or HLauncher is missing')
     if 'VERSION_CODENAME=bookworm' not in (root/'etc/os-release').read_text():raise ValueError('Release platform requires Bookworm')
@@ -125,14 +128,15 @@ def package(root, persist, version, key, output, commit, *, channel='stable'):
     config=dict(root='/persist/hlauncher',public_key='/etc/hlauncher-updater/release.pub',
                 platform=updater.PLATFORM,system_contract=system_contract,release_units=True)
     updater.atomic(app/'build-info.json',dict(version=version,commit=commit,platform=updater.PLATFORM,
-                                             system_contract=system_contract,channel=channel))
+                                             system_contract=system_contract,channel=channel) | development)
     filename=f'HLauncher-{version}-pi4-arm64.tar.xz'
     unpacked=archive_tree(output/filename,[('app',app),('runtime',runtime)])
     item=dict(format=1,updater=1,state_schema=1,platform=updater.PLATFORM,system_contract=system_contract,
               plugin_api=API_VERSION, local_test=bool(os.environ.get('HLAUNCHER_LOCAL_TEST_SSH_KEY')),
               version=version,archive=filename,size=(output/filename).stat().st_size,
               unpacked_size=unpacked,sha256=updater.sha256(output/filename),commit=commit)
-    if channel == 'beta':
+    item.update(development)
+    if channel in ('beta', 'development'):
         item['channel'] = channel
     updater.validate_manifest(item,config)
     updater.atomic(output/'hlauncher-release.json',item)
@@ -165,7 +169,7 @@ def main():
     parser=argparse.ArgumentParser(description=__doc__)
     for name in ('root','persist','key','output'):parser.add_argument('--'+name,type=Path,required=True)
     parser.add_argument('--version',required=True);parser.add_argument('--commit',required=True)
-    parser.add_argument('--channel', choices=('stable', 'beta'), default='stable')
+    parser.add_argument('--channel', choices=('stable', 'beta', 'development'), default='stable')
     args=parser.parse_args()
     package(args.root,args.persist,args.version,args.key,args.output,args.commit,channel=args.channel)
 

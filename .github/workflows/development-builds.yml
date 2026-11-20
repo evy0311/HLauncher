@@ -1,0 +1,75 @@
+name: Signed development builds
+on:
+  push:
+    branches: [develop, 'feature/**', 'fix/**', 'bugfix/**']
+  workflow_dispatch:
+    inputs:
+      branch:
+        description: Repository branch to build
+        required: true
+        default: develop
+permissions:
+  contents: read
+concurrency:
+  group: hlauncher-development-${{ inputs.branch || github.ref_name }}
+  cancel-in-progress: false
+jobs:
+  build:
+    if: github.repository == 'evy0311/HLauncher' && vars.DEVELOPMENT_BUILDS_ENABLED == 'true'
+    runs-on: [self-hosted, Linux, ARM64, hlauncher-release]
+    environment: hlauncher-development
+    permissions:
+      contents: write
+    env:
+      SOURCE_BRANCH: ${{ inputs.branch || github.ref_name }}
+      SOURCE_REF: ${{ github.event_name == 'push' && github.sha || format('refs/heads/{0}', inputs.branch) }}
+      BUILD_ROOT: ${{ vars.HLAUNCHER_BUILD_ROOT }}
+      BASE_IMAGE: ${{ vars.HLAUNCHER_BASE_IMAGE }}
+      RELEASE_KEY: ${{ vars.HLAUNCHER_RELEASE_KEY_PATH }}
+      WIFI_COUNTRY: ${{ vars.HLAUNCHER_WIFI_COUNTRY }}
+    steps:
+      - name: Build complete signed release on the ARM64 builder
+        shell: bash
+        run: |
+          set -euo pipefail
+          git check-ref-format --branch "$SOURCE_BRANCH"
+          [[ $GITHUB_RUN_ATTEMPT -gt 0 && $GITHUB_RUN_ATTEMPT -lt 1000 ]]
+          : "${BUILD_ROOT:?Configure HLAUNCHER_BUILD_ROOT}"
+          : "${BASE_IMAGE:?Configure HLAUNCHER_BASE_IMAGE}"
+          : "${RELEASE_KEY:?Configure HLAUNCHER_RELEASE_KEY_PATH}"
+          : "${WIFI_COUNTRY:?Configure HLAUNCHER_WIFI_COUNTRY}"
+          # The checkout is owned by the root build process, matching build_release.sh.
+          source_dir="$RUNNER_TEMP/hlauncher-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          output_dir="$BUILD_ROOT/$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          sudo env SOURCE_BRANCH="$SOURCE_BRANCH" SOURCE_REF="$SOURCE_REF" SOURCE_DIR="$source_dir" \
+            OUTPUT_DIR="$output_dir" BASE_IMAGE="$BASE_IMAGE" RELEASE_KEY="$RELEASE_KEY" \
+            WIFI_COUNTRY="$WIFI_COUNTRY" BUILD_ID="$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT" \
+            BUILD_NUMBER="$((GITHUB_RUN_ID * 1000 + GITHUB_RUN_ATTEMPT))" bash <<'BUILD'
+          set -euo pipefail
+          [[ ! -e "$SOURCE_DIR" && ! -e "$OUTPUT_DIR" ]]
+          git init "$SOURCE_DIR"
+          git -C "$SOURCE_DIR" remote add origin https://github.com/evy0311/HLauncher.git
+          git -C "$SOURCE_DIR" fetch --depth=1 origin "$SOURCE_REF"
+          git -C "$SOURCE_DIR" checkout --detach FETCH_HEAD
+          cd "$SOURCE_DIR"
+          version=$(python3 -c 'import os; from hlauncher.development_builds import build_version; print(build_version(int(os.environ["BUILD_NUMBER"])))')
+          notes=$(mktemp)
+          trap 'rm -f "$notes"' EXIT
+          printf 'Development build of %s at %s.\n' "$SOURCE_BRANCH" "$(git rev-parse --short HEAD)" > "$notes"
+          # Prepare pinned test dependencies without installing HLauncher on the builder.
+          python3 scripts/fetch_dependencies.py
+          npm ci --prefix plugins/carplay/runtime/usb --omit=dev --ignore-scripts --no-audit --no-fund
+          # Run tests before signing; no hardware is required.
+          bash scripts/test.sh
+          HLAUNCHER_RELEASE_BUILD_ID="$BUILD_ID" bash scripts/build_release.sh --development "$SOURCE_BRANCH" \
+            "$version" "$BASE_IMAGE" "$WIFI_COUNTRY" "$RELEASE_KEY" "$OUTPUT_DIR" "$notes"
+          BUILD
+          printf 'source_dir=%s\noutput_dir=%s\n' "$source_dir" "$output_dir" >> "$GITHUB_ENV"
+      - name: Publish the validated opt-in snapshot
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          version=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["version"])' "$output_dir/hlauncher-release.json")
+          bash "$source_dir/scripts/publish_release.sh" --publish-development "$version" "$output_dir"

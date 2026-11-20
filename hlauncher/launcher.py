@@ -291,10 +291,33 @@ class Launcher:
             self.banner = 'Could not save the beta preference'
         self.draw()
 
+    def development_branches_page(self):
+        if not self.prefs.data['include_beta_updates']:
+            return
+        self.mode = 'development_branches'
+        self.press = None
+        self.draw()
+
+    def select_development_branch(self, branch):
+        from .development_builds import branch_name
+        previous = self.prefs.data['development_branch']
+        try:
+            self.prefs.data['development_branch'] = branch_name(branch)
+            self.prefs.save(force={'development_branch'})
+        except (OSError, ValueError):
+            self.prefs.data['development_branch'] = previous
+            self.banner = 'Could not save the selected branch'
+            self.draw()
+            return
+        self.updates_page()
+        self.update_request('check')
+
     def install_update(self, target=None):
         from .update_client import offered_plugin_api, status
         offer = status(self.prefs.path.parent)
         self.confirm_update_version = target or offer.get('available')
+        self.confirm_update_branch = offer.get('available_branch') if self.confirm_update_version == offer.get('available') else None
+        self.confirm_update_commit = offer.get('available_commit') if self.confirm_update_branch else None
         self.confirm_stable_return = (offer.get('stable_return') is True
                                       and self.confirm_update_version == offer.get('stable_available'))
         api = offered_plugin_api(self.confirm_update_version)
@@ -1207,7 +1230,7 @@ class Launcher:
         if self.mode == 'plugin_manager':
             self.plugin_manager.draw()
             return
-        if self.mode in ('updates', 'update_confirm'):
+        if self.mode in ('updates', 'update_confirm', 'development_branches'):
             from .ui.updates import draw_launcher
             draw_launcher(self)
             return
@@ -1467,7 +1490,7 @@ class Launcher:
                 from .storage import status
                 self.storage_info = status()
             threading.Thread(target=inspect_storage,daemon=True).start()
-        if self.mode in ('onboarding','system_settings','recovery_settings','hotspot_settings','wifi_power_settings','storage_confirm','updates','update_notes','adapter_branding','ssh_settings'):
+        if self.mode in ('onboarding','system_settings','recovery_settings','hotspot_settings','wifi_power_settings','storage_confirm','updates','development_branches','update_notes','adapter_branding','ssh_settings'):
             if time.monotonic()-getattr(self,'setup_redraw',0)>1:
                 self.setup_redraw=time.monotonic()
                 if self.mode=='updates' and self.banner=='Requested':self.banner=''

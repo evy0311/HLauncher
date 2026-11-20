@@ -2,12 +2,16 @@
 # Produce the image, signed updater bundle, sources and SHA256SUMS from one build.
 set -euo pipefail
 channel=stable
-if [[ ${1:-} == --beta ]]; then
+if [[ ${1:-} == --development ]]; then
+  channel=development
+  export HLAUNCHER_RELEASE_BRANCH=${2:?Supply a development branch}
+  shift 2
+elif [[ ${1:-} == --beta ]]; then
   channel=beta
   shift
 fi
 if [[ $# != 6 ]]; then
-  echo "Usage: sudo $0 [--beta] VERSION BASE.img WIFI_COUNTRY ED25519_PRIVATE_KEY OUTPUT_DIRECTORY RELEASE_NOTES.md"; exit 2
+  echo "Usage: sudo $0 [--beta | --development BRANCH] VERSION BASE.img WIFI_COUNTRY ED25519_PRIVATE_KEY OUTPUT_DIRECTORY RELEASE_NOTES.md"; exit 2
 fi
 version=$1; base=$2; country=$3; key=$4; output=$5; notes=$(realpath "$6")
 [[ -s $notes ]] || { echo 'Supply short release notes: changes since the previous release and essential compatibility information.'; exit 1; }
@@ -29,6 +33,9 @@ mkdir -p "$output"
 export HLAUNCHER_RELEASE_VERSION="$version" HLAUNCHER_RELEASE_KEY="$key" HLAUNCHER_RELEASE_OUTPUT="$output"
 export HLAUNCHER_RELEASE_CHANNEL="$channel"
 export HLAUNCHER_RELEASE_COMMIT=$(git rev-parse HEAD)
+if [[ $channel == development ]]; then
+  python3 -c 'import os; from hlauncher.development_builds import metadata,build_metadata; metadata(dict(version=os.environ["HLAUNCHER_RELEASE_VERSION"],**build_metadata(os.environ["HLAUNCHER_RELEASE_BRANCH"],os.environ["HLAUNCHER_RELEASE_COMMIT"],os.environ.get("HLAUNCHER_RELEASE_BUILD_ID",os.environ["HLAUNCHER_RELEASE_VERSION"]))))'
+fi
 bash scripts/build_image.sh "$base" "$output/HLauncher-$version-pi4.img" "$country"
 xz -T0 "$output/HLauncher-$version-pi4.img"
 rm "$output/HLauncher-$version-pi4.img.sha256"

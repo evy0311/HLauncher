@@ -16,6 +16,10 @@ releases from `evy0311/HLauncher` are the default. Check **Include beta builds**
 to include GitHub prereleases from `develop` in the next check. If both channels
 have an update, the page offers both. Connect Wi-Fi first.
 
+The screen groups installed and previous versions, keeps secondary actions quiet,
+and emphasizes the next update action. Busy states use larger status text.
+The visual polish follows [unslop by Damir Sokolovsky (@heydamir)](https://heydamir.design/unslop), CC BY 4.0.
+
 On a beta, **Check for updates** can also offer **Return to stable** if the
 latest stable is older than the installed beta and compatible with the image.
 Returning to stable keeps saved settings and plugins and retains the beta as

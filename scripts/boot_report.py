@@ -8,8 +8,10 @@ import subprocess
 LIMIT = 128 * 1024
 UNITS = ('hlauncher.service', 'hlauncher-updater.service', 'hlauncher-audio.service',
          'hlauncher-pairing.service', 'hlauncher-connect.service', 'hlauncher-recovery.service',
-         'NetworkManager-wait-online.service', 'rpi-eeprom-update.service', 'e2scrub_reap.service')
-PROPERTIES = ('Id', 'Type', 'After', 'Wants', 'Requires', 'ActiveState', 'SubState',
+         'NetworkManager-wait-online.service', 'rpi-eeprom-update.service', 'e2scrub_reap.service',
+         'ModemManager.service', 'udisks2.service', 'dphys-swapfile.service', 'nfs-client.target',
+         'hlauncher-grow.service', 'hlauncher-grow.timer', 'cloud-init.service')
+PROPERTIES = ('Id', 'LoadState', 'UnitFileState', 'Type', 'After', 'Wants', 'Requires', 'ActiveState', 'SubState',
               'ExecMainStartTimestampMonotonic', 'ActiveEnterTimestampMonotonic', 'NRestarts')
 
 

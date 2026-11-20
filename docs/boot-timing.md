@@ -219,10 +219,11 @@ This is a base-system experiment; the application bundle does not yet apply or
 roll back these service-policy changes. A validated migration for existing
 installations is required before shipping that policy through HLauncher updates.
 
-## Further trimming candidates, not yet changed
+## Further trimming candidates: initial assessment
 
 Durations below are from the second trimmed boot. They overlap and must not be
-added together as projected savings.
+added together as projected savings. This assessment guided the combined second
+batch below; consult its results for the current test-Pi configuration.
 
 | Candidate | Evidence and next investigation |
 | --- | --- |
@@ -238,3 +239,61 @@ Keep BlueZ, Bluetooth UART setup, BlueALSA, HondaLink pairing/reconnect, require
 filesystem checks, overlayroot/initramfs and recovery functionality. Do not prune
 security or OS-update maintenance merely because it appears in the enabled-unit
 list; schedule nonessential work after startup where appropriate.
+
+## Combined second batch: 2026-11-20
+
+The user requested testing the remaining candidates together. Applied these as
+one experiment, keeping the first batch disabled:
+
+- Disabled and masked `ModemManager.service` and `udisks2.service`, including
+  their D-Bus activation paths.
+- Disabled `dphys-swapfile.service` and `nfs-client.target`. No swap or network
+  filesystem was active before this change.
+- Removed `hlauncher-grow.service` from immediate boot startup and enabled an
+  experimental `hlauncher-grow.timer` with `OnBootSec=30s`, `AccuracySec=1s`.
+  Verified the saved expansion geometry matched before changing its schedule.
+  The normal expansion code still runs each boot, retaining its retry and
+  card-change checks. It succeeded at 30.70 s and 30.91 s on the two test boots.
+- Added a minimal paired-boot splash, avoiding themed controls, artwork and
+  setup-state reads before submitting that frame. Fresh pairing retains the
+  existing welcome screen. The new renderer loads neither themed UI nor NumPy;
+  the framebuffer layer still loads NumPy, so that import is not yet deferred.
+
+| Measurement from kernel startup | First batch, reboot 2 | Combined batch, reboot 1 | Combined batch, reboot 2 |
+| --- | --- | --- | --- |
+| Kernel/initramfs phase | 2.212 s | 3.610 s | 2.258 s |
+| Userspace startup completion | 5.694 s | 4.945 s | 4.863 s |
+| Kernel plus userspace total | 7.907 s | 8.556 s | 7.121 s |
+| Bluetooth profiles ready | 7.244 s | 7.880 s | 6.386 s |
+| Splash frame submitted | 8.786 s | 9.263 s | 7.780 s |
+| Full UI frame submitted | 9.243 s | 9.829 s | 8.343 s |
+
+Both combined runs reduced userspace startup by 0.75–0.83 s. Comparing the two
+runs with similar kernel durations, total startup improved by 0.786 s,
+Bluetooth readiness by 0.858 s and the full UI frame by 0.901 s. Across all
+passes, raw system startup fell from about 14 s to 7.12 s in the latest run.
+These are reboot/software measurements and do not include firmware/power-on or
+physical radio observation. The combined experiment does not isolate each
+change's contribution. Both runs had no failed systemd units, no app restarts
+and a read-only lower root with overlay protection active. Bluetooth/HDMI boot
+configuration and updater recovery ordering were preserved.
+
+Fourteen local startup/splash/collector tests passed; the three collector tests
+also passed after expanding the report to include every experimental unit and
+its load/enabled state. Runtime USB installation, cellular networking and a full
+phone-projection session were not exercised in this boot-only pass.
+
+Backups are under `/persist/hlauncher-boot-test-20261120/batch2` on the Pi and
+`live-batch2-backup.tar.gz` on the share, alongside `live-batch2-installer.py`,
+`live-batch2.json` and `live-batch2-repeat.json`. To reverse this batch in writable
+maintenance mode: disable/remove the new growth timer, unmask ModemManager and
+UDisks, re-enable the five original boot units, restore the backed-up bootstrap
+and remove the added boot-splash module, then reboot. The original first-batch
+settings can be restored separately.
+
+The minimal splash and expanded collector are on this feature branch. Base-OS
+service settings and the growth timer are live test-Pi changes, documented here;
+they are not automatically deployed by an application update. Production image
+policy and a reversible migration for existing installations remain required
+before shipping those settings. Do not apply a fresh-image-only shortcut that
+leaves current installations or rollback behind.

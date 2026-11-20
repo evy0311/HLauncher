@@ -135,11 +135,17 @@ class BootstrapLauncher:
                     finally:self.display_lock.release()
 
     def render_splash(self):
+        paired=bool(self.state.peer)
+        if paired:
+            # Get a simple frame out before loading themed controls and artwork.
+            from .ui.boot_splash import render
+            self.splash.image(render((self.splash.w,self.splash.h)))
+            self.splash_key=(True,time.strftime('%Y-%m-%d %H:%M'))
+            return
         from .ui.first_boot import render
         from .config import Preferences
         from sdk.hlauncher_sdk.theme import dither_rgb565
         from .themes import Themes
-        paired=bool(self.state.peer)
         prefs=Preferences(self.state.folder/'settings.json')
         self.splash.image(dither_rgb565(render(self.state.credentials(),paired,
             prefs.data['tile_color'],(self.splash.w,self.splash.h),show_clock=prefs.data['show_clock'],

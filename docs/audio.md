@@ -1,15 +1,16 @@
 # Audio output and PipeWire EQ
 
 Open **Settings → Audio**. Main media audio is fixed to stereo HDMI.
-The EQ screen has one PipeWire on/off control and twelve gain controls split
-between **Low** and **High**, six bands per page. Tap a frequency or its track
+The EQ screen has one PipeWire on/off control and fourteen gain controls.
+**Low** and **High** retain their existing six-band pages; **Deep bass** adds
+20 and 25 Hz. Tap a frequency or its track
 to select a band. One shared pair of large +/− buttons adjusts the selected
 band, with its frequency and exact gain shown between them. Selection alone
 does not change the sound. Each bank remembers its selection while the page
 is open. Tall tracks show the saved positions against +6, 0 and −6 dB marks.
 Each band moves in 1 dB steps from −6 to +6 dB:
 
-31.5, 50, 80, 125, 200, 315, 500 Hz; 1, 2, 4, 8 and 16 kHz.
+20, 25, 31.5, 50, 80, 125, 200, 315, 500 Hz; 1, 2, 4, 8 and 16 kHz.
 
 The bands are peaking biquads with Q=1.4. Adjacent responses overlap: a +3 dB
 slider does not define a rectangular frequency bin. **PipeWire On** enables the
@@ -17,7 +18,10 @@ saved EQ curve; **Off** uses direct ALSA without EQ. There is no separate EQ
 switch. Choose **Flat** for neutral filters while PipeWire remains on. The status
 line distinguishes the selected route and saved adjustments. Band edits remain
 available while PipeWire is off, so you can prepare a curve without changing
-playback. Settings persist atomically in `/var/lib/hlauncher/audio.json`.
+playback. PipeWire on/off, legacy EQ bypass, all band gains and the selected
+preset persist atomically in `/var/lib/hlauncher/audio.json`, on the image's
+writable state partition. The audio process restores the selected route even
+while idle. First-boot maintenance no longer stops its graph after restoration.
 
 Old saved gains beyond ±6 dB are preserved. A bank containing them displays the
 previous ±12 dB scale and their exact values. Its outlying gains can be reduced
@@ -25,7 +29,7 @@ toward the new range but cannot be increased farther. Choosing a preset replaces
 them explicitly. The saved format still accepts ±12 dB for updater rollback.
 
 The old `eq` preference is retained for state compatibility. If an installation
-has PipeWire enabled with EQ bypassed, the screen shows **PipeWire bypassed**
+has PipeWire enabled with EQ bypassed, the screen shows **EQ bypassed**
 until the user acts. Tapping it enables both PipeWire and the saved curve;
 subsequent taps switch between that processed route and direct output.
 
@@ -37,28 +41,63 @@ something else. The sliders remain uncompensated as requested.
 
 ## Presets and previous settings
 
-Open **Presets / Reset** to select one of four starting points. The values below
-follow the twelve-band order above:
+Open **Presets** to choose from eight factory starting points across two pages.
+The values below follow the fourteen-band order above:
 
 | Preset | Band gains (dB) |
 | --- | --- |
-| Flat | 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 |
-| Bass lift | +1, +2, +1, 0, −1, −1, 0, 0, 0, 0, 0, 0 |
-| Vocal clarity | 0, 0, −1, −1, −1, 0, 0, +1, +2, +1, 0, 0 |
-| Softer treble | 0, 0, 0, 0, 0, 0, 0, 0, 0, −1, −2, −2 |
+| Flat | 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 |
+| Bass lift | 0, 0, +1, +2, +1, 0, −1, −1, 0, 0, 0, 0, 0, 0 |
+| Deep bass | 0, +1, +2, +2, +1, 0, −1, −1, 0, 0, 0, 0, 0, 0 |
+| Warm | 0, 0, 0, +1, +1, +1, 0, 0, 0, 0, 0, −1, −1, −1 |
+| Vocal clarity | 0, 0, 0, 0, −1, −1, −1, 0, 0, +1, +2, +1, 0, 0 |
+| Acoustic | 0, 0, 0, 0, 0, −1, −1, 0, 0, +1, +1, +1, +1, 0 |
+| Rock | 0, 0, 0, +1, +2, +1, 0, −1, 0, +1, +1, +1, 0, 0 |
+| Softer treble | 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, −1, −2, −2 |
 
 These are mild tonal starting points, not measured corrections for a particular
 car or speaker system. Overlapping bands can produce more boost than any single
-slider value. Choosing a preset replaces all twelve bands and clears previous
+slider value. Choosing a factory preset replaces all fourteen bands and clears previous
 tone gains; manual changes become **Custom**. **Flat** is also the reset action.
 Presets preserve whether PipeWire is on or off (and any legacy bypass state). Existing saved
 curves, including the former EDM Bass curve, remain intact and appear as Custom.
 
 Existing bass/mid/treble values are preserved in three compatibility filters.
 When EQ is enabled through PipeWire, the page says if previous tone gains also apply.
-Choosing any preset clears those old gains before applying the twelve
+Choosing a factory preset clears those old gains before applying the fourteen
 bands. This avoids silently losing saved settings or silently stacking an old
 bass shelf behind a new preset. The development Pi had all three at zero.
+
+### Two saved user presets
+
+Open **Presets → User presets**, then **Save current** beside **User 1** or
+**User 2**. Replacing an occupied slot requires confirmation. Tap a saved slot
+to load it; saving/loading keeps PipeWire on/off and EQ bypass as selected.
+User slots capture all fourteen bands and any previous tone gains. Their active
+name and curve survive reboots; both slots survive application updates.
+
+User curves are stored separately and atomically in
+`/var/lib/hlauncher/audio-presets.json`. An older application saving its own
+`audio.json` therefore cannot erase the user library. For rollback readability,
+`audio.json` keeps its original twelve-band `bands` shape and stores the added
+frequencies in `low_bands`. Older versions ignore those added frequencies;
+they can still read the original curve. The new app reads existing twelve-band
+files without changing them and starts both added frequencies at 0 dB.
+
+The Pi still sends full-range stereo HDMI. These bands do not independently
+address the factory subwoofer output or change the headunit's unknown crossover.
+They do not guarantee that the factory system reproduces 20 or 25 Hz. The
+factory curves use modest boosts; gain/headroom behavior is otherwise unchanged.
+
+The UI received a light spacing/type polish with the requested existing track
+and shared +/− layout retained. Navigation and inactive actions use quieter
+surfaces; the selected frequency is the accent. The pass follows
+[unslop by Damir Sokolovsky (@heydamir)](https://heydamir.design/unslop), CC BY 4.0.
+
+Bookworm compatibility: the private graph uses the access module's normal
+same-user permissions. In the [PipeWire 0.3.65 access module](https://github.com/PipeWire/pipewire/blob/0.3.65/src/modules/module-access.c), `access.force` requests an external
+permission grant even when its value says unrestricted, which can leave CLI
+clients waiting. The private runtime directory remains restricted to its owner.
 
 ## PipeWire with neutral EQ
 

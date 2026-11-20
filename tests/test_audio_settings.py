@@ -4,7 +4,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from hlauncher.audio_settings import AudioSettings, EQ_BANDS, PRESETS
+from hlauncher.audio_settings import AudioSettings, EQ_BANDS, LEGACY_EQ_BANDS, PRESETS
 
 
 from test_architecture import parked_radio
@@ -60,7 +60,7 @@ class AudioSettingsTests(unittest.TestCase):
                 with patch.object(ui.audio_settings, 'status', return_value='PipeWire ready'):
                     ui.change_audio(pipewire=True)
                 self.assertTrue(AudioSettings(Path(folder)/'audio.json').values['pipewire'])
-                self.assertEqual(len(ui.actions), 13)
+                self.assertEqual(len(ui.actions), 14)
             finally:ui.close()
 
     def test_six_band_pages_keep_all_gains_and_presets_keep_bypass_state(self):
@@ -78,29 +78,32 @@ class AudioSettingsTests(unittest.TestCase):
 
             try:
                 ui.audio_page()
-                for bank in (0, 1):
-                    tap(180 if bank == 0 else 530, 456)
-                    for i, key in enumerate(list(EQ_BANDS)[bank*6:bank*6+6]):
+                from hlauncher.ui.audio import BANKS
+                for bank,(_,keys) in enumerate(BANKS):
+                    tap(100+bank*228,456)
+                    for i, key in enumerate(keys):
                         before = dict(ui.audio_settings.values['bands'])
-                        tap(80+i*112, 300)  # Select a band without changing its gain.
+                        tap(80+i*112 if len(keys)==6 else 248+i*224,300)
                         self.assertEqual(ui.audio_settings.values['bands'], before)
                         tap(636, 406)  # Shared increase control.
                         self.assertEqual(ui.audio_settings.values['bands'][key], 1)
-                self.assertEqual(list(ui.audio_settings.values['bands'].values()), [1]*12)
+                self.assertEqual(list(ui.audio_settings.values['bands'].values()), [1]*14)
                 # Editing remains possible while bypassed; it does not change the route.
                 self.assertFalse(ui.audio_settings.values['pipewire'])
+                tap(360,456)
                 tap(80, 300)
                 tap(84, 406)
                 self.assertEqual(ui.audio_settings.values['bands']['b500'], 0)
-                tap(180, 456)
+                tap(100, 456)
                 self.assertEqual(ui.audio_selected_bands[0], 'b315')
-                tap(530, 456)
+                tap(360, 456)
                 self.assertEqual(ui.audio_selected_bands[1], 'b500')
                 ui.change_audio(eq=False)
                 for index, name in enumerate(PRESETS):
                     ui.adjust_eq('bass', 2)
                     tap(580, 132)  # Presets
-                    tap(200, 134+index*76)
+                    if index==4:tap(610,456)
+                    tap(200, 134+(index%4)*72)
                     self.assertFalse(ui.audio_presets_open)
                     self.assertEqual(ui.audio_bank, 1)
                     self.assertEqual(ui.audio_settings.preset_name(), name)
@@ -207,12 +210,12 @@ class AudioSettingsTests(unittest.TestCase):
     def test_retired_preset_curve_survives_as_custom_without_rewriting_state(self):
         with tempfile.TemporaryDirectory() as folder:
             path = Path(folder) / 'audio.json'
-            old_curve = dict(zip(EQ_BANDS, (2,3,2,0,-1,-1,0,0,0,0,0,0)))
+            old_curve = dict(zip(LEGACY_EQ_BANDS, (2,3,2,0,-1,-1,0,0,0,0,0,0)))
             path.write_text(json.dumps(dict(pipewire=True, eq=False, bands=old_curve)))
             original = path.read_bytes()
             settings = AudioSettings(path)
             self.assertEqual(settings.preset_name(), 'Custom')
-            self.assertEqual(settings.values['bands'], old_curve)
+            self.assertEqual(settings.values['bands'], dict(b20=0,b25=0,**old_curve))
             self.assertTrue(settings.values['pipewire'])
             self.assertFalse(settings.values['eq'])
             self.assertEqual(path.read_bytes(), original)

@@ -42,8 +42,8 @@ def write_recovery_card(credentials, boot):
 def main():
     # Runs after HondaLink profile readiness, outside the connection critical path.
     default_hostname()
-    from .audio_settings import PipeWireService
-    PipeWireService().set_enabled(False)
+    # The audio process restores its saved route. Do not stop its graph here:
+    # maintenance can run after audio has already resumed during startup.
     state = SetupState()
     credentials = state.credentials()
     marker = state.folder/'initialized.json'

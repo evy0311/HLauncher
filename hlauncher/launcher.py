@@ -586,8 +586,11 @@ class Launcher:
         self.audio_settings.refresh()
         self.mode = 'audio_settings'
         self.audio_bank = 0
-        self.audio_selected_bands = {0: 'b50', 1: 'b1k'}
+        self.audio_selected_bands = {0: 'b50', 1: 'b1k', 2: 'b25'}
         self.audio_presets_open = False
+        self.audio_presets_page = 0
+        self.audio_user_presets = False
+        self.audio_confirm_save = None
         self.press = None
         self.audio_notice = ''
         self.draw()

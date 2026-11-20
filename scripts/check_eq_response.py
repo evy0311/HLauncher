@@ -25,9 +25,17 @@ def expected_response(freqs,bands):
 
 
 def spectrum(pcm,freqs):
-    nonzero=np.flatnonzero(np.max(np.abs(pcm),axis=1)>1e-5)
-    if not len(nonzero):raise RuntimeError('Captured silence')
-    start=int(nonzero[0])+RATE
+    # A previous low-frequency filter can leave a quiet tail before the next
+    # input starts. Locate sustained test energy rather than its first sample.
+    block=RATE//4
+    if len(pcm)<=block:raise RuntimeError('Capture too short for settled spectrum')
+    power=np.mean(np.asarray(pcm,dtype=np.float64)**2,axis=1)
+    cumulative=np.concatenate(([0.0],np.cumsum(power)))
+    energy=(cumulative[block:]-cumulative[:-block])/block
+    peak=float(np.max(energy))
+    if peak<1e-12:raise RuntimeError('Captured silence')
+    steady=np.flatnonzero(energy>peak*.5)
+    start=int(steady[0])+block+RATE
     window=pcm[start:start+RATE*2]
     if len(window)!=RATE*2:raise RuntimeError('Capture too short for settled spectrum')
     bins=np.asarray(np.asarray(freqs)*2,dtype=int)
@@ -78,7 +86,7 @@ def main():
             assert report['boost_overload_float_peak']>3
         finally:bench.close()
     args.output.write_text(json.dumps(report,indent=2)+'\n')
-    print('PASS: Flat, 24 independent band responses, presets, bypass and uncompensated overload',flush=True)
+    print(f'PASS: Flat, {2*len(EQ_BANDS)} independent band responses, presets, bypass and uncompensated overload',flush=True)
 
 
 if __name__=='__main__':main()

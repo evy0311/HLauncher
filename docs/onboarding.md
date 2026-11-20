@@ -27,7 +27,7 @@ The builder strips application state, Bluetooth bonds, Wi-Fi profiles and SSH ho
 
 Setup and on-radio Settings require a recent HondaLink reading that confirms the parking brake is engaged. When speed is unavailable, the parking brake is enough to continue. If the radio last reported movement, it must report zero speed before you can continue on that connection. Review the notice and agreement under **Settings → About → Legal info**.
 
-For help with the parked check, open **Settings → Diagnostics → Parking Status**. From the warning, double-tap **Park safely to continue** to open the read-only page directly. Take a photo of the readings for support, then tap **×** to return.
+For help with the parked check, enable **Debug mode** under **Settings → System**, then open **Debug → Diagnostics → Parking Status**. From the warning, double-tap **Park safely to continue** to open the read-only page directly. Take a photo of the readings for support, then tap **×** to return.
 
 CarPlay needs a supported USB CarPlay adapter. Android Auto uses an Android phone connected directly by USB and the installed engine. The OBD Gauges tile shows **Coming soon**.
 

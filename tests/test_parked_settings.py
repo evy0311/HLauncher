@@ -119,7 +119,7 @@ class ParkedSettings(unittest.TestCase):
         self.assertFalse(self.ui.parked_screen_locked)
         self.assertEqual(self.monitor.parked_setup_readings(), (None, True))
         self.assertTrue(self.monitor.parking_snapshot()['brake_only'])
-        self.assertIn(self.ui.diagnostics_menu, [callback for _, callback in self.ui.actions])
+        self.assertIn(self.ui.system_settings, [callback for _, callback in self.ui.actions])
         self.assertIsNone(self.monitor.projection_vehicle_state()['speed_kph'])
 
     def test_parked_plugin_needs_both_live_signals_and_closes_when_moving(self):
@@ -248,7 +248,7 @@ class ParkedSettings(unittest.TestCase):
         self.assertFalse(self.prefs.safety_notice_accepted)
         self.assertEqual(bootstrap.vehicle_scope(), 'driving')
 
-    def test_parking_status_can_be_opened_from_settings_with_debug_off(self):
+    def test_parking_status_is_under_system_debug_diagnostics(self):
         self.prefs.data['setup_complete'] = True
         self.prefs.accept_safety_notice()
         self.monitor.observe(dict(state='connected', uuid='test-cafe'))
@@ -257,6 +257,11 @@ class ParkedSettings(unittest.TestCase):
         self.speed(0, now)
         self.ui.settings()
         self.assertFalse(self.prefs.data['debug_mode'])
+        self.assertNotIn(self.ui.diagnostics_menu, [callback for _, callback in self.ui.actions])
+        next(callback for _, callback in self.ui.actions if callback == self.ui.system_settings)()
+        self.assertNotIn(self.ui.debug_tools, [callback for _, callback in self.ui.actions])
+        self.ui.toggle_debug()
+        next(callback for _, callback in self.ui.actions if callback == self.ui.debug_tools)()
         next(callback for _, callback in self.ui.actions if callback == self.ui.diagnostics_menu)()
         next(callback for _, callback in self.ui.actions if callback == self.ui.open_parking_status)()
         self.assertEqual(self.ui.mode, 'parking_status')

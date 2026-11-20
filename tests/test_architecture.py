@@ -307,13 +307,15 @@ class Architecture(unittest.TestCase):
         ui=Launcher(framebuffer=Display(),preferences=self.preferences(),manifests={'carplay':self.carplay})
         try:
             ui.settings()
-            self.assertEqual(len(ui.actions),8)
+            self.assertEqual([action for _, action in ui.actions], [ui.home,
+                ui.plugin_settings, ui.about_settings, ui.audio_coming_soon,
+                ui.startup_settings, ui.appearance_settings, ui.system_settings])
             ui.actions[4][1]()
             self.assertEqual(ui.mode,'startup_settings')
             ui.actions[1][1]()
             self.assertEqual(ui.prefs.data['default_plugin'],'carplay')
             self.assertEqual(ui.mode,'startup_settings')
-            ui.settings();ui.actions[2][1]()
+            ui.settings();ui.actions[5][1]()
             self.assertEqual(ui.mode,'appearance_settings')
             ui.actions[1][1]()
             self.assertEqual(ui.mode,'tile_colors')
@@ -321,12 +323,12 @@ class Architecture(unittest.TestCase):
             self.assertEqual(ui.mode,'appearance_settings')
             ui.settings();ui.actions[1][1]()
             self.assertEqual(ui.mode,'plugins_settings')
-            ui.settings();ui.actions[5][1]()
+            ui.settings();ui.actions[6][1]()
             self.assertEqual(ui.mode,'system_settings')
             ui.settings()
             saved = ui.prefs.path.read_bytes()
-            about_box, open_about = ui.actions[3]
-            self.assertEqual(about_box, (24,220,352,284))
+            about_box, open_about = ui.actions[2]
+            self.assertEqual(about_box, (368,144,696,208))
             open_about()
             self.assertEqual(ui.mode, 'about_settings')
             ui.actions[1][1]()

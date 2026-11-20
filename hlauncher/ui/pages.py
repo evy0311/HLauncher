@@ -112,7 +112,7 @@ def system(ui):
           ('Debug mode','On' if ui.prefs.data['debug_mode'] else 'Off',ui.toggle_debug),
           ('Storage protection','Enabled' if info['protected'] else 'Off' if info['available'] else 'Unavailable',lambda:ui.storage_confirm(not info['protected'])),
           ('Shut down','',ui.shutdown_page)]
-    if ui.prefs.data['debug_mode']:rows.append(('Diagnostics','',ui.system_diagnostics))
+    if ui.prefs.data['debug_mode']:rows.insert(4,('Debug','',ui.debug_tools))
     rows = [Row(title, action, toggle=ui.prefs.data['debug_mode']) if title == 'Debug mode'
             else Row(title, action, value=value) for title, value, action in rows]
     if settings_menu(ui, 'System', ui.settings, row_items(rows)):

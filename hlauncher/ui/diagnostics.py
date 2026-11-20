@@ -9,8 +9,9 @@ from .scroll_list import Row,draw as draw_rows
 
 
 def menu(ui):
-    p = page_for(ui, 'Diagnostics', ui.settings)
+    p = page_for(ui, 'Diagnostics', ui.debug_tools)
     p.bar((24, 128, 696, 184), 'Parking Status', ui.open_parking_status)
+    p.bar((24, 204, 696, 260), 'System diagnostics', ui.system_diagnostics)
     present(ui, p)
 
 
@@ -72,7 +73,7 @@ def parking_status(ui):
 
 
 def system(ui):
-    p=page_for(ui,'Diagnostics',ui.system_settings)
+    p=page_for(ui,'Diagnostics',ui.diagnostics_menu)
     p.button((556,64,696,108),'Shut down',ui.shutdown_page,size=18,secondary=True)
     system,revision,report=ui.diagnostics.snapshot();ui.diagnostic_revision=revision
     runtime=ui.diagnostic_runtime()
@@ -99,7 +100,7 @@ def system(ui):
     for i,row in enumerate(rows):p.info(176+i*34,*row)
     p.button((24,404,224,448),'Save report',lambda:ui.diagnostics.save_report(ui.diagnostic_runtime()),size=18)
     p.button((240,404,440,448),'HondaLink',ui.protocol_tests,size=18)
-    p.button((456,404,696,448),'Hardware tests',ui.debug_tools,size=18)
+    p.button((456,404,696,448),'Debug menu',ui.debug_tools,size=18)
     p.notice(report,460)
     present(ui,p)
 
@@ -145,17 +146,17 @@ def protocols(ui):
     if s['last_marker']:p.text((24,386),p.fit('Marked: '+s['last_marker'],672,13),13)
     p.button((24,412,240,456),'Stop recording' if s['recording'] else 'Start recording',ui.toggle_protocol_capture,size=18)
     p.button((252,412,456,456),'Mark test step',ui.mark_protocol_step,size=18)
-    p.button((468,412,696,456),'Test Siri' if ui.protocol_page==2 else 'Hardware tests',
+    p.button((468,412,696,456),'Test Siri' if ui.protocol_page==2 else 'Debug menu',
              (lambda:ui.test_radio_button('voice_assistant')) if ui.protocol_page==2 else ui.debug_tools,size=18)
     present(ui,p)
 
 
 def hardware(ui):
     kind=ui.mode.removeprefix('debug_')
-    p=page_for(ui,{'menu':'Hardware tests','audio':'Audio test','colors':'Video colors','inputs':'Radio buttons','volume':'Radio volume'}.get(kind,kind),
-               ui.system_diagnostics if kind=='menu' else ui.debug_tools)
+    p=page_for(ui,{'menu':'Debug','audio':'Audio test','colors':'Video colors','inputs':'Radio buttons','volume':'Radio volume'}.get(kind,kind),
+               ui.system_settings if kind=='menu' else ui.debug_tools)
     if kind=='menu':
-        draw_rows(ui,p,[Row(title,lambda target=target:ui.debug_tools(target)) for title,target in
+        draw_rows(ui,p,[Row('Diagnostics',ui.diagnostics_menu)]+[Row(title,lambda target=target:ui.debug_tools(target)) for title,target in
                         (('Audio','audio'),('Video colors','colors'),('Radio buttons','inputs'),('Radio volume (experimental)','volume'))]+[
                             Row('HondaLink vehicle data',lambda:(ui.protocol_tab(1),ui.protocol_tests()))])
     elif kind=='audio':

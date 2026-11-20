@@ -130,8 +130,9 @@ Storage restart is offered only after the protection job has completed.
 
 ## Settings categories and early welcome
 
-Settings uses two columns of rectangular category bars: Plugins, Appearance,
-About, Startup, System and Audio. About shows the project logo, version, creator,
+Settings uses two columns of rectangular category bars: Plugins / About,
+Audio / Startup, and Appearance / System. Diagnostics lives under System → Debug
+(enable Debug mode in System to show the menu). About shows the project logo, version, creator,
 GitHub address and the Legal info button. Child lists use the shared horizontal
 color wash with inset values or Off/On controls. Appearance contains background
 color, clock visibility and global Picture controls; individual plugin pages contain their enable switch and plugin options

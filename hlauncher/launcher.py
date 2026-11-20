@@ -777,6 +777,9 @@ class Launcher:
         self.draw()
 
     def diagnostics_menu(self):
+        if not self.prefs.data['debug_mode']:
+            self.system_settings()
+            return
         self.diagnostics.stop()
         self.mode = 'diagnostics_menu'
         self.press = self.pressed_box = None
@@ -1602,7 +1605,7 @@ class Launcher:
         if time.monotonic()-getattr(self,'debug_checked',0)>1:
             self.debug_checked=time.monotonic()
             self.prefs.data['debug_mode'] = Preferences(self.prefs.path).data['debug_mode']
-            if not self.prefs.data['debug_mode'] and (self.mode.startswith('debug_') or self.mode in ('protocol_tests','diagnostics')):
+            if not self.prefs.data['debug_mode'] and (self.mode.startswith('debug_') or self.mode in ('protocol_tests','diagnostics','diagnostics_menu')):
                 self.protocols.stop(); self.system_settings()
         for button in self.inputs.drain():
             self.host.button(button)

@@ -57,7 +57,7 @@ class Preferences:
                      "safety_notice_app_version": "",
                      "debug_mode": False, "show_clock": False, "ssh_enabled": False, "wifi_power": "off",
                      "wifi_delay_boot": True,
-                     "layout_theme": "oem", "vehicle_hidden": [], "include_beta_updates": False,
+                     "layout_theme": "oem", "vehicle_hidden": [], "include_beta_updates": False, "development_branch": "develop", "source_updates": False,
                      "home_pages": [], "carplay_fps": CARPLAY_FRAME_RATES[0],
                      "carplay_auto_night": True, "android_auto_auto_night": True,
                      "carplay_car_gps": False, "android_auto_car_gps": False}
@@ -77,6 +77,10 @@ class Preferences:
             self.data['debug_mode'] = loaded.get('debug_mode', False) is True
             self.data['show_clock'] = loaded.get('show_clock', False) is True
             self.data['include_beta_updates'] = loaded.get('include_beta_updates') is True
+            self.data['source_updates'] = loaded.get('source_updates') is True
+            from .development_builds import branch_name
+            try:self.data['development_branch'] = branch_name(loaded.get('development_branch', 'develop'))
+            except ValueError:self.data['development_branch'] = 'develop'
             self.data['ssh_enabled'] = loaded.get('ssh_enabled', False) is True
             # Settings from before the Wi-Fi controls used always-on Wi-Fi.
             previous_mode = 'on' if self.data['setup_complete'] else 'off'

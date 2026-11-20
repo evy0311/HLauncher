@@ -158,7 +158,7 @@ class VehicleCAN(unittest.TestCase):
         first = [event for event in events if event['state'] == 'honda_can_subscription_queued']
         self.assertEqual(len(first), 2)
         self.assertTrue(all(event['session'] == 257 for event in first))
-        with patch('hlauncher.protocol.session.time.monotonic', return_value=request['at'] + 5):
+        with patch('hlauncher.protocol.session.time.monotonic', return_value=request['at'] + 5.1):
             events, replies = probe.sync_vehicle_scope()
             fallback = [event for event in events if event['state'] == 'honda_can_subscription_queued']
             self.assertEqual(len(replies), 2)

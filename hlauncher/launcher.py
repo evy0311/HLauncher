@@ -613,6 +613,9 @@ class Launcher:
         self.draw()
 
     def plugin_detail(self, plugin_id=None):
+        if plugin_id in PROJECTIONS:
+            self.projection_settings_page()
+            return
         if plugin_id is not None:self.settings_plugin_id=plugin_id
         if getattr(self,'settings_plugin_id',None) not in self.manifests:
             self.plugin_settings()
@@ -644,6 +647,40 @@ class Launcher:
         self.press=None
         self.banner=''
         self.draw()
+
+    def projection_page(self):
+        self.host.deactivate()
+        self.mode = 'phone_projection'
+        self.press = None
+        self.banner = ''
+        self.draw()
+
+    def projection_settings_page(self):
+        if self.mode in ('phone_projection', 'plugin'):
+            self.projection_settings_return = self.projection_page
+        elif self.mode not in ('projection_settings', 'adapter_info', 'adapter_branding', 'projection_phones', 'projection_phone'):
+            self.projection_settings_return = self.plugin_settings
+        self.host.deactivate()
+        self.mode = 'projection_settings'
+        self.press = None
+        self.draw()
+
+    def projection_phones_page(self):
+        self.host.deactivate()
+        self.mode = 'projection_phones'
+        self.press = None
+        self.draw()
+
+    def projection_phone_page(self, key):
+        self.projection_phone_id = key
+        self.mode = 'projection_phone'
+        self.press = None
+        self.draw()
+
+    def start_projection(self, engine):
+        self.projection_auto_native = False
+        self.event(state='projection_route_selected', engine=engine, monotonic_ms=round(time.monotonic()*1000))
+        self.open_plugin(engine, projection_engine=True)
 
     def adapter_info_page(self):
         self.host.deactivate()
@@ -1055,12 +1092,21 @@ class Launcher:
             return True
         return False
 
-    def open_plugin(self, plugin_id):
+    def open_plugin(self, plugin_id, *, projection_engine=False):
         if not self.prefs.safety_notice_accepted:
             self.safety_notice()
             return
         if plugin_id not in self.manifests or not self.prefs.enabled(self.manifests[plugin_id]):
             self.home("Plugin unavailable")
+            return
+        if plugin_id in PROJECTIONS and not projection_engine:
+            connected = next((ident for ident, worker in self.host.workers.items()
+                              if ident in PROJECTIONS and (getattr(worker, 'video_available', False)
+                                  or getattr(worker, 'metrics', {}).get('phone_connected') is True)), None)
+            if connected:
+                self.open_plugin(connected, projection_engine=True)
+            else:
+                self.projection_page()
             return
         if plugin_id == 'obd':
             self.host.deactivate()
@@ -1117,8 +1163,10 @@ class Launcher:
         self.draw()
 
     def cycle_default(self):
-        choices = [None] + [m.id for m in self.enabled() if m.id != 'obd']
+        choices = [None] + [m.id for m in self.home_manifests() if m.id != 'obd']
         old = self.prefs.data["default_plugin"]
+        if old in PROJECTIONS and old not in choices:
+            old = next((ident for ident in choices if ident in PROJECTIONS), old)
         next_id = (
             choices[(choices.index(old) + 1) % len(choices)] if old in choices else None
         )
@@ -1182,6 +1230,18 @@ class Launcher:
         )
 
     def draw(self):
+        began = time.monotonic()
+        try:
+            self._draw()
+        finally:
+            elapsed = time.monotonic()-began
+            if (elapsed >= .1 and any(ident in self.host.workers for ident in PROJECTIONS)
+                    and began-getattr(self, 'slow_draw_logged', 0) >= 1):
+                self.slow_draw_logged = began
+                self.event(state='projection_ui_slow_draw', mode=self.mode, duration_ms=round(elapsed*1000),
+                           monotonic_ms=round(began*1000))
+
+    def _draw(self):
         self.scroll_view=None
         self.sync_parked_screen()
         if self.parked_screen_locked:
@@ -1262,7 +1322,18 @@ class Launcher:
         self.inputs.offer(name,'trigger','screen')
 
     def home_manifests(self):
-        return sorted(self.enabled(), key=lambda m: (not m.bundled, m.id != 'carplay', m.name.casefold()))
+        from dataclasses import replace
+        entries = sorted(self.enabled(), key=lambda m: (not m.bundled, m.id != 'carplay', m.name.casefold()))
+        result = []
+        projection = False
+        for manifest in entries:
+            if manifest.id in PROJECTIONS:
+                if projection:
+                    continue
+                projection = True
+                manifest = replace(manifest, name='Phone Projection', icon=None)
+            result.append(manifest)
+        return result
 
     def home_pages(self):
         return self.home_editor.pages(m.id for m in self.home_manifests())
@@ -1473,7 +1544,7 @@ class Launcher:
                 from .storage import status
                 self.storage_info = status()
             threading.Thread(target=inspect_storage,daemon=True).start()
-        if self.mode in ('onboarding','system_settings','recovery_settings','hotspot_settings','wifi_power_settings','storage_confirm','updates','update_notes','adapter_branding','adapter_info','ssh_settings'):
+        if self.mode in ('onboarding','system_settings','recovery_settings','hotspot_settings','wifi_power_settings','storage_confirm','updates','update_notes','adapter_branding','adapter_info','phone_projection','projection_phones','projection_phone','ssh_settings'):
             if time.monotonic()-getattr(self,'setup_redraw',0)>1:
                 self.setup_redraw=time.monotonic()
                 if self.mode=='updates' and self.banner=='Requested':self.banner=''
@@ -1495,6 +1566,12 @@ class Launcher:
             if hasattr(self.audio.playback, 'check'):
                 self.audio.playback.check()
         self.host.tick()
+        if self.mode == 'phone_projection':
+            connected = next((ident for ident, worker in self.host.workers.items()
+                if ident in PROJECTIONS and (getattr(worker, 'video_available', False)
+                    or getattr(worker, 'metrics', {}).get('phone_connected') is True)), None)
+            if connected:
+                self.open_plugin(connected, projection_engine=True)
         if now - getattr(self, 'projection_appearance_checked', 0) >= .1:
             self.projection_appearance_checked = now
             self.host.sync_projection_appearance()
@@ -1502,7 +1579,7 @@ class Launcher:
             self.host.sync_projection_gps(self.protocols.projection_gps(),
                                           self.protocols.projection_gps(include_speed=True)
                                           if getattr(carplay, 'car_gps', False) else None)
-            if 'android-auto' in self.host.workers:
+            if any(ident in self.host.workers for ident in PROJECTIONS):
                 self.host.sync_projection_vehicle(self.protocols.projection_vehicle_state())
         if self.host.active == 'vehicle' and now-getattr(self, 'vehicle_dashboard_sent', 0) >= .25:
             from .ui.theme_menu import resolved_colors
@@ -1523,14 +1600,46 @@ class Launcher:
             self.host.vehicle_gauges(self.protocols.gauge_snapshot())
         if time.monotonic()-getattr(self,'projection_checked',0)>1:
             self.projection_checked=time.monotonic()
-            manifest=self.manifests.get('carplay')
             if (self.prefs.safety_notice_accepted and self.prefs.data['setup_complete']
-                    and not self.pending_default and self.mode not in ('onboarding','shutdown_pending')
-                    and manifest and self.prefs.enabled(manifest)):
-                from .projection import carplay_adapter_present
-                if self.host.branding.pending or carplay_adapter_present():
-                    try:self.host.ensure_background_carplay()
-                    except (OSError,ValueError) as exc:self.event(state='projection_background_failed',error=str(exc))
+                    and not self.pending_default and self.mode not in ('onboarding','shutdown_pending')):
+                from .projection import carplay_adapter_present, direct_android_devices
+                devices = direct_android_devices()
+                if devices:
+                    self.projection_usb_last_seen = time.monotonic()
+                previous = getattr(self, 'projection_usb_devices', set())
+                self.projection_usb_devices = devices
+                active_session = any(getattr(worker, 'video_available', False)
+                    or getattr(worker, 'metrics', {}).get('phone_connected') is True
+                    for ident, worker in self.host.workers.items() if ident in PROJECTIONS)
+                native = self.manifests.get('android-auto')
+                dongle = self.manifests.get('carplay')
+                try:
+                    if (devices-previous and native and self.prefs.enabled(native)
+                            and not active_session and not self.host.projection_request
+                            and 'android-auto' not in self.host.workers):
+                        self.event(state='projection_usb_fallback', reason='direct_android_usb_arrival',
+                                   monotonic_ms=round(time.monotonic()*1000))
+                        self.projection_auto_native = True
+                        self.projection_auto_native_deadline = time.monotonic()+30
+                        self.host.request_projection('android-auto', self.mode in ('phone_projection', 'plugin'))
+                        if self.host.active == 'android-auto':
+                            self.mode = 'plugin'
+                            self.has_frame = False
+                            self.last_status = None
+                    elif (getattr(self, 'projection_auto_native', False) and not active_session
+                          and ((not devices and time.monotonic()-getattr(self, 'projection_usb_last_seen', 0) > 8)
+                               or time.monotonic() > self.projection_auto_native_deadline)):
+                        foreground = self.host.active == 'android-auto'
+                        self.host.stop('android-auto')
+                        self.projection_auto_native = False
+                        self.event(state='projection_usb_fallback_ended', reason='no_session',
+                                   monotonic_ms=round(time.monotonic()*1000))
+                        if foreground:
+                            self.projection_page()
+                    elif dongle and self.prefs.enabled(dongle) and (self.host.branding.pending or carplay_adapter_present()):
+                        self.host.ensure_background_carplay()
+                except (OSError, ValueError) as exc:
+                    self.event(state='projection_background_failed', error=str(exc))
         now = time.monotonic()
         if self.mode in ('debug_inputs','debug_audio','debug_volume') and now-self.debug_redraw >= .05:
             self.debug_redraw = now
@@ -1562,7 +1671,7 @@ class Launcher:
             if plugin_id != 'obd' and plugin_id in self.manifests and self.prefs.enabled(
                 self.manifests[plugin_id]
             ):
-                self.open_plugin(plugin_id)
+                self.open_plugin(plugin_id, projection_engine=plugin_id in PROJECTIONS)
         if self.mode != "plugin":
             return
         worker=self.host.workers.get(self.host.active)

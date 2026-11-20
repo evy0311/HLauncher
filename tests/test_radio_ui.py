@@ -28,6 +28,75 @@ class RadioUI(unittest.TestCase):
         self.ui=Launcher(framebuffer=Display(),preferences=prefs,manifests=manifests)
     def tearDown(self):self.ui.close();self.temp.cleanup()
 
+    def test_projection_has_one_tile_and_one_settings_destination(self):
+        ui = self.ui
+        projections = [m for m in ui.home_manifests() if m.id in ('carplay', 'android-auto')]
+        self.assertEqual([m.name for m in projections], ['Phone Projection'])
+        ui.open_plugin(projections[0].id)
+        self.assertEqual(ui.mode, 'phone_projection')
+        self.assertEqual(ui.actions[-1], ((24,408,80,464), ui.projection_settings_page))
+        self.assertEqual(len(ui.actions), 2)
+        ui.actions[-1][1]()
+        self.assertEqual(ui.mode, 'projection_settings')
+        self.assertIn(ui.projection_phones_page, [action for _, action in ui.actions])
+        ui.actions[0][1]()
+        self.assertEqual(ui.mode, 'phone_projection')
+        ui.plugin_detail('android-auto')
+        self.assertEqual(ui.mode, 'projection_settings')
+        self.assertIn(ui.adapter_info_page, [action for _, action in ui.actions])
+        ui.prefs.set_enabled(ui.manifests['carplay'], False)
+        projections = [m for m in ui.home_manifests() if m.id in ('carplay', 'android-auto')]
+        self.assertEqual([m.id for m in projections], ['android-auto'])
+
+    def test_direct_usb_arrival_uses_native_fallback_but_preserves_connected_phone(self):
+        ui = self.ui
+        with patch('hlauncher.projection.direct_android_devices', return_value={'1-2'}), \
+                patch('hlauncher.projection.carplay_adapter_present', return_value=True), \
+                patch.object(ui.host, 'tick'), patch.object(ui.host, 'request_projection') as request, \
+                patch.object(ui.host, 'sync_projection_appearance'), \
+                patch.object(ui.host, 'sync_projection_gps'), \
+                patch.object(ui.host, 'sync_projection_vehicle'):
+            ui.projection_checked = 0
+            ui.tick()
+            request.assert_called_once_with('android-auto', False)
+            request.reset_mock()
+            ui.projection_checked = 0
+            ui.projection_usb_devices = set()
+            worker = SimpleNamespace(metrics={'phone_connected': True}, video_available=False)
+            with patch.object(ui.host, 'workers', {'carplay': worker}):
+                ui.tick()
+            request.assert_not_called()
+
+    def test_automatic_usb_attempt_is_bounded_and_keeps_dongle_available(self):
+        ui = self.ui
+        ui.projection_auto_native = True
+        ui.projection_auto_native_deadline = time.monotonic()-1
+        ui.projection_usb_devices = {'1-2'}
+        ui.projection_checked = 0
+        with patch('hlauncher.projection.direct_android_devices', return_value={'1-2'}), \
+                patch.object(ui.host, 'tick'), patch.object(ui.host, 'stop') as stop:
+            ui.tick()
+            stop.assert_called_once_with('android-auto')
+        self.assertFalse(ui.projection_auto_native)
+
+    def test_waiting_screen_opens_arriving_session_but_settings_stay_open(self):
+        ui = self.ui
+        ui.projection_page()
+        worker = SimpleNamespace(metrics={'phone_connected': True}, video_available=False, status='Phone connected')
+        with patch.object(ui.host, 'workers', {'carplay': worker}), \
+                patch.object(ui.host, 'tick'), patch.object(ui, 'open_plugin') as launch, \
+                patch.object(ui.host, 'sync_projection_appearance'), \
+                patch.object(ui.host, 'sync_projection_gps'), \
+                patch.object(ui.host, 'sync_projection_vehicle'), \
+                patch('hlauncher.projection.direct_android_devices', return_value=set()), \
+                patch('hlauncher.projection.carplay_adapter_present', return_value=False):
+            ui.tick()
+            launch.assert_called_once_with('carplay', projection_engine=True)
+            launch.reset_mock()
+            ui.projection_settings_page()
+            ui.tick()
+            launch.assert_not_called()
+
     def test_vehicle_plugin_visibility_persists_without_disabling_it(self):
         from hlauncher.vehicle_fields import visible
 
@@ -71,7 +140,7 @@ class RadioUI(unittest.TestCase):
     def test_every_settings_and_diagnostics_page_has_identical_header_and_valid_actions(self):
         ui=self.ui
         ui.system_settings();header=ui.fb.last.crop((80,0,720,52))
-        methods=[ui.ssh_settings,ui.adapter_branding_page,ui.adapter_info_page,ui.appearance_settings,ui.startup_settings,ui.recovery_page,lambda:ui.storage_confirm(True),ui.plugin_settings,lambda:ui.plugin_detail('carplay'),lambda:ui.plugin_detail('obd'),ui.tile_colors,
+        methods=[ui.projection_page,ui.projection_settings_page,ui.projection_phones_page,ui.ssh_settings,ui.adapter_branding_page,ui.adapter_info_page,ui.appearance_settings,ui.startup_settings,ui.recovery_page,lambda:ui.storage_confirm(True),ui.plugin_settings,lambda:ui.plugin_detail('carplay'),lambda:ui.plugin_detail('obd'),ui.tile_colors,
                  ui.color_settings,ui.system_diagnostics,ui.protocol_tests,
                  lambda:ui.protocol_tab(4),
                  lambda:ui.set_integration_tab('Buttons'),
@@ -195,7 +264,7 @@ class RadioUI(unittest.TestCase):
         self.assertEqual(Preferences(path).data['tile_color'],'Blue')
 
     def test_plugin_switch_and_debug_switch_save_their_values(self):
-        ui=self.ui;ui.plugin_settings();ui.actions[1][1]();self.assertEqual(ui.mode,'plugin_detail')
+        ui=self.ui;ui.plugin_settings();ui.actions[1][1]();self.assertEqual(ui.mode,'projection_settings')
         before=ui.prefs.enabled(ui.manifests['carplay'])
         ui.actions[3 if before else 2][1]()
         self.assertEqual(ui.prefs.enabled(ui.manifests['carplay']),before)
@@ -264,7 +333,7 @@ class RadioUI(unittest.TestCase):
         self.assertTrue(ui.prefs.auto_night('carplay'))
         self.assertTrue(ui.prefs.auto_night('android-auto'))
         ui.plugin_detail('carplay')
-        ui.list_offsets['plugin:carplay'] = 56
+        ui.list_offsets['projection-settings'] = 256
         ui.draw()  # Keep the existing controls visible below Dongle info.
         carplay = SimpleNamespace(manifest=ui.manifests['carplay'], send=Mock(return_value=True))
         with patch.object(ui.host, 'workers', {'carplay': carplay}), \
@@ -272,11 +341,13 @@ class RadioUI(unittest.TestCase):
             ui.host.sync_projection_appearance()
             ui.host.sync_projection_appearance()
             carplay.send.assert_called_once_with(type='projection.appearance', night_mode=True)
-            next(action for box, action in ui.actions if box[:2] == (24, 328))()
+            next(action for box, action in ui.actions if box[:2] == (24, 256))()
             carplay.send.assert_called_with(type='projection.appearance', night_mode=False)
             self.assertTrue(ui.projection_night_mode('android-auto'))
         ui.plugin_detail('android-auto')
-        next(action for box, action in ui.actions if box[:2] == (24, 192))()
+        ui.list_offsets['projection-settings'] = 320
+        ui.draw()
+        next(action for box, action in ui.actions if box[:2] == (24, 320))()
         saved = Preferences(ui.prefs.path)
         self.assertFalse(saved.auto_night('android-auto'))
         self.assertFalse(saved.auto_night('carplay'))
@@ -286,12 +357,14 @@ class RadioUI(unittest.TestCase):
         ui.plugin_detail('carplay')
         self.assertFalse(ui.prefs.car_gps('carplay'))
         self.assertFalse(ui.prefs.car_gps('android-auto'))
-        ui.list_offsets['plugin:carplay'] = 56
+        ui.list_offsets['projection-settings'] = 256
         ui.draw()
-        next(action for box, action in ui.actions if box[:2] == (24, 392))()
+        next(action for box, action in ui.actions if box[:2] == (24, 320))()
         self.assertTrue(Preferences(ui.prefs.path).car_gps('carplay'))
         ui.plugin_detail('android-auto')
-        next(action for box, action in ui.actions if box[:2] == (24, 256))()
+        ui.list_offsets['projection-settings'] = 320
+        ui.draw()
+        next(action for box, action in ui.actions if box[:2] == (24, 384))()
         self.assertTrue(Preferences(ui.prefs.path).car_gps('android-auto'))
         self.assertTrue(Preferences(ui.prefs.path).car_gps('carplay'))
 
@@ -427,7 +500,7 @@ class RadioUI(unittest.TestCase):
         ui.home()
         with patch.object(ui, 'open_plugin') as open_plugin:
             next(action for box, action in ui.actions if box == (24, 84, 696, 240))()
-            open_plugin.assert_called_once_with('android-auto')
+            open_plugin.assert_called_once_with('carplay')
         self.assertEqual(ui.home_pages(), original)
         ui.prefs.set_enabled(ui.manifests['android-auto'], False)
         ui.home()
@@ -487,7 +560,7 @@ class RadioUI(unittest.TestCase):
         next(action for _, action in ui.actions if action == editor.confirm_delete_page)()
         ui.actions[1][1]()  # Delete
         self.assertEqual(Preferences(ui.prefs.path).data['home_pages'],
-                         [['carplay', SETTINGS, 'android-auto', 'obd', None, None]])
+                         [['carplay', SETTINGS, 'obd', None, None, None]])
         self.assertEqual(ui.page, 0)
         self.assertFalse(any(action == editor.confirm_delete_page for _, action in ui.actions))
         next(action for _, action in ui.actions if action == editor.add_page)()

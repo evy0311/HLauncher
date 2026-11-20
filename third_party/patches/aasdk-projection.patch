@@ -1,0 +1,30 @@
+--- a/src/USB/USBHub.cpp
++++ b/src/USB/USBHub.cpp
+@@ -97,6 +97,11 @@
+         return;
+       }
+ 
++      // The Carlinkit adapter is not an Android phone. Never probe it with AOA.
++      if (deviceDescriptor.idVendor == 0x1314) {
++        return;
++      }
++
+       DeviceHandle handle;
+       auto openResult = usbWrapper_.open(device, handle);
+ 
+--- a/src/USB/ConnectedAccessoriesEnumerator.cpp
++++ b/src/USB/ConnectedAccessoriesEnumerator.cpp
+@@ -89,6 +89,13 @@
+       DeviceHandle handle;
+ 
+       while (actualDeviceIter_ != deviceListHandle_->end()) {
++        libusb_device_descriptor descriptor;
++        if (usbWrapper_.getDeviceDescriptor(*actualDeviceIter_, descriptor) != 0 ||
++            descriptor.idVendor == 0x1314) {
++          ++actualDeviceIter_;
++          continue;
++        }
++
+         auto openResult = usbWrapper_.open(*actualDeviceIter_, handle);
+         ++actualDeviceIter_;
+ 

@@ -45,6 +45,19 @@ class AudioPlayback(unittest.TestCase):
         self.assertLessEqual(stream.queued, stream.limit)
         self.assertGreater(stream.dropped, 0)
 
+    def test_input_gap_diagnostics_preserve_pcm_and_identify_the_stream(self):
+        events = []
+        output = Playback(lambda **event: events.append(event), start_worker=False)
+        message = dict(sample_rate=48000, channels=2, stream=1, pcm=bytes(3840))
+        with patch('hlauncher.playback.time.monotonic', return_value=100):
+            output.feed('carplay', message)
+        with patch('hlauncher.playback.time.monotonic', return_value=100.2):
+            output.feed('carplay', message)
+        gaps = [event for event in events if event['state'] == 'audio_input_gap']
+        self.assertEqual(len(gaps), 1)
+        self.assertEqual((gaps[0]['plugin'], gaps[0]['stream'], gaps[0]['gap_ms']), ('carplay', 1, 200))
+        self.assertEqual(b''.join(output.streams[('carplay', 1)].queue), message['pcm']*2)
+
     def test_float_mixing_keeps_unity_and_does_not_clip_or_normalize(self):
         import numpy as np
         output = Playback(lambda **v: None, start_worker=False)

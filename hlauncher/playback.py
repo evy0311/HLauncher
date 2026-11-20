@@ -61,6 +61,9 @@ class Playback:
         self.clip_samples=0
         self.capture_file=None
         self.pipewire_service=None
+        self.starvation_at = None
+        self.last_starvation_log = 0
+        self.max_write_ms = 0
 
     def feed(self, plugin, message):
         rate, channels, stream = (message[k] for k in ('sample_rate', 'channels', 'stream'))
@@ -79,6 +82,11 @@ class Playback:
                 entry = self.streams[key] = Stream(rate, channels)
                 self.event(state='audio_stream_format', plugin=plugin, stream=stream,
                            rate=rate, channels=channels, route=self.route, device=self.device)
+            gap = time.monotonic() - entry.last_input
+            if gap >= .1:
+                self.event(state='audio_input_gap', plugin=plugin, stream=stream,
+                           gap_ms=round(gap*1000), queued_bytes=entry.queued,
+                           monotonic_ms=round(time.monotonic()*1000))
             entry.feed(pcm)
             if self.start_worker and (not self.thread or not self.thread.is_alive()):
                 self.thread = threading.Thread(target=self.run, daemon=True)
@@ -176,12 +184,25 @@ class Playback:
                 pcm = self.mix()
                 now = time.monotonic()
                 if pcm is None:
+                    if self.proc and self.starvation_at is None:
+                        self.starvation_at = now
+                    if (self.starvation_at is not None and now-self.starvation_at >= .1
+                            and now-self.last_starvation_log >= 1):
+                        self.last_starvation_log = now
+                        self.event(state='audio_mixer_starved', duration_ms=round((now-self.starvation_at)*1000),
+                                   monotonic_ms=round(now*1000))
                     if self.proc and now - last_data > 2:
                         self.reap()
                     with self.condition:
                         self.condition.wait(.01)
                     next_block = time.monotonic()
                     continue
+                if self.starvation_at is not None:
+                    duration = now-self.starvation_at
+                    if duration >= .1:
+                        self.event(state='audio_mixer_resumed', gap_ms=round(duration*1000),
+                                   monotonic_ms=round(now*1000))
+                    self.starvation_at = None
                 if now - failed_at < 5:
                     time.sleep(.02)
                     continue
@@ -216,6 +237,7 @@ class Playback:
                             pass
                         os.set_blocking(self.proc.stdin.fileno(), False)
                         self.event(state='audio_hdmi_open', device=device, route=self.route, pipewire=applied[1], rate=RATE, channels=2, pcm_format='float32', resampler='soxr-vhq-28bit')
+                    write_started = time.monotonic()
                     remaining = memoryview(pcm)
                     # Bluetooth transport acquisition can exceed the steady-state write limit.
                     deadline = max(time.monotonic() + .2, startup_until)
@@ -230,6 +252,7 @@ class Playback:
                             except BlockingIOError:
                                 pass
                     last_data = time.monotonic()
+                    self.max_write_ms = max(self.max_write_ms, (last_data-write_started)*1000)
                 except Exception as exc:
                     self.failures += 1
                     self.event(state='audio_hdmi_error', error=str(exc), failures=self.failures)
@@ -243,7 +266,9 @@ class Playback:
                                      converted_peak=entry.converted_peak) for key,entry in self.streams.items()]
                     self.event(state='audio_hdmi_progress', bytes_written=self.written, dropped_bytes=drops,
                                peak=self.peak, clip_samples=self.clip_samples,
-                               stream_levels=levels)
+                               stream_levels=levels, write_ms_max=round(self.max_write_ms, 2),
+                               monotonic_ms=round(time.monotonic()*1000))
+                    self.max_write_ms = 0
                     last_stats = now
                 # The output device owns pacing. Drain available PCM without a second software timer.
         finally:
@@ -258,6 +283,7 @@ class Playback:
                     self.event(state='audio_hdmi_alsa', diagnostic=diagnostic)
 
     def reap(self):
+        self.starvation_at = None
         proc, self.proc = self.proc, None
         reader, self.stderr_reader = self.stderr_reader, None
         if not proc:

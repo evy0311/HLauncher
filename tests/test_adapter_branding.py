@@ -14,9 +14,11 @@ class AdapterBrandingUI(unittest.TestCase):
     tearDown=test_radio_ui.RadioUI.tearDown
     def test_adapter_icon_navigation_and_offline_apply(self):
         ui=self.ui;ui.plugin_detail('carplay')
+        ui.list_offsets['projection-settings']=128
+        ui.draw()
         next(action for _,action in ui.actions if action==ui.adapter_branding_page)()
         self.assertEqual(ui.mode,'adapter_branding')
-        self.assertTrue(any(action==ui.plugin_detail for _,action in ui.actions))
+        self.assertTrue(any(action==ui.projection_settings_page for _,action in ui.actions))
         from unittest.mock import patch
         from hlauncher.adapter_branding import BrandingRequests
         with patch.object(ui.host,'request_projection') as start:

@@ -316,6 +316,8 @@ class PluginHost:
         self.state_dir = Path(state_dir) if state_dir else STATE_DIR
         self.branding=BrandingRequests(self.state_dir/'adapter-branding.json')
         self.branding_sent=None
+        from .projection_phones import ProjectionPhones
+        self.projection_phones = ProjectionPhones(self.state_dir/'projection-phones.json')
         self.session = {"connected": False, "authenticated": False}
         self.button_results = {}
         self.button_pending = {}
@@ -437,6 +439,9 @@ class PluginHost:
                 self.stop(plugin_id)
 
     def stop(self, plugin_id):
+        if plugin_id == 'carplay':
+            self.projection_phones.live.clear()
+            self.projection_phones.observed.clear()
         if self.projection_request==plugin_id:self.projection_request=None
         if self.active == plugin_id:
             self.active = None
@@ -534,6 +539,13 @@ class PluginHost:
                 worker.last_gps = payload
 
     def sync_projection_vehicle(self, state):
+        # No verified dongle USB message for the parking brake has been found.
+        # Record the source reading without fabricating a wire command.
+        brake = state.get('parking_brake')
+        if 'carplay' in self.workers and getattr(self, 'dongle_brake', 'unseen') != brake:
+            self.dongle_brake = brake
+            self.event(state='projection_dongle_parking_brake', parking_brake=brake,
+                       forwarded=False, reason='usb_protocol_unverified', monotonic_ms=round(time.monotonic()*1000))
         worker = self.workers.get('android-auto')
         if worker is None or not getattr(worker.manifest, 'bundled', False):
             return
@@ -659,12 +671,16 @@ class PluginHost:
                         if not getattr(worker.manifest, 'revision', '') and isinstance(message.get("metrics"), dict):
                             worker.metrics = message["metrics"]
                             if plugin_id=='carplay':
+                                try:
+                                    self.projection_phones.update(worker.metrics.get('projection_phones', []))
+                                except OSError as exc:
+                                    self.event(state='projection_history_save_failed', error=str(exc))
                                 self.branding.update(worker.metrics.get('adapter_branding_request_id'),
                                                      worker.metrics.get('adapter_branding'),worker.metrics.get('adapter_branding_error',''))
                             self.event(
                                 state="plugin_frame_stats",
                                 plugin=plugin_id,
-                                metrics=message["metrics"],
+                                metrics={k:v for k,v in message["metrics"].items() if k != 'projection_phones'},
                                 received=worker.frames_received,
                                 superseded=worker.frames_superseded,
                                 copied=worker.frames_copied,

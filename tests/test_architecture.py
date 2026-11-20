@@ -125,7 +125,7 @@ class Architecture(unittest.TestCase):
             with patch.object(ui, "open_plugin") as opened:
                 self.assertTrue(ui.launch("com.honda.hondalink.launcher"))
                 ui.tick()
-                opened.assert_called_once_with("carplay")
+                opened.assert_called_once_with("carplay", projection_engine=True)
                 ui.home()
                 ui.tick()
                 self.assertEqual(opened.call_count, 1)
@@ -294,7 +294,8 @@ class Architecture(unittest.TestCase):
                 ui.mode='plugin';ui.host.active=source;ui.has_frame=False
                 with patch.object(ui.host,'status',return_value='Waiting for phone'):
                     ui.draw()
-                self.assertEqual([box for box,_ in ui.actions],[(0,0,80,52)])
+                self.assertIn(((0,0,80,52), ui.home), ui.actions)
+                self.assertIn(((24,408,80,464), ui.projection_settings_page), ui.actions)
                 ui.update({'contacts':[{'slot':0,'action':'down','has_position':True,
                     'x_raw':round(32*32767/719),'y_raw':round(26*32767/479)}]})
                 ui.update({'contacts':[{'slot':0,'action':'up','has_position':False}]})

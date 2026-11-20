@@ -16,9 +16,9 @@ LOG_DIR = pathlib.Path(
 )
 CONNECTION_STATUS = {
     "waiting_dongle": "Waiting for Carlinkit USB dongle",
-    "dongle_ready": "Connect iPhone to Carlinkit",
-    "phone_connected": "iPhone connected; waiting for video",
-    "phone_disconnected": "iPhone disconnected",
+    "dongle_ready": "Connect phone to Carlinkit",
+    "phone_connected": "Phone connected; waiting for video",
+    "phone_disconnected": "Phone disconnected",
     "usb_failure": "USB dongle connection lost",
 }
 # The bridge requests a fresh keyframe every five seconds. Allow two requests
@@ -361,6 +361,8 @@ class CarplayHDMI:
         with self.lock:
             return {
                 "adapter_info": self.adapter_info.snapshot(),
+                "projection_phones": self.adapter_info.phone_reports(),
+                "phone_connected": self.phone_connected,
                 "adapter_branding": self.adapter_branding,
                 "adapter_branding_request_id":self.adapter_branding_request_id,
                 "adapter_branding_error":self.adapter_branding_error,
@@ -455,7 +457,7 @@ class CarplayHDMI:
         if state.get('state') == 'stream_stats':
             with self.lock:
                 self.bridge_audio = {key: state[key] for key in
-                                     ('pcm_packets', 'pcm_gap_max_ms', 'video_packets_dropped')
+                                     ('pcm_packets', 'pcm_gap_max_ms', 'video_packets_dropped', 'event_loop_max_ms', 'pcm_backlog_bytes')
                                      if key in state}
         if state.get('state')=='projection_voice':
             fields=state.get('fields',{})
@@ -610,7 +612,7 @@ class CarplayHDMI:
                             self.notify("carplay_hdmi_frame_count", frames=self.frames)
                     else:
                         state = json.loads(data)
-                        self.notify("carplay_hdmi_status", bridge=state)
+                        self.notify("carplay_hdmi_status", bridge={k:v for k,v in state.items() if k != "settings"})
                         if state.get('state')=='adapter_branding':
                             with self.lock:
                                 self.adapter_branding=state.get('result','failed')

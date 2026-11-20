@@ -48,6 +48,8 @@ def display_pages(ui, presentation):
         return pages
     entries = [entry for page in pages for entry in page]
     primary = ui.prefs.data['default_plugin']
+    if primary in ('carplay', 'android-auto') and primary not in entries:
+        primary = next((entry for entry in entries if entry in ('carplay', 'android-auto')), primary)
     if primary is None or primary not in entries:
         primary = next((entry for entry in entries if entry in ui.manifests), None)
     if primary is not None:

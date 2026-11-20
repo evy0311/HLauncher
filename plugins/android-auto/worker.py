@@ -52,6 +52,7 @@ class Engine:
         self.button_gate = ButtonGate()
         self.visible=threading.Event();self.done=threading.Event()
         self.inputs=queue.Queue(128);self.router=TouchRouter();self.button_pending={}
+        self.phone_connected=False
         self.frame=None;self.sequence=0;self.status='Starting Android Auto';self.home=False
         self.video_packets=0;self.decoded=0;self.audio_packets=0;self.audio_dropped=0
 
@@ -89,6 +90,7 @@ class Engine:
                 if not select.select([self.proc.stdout],[],[],.05)[0]:continue
                 kind,data=read_packet(self.proc.stdout)
                 if kind==1:
+                    with self.lock:self.phone_connected=True
                     self.video_packets+=1
                     pictures=decoder.feed(data,render=self.visible.is_set())
                     if pictures:
@@ -121,6 +123,7 @@ class Engine:
                             self.status=event['status']
                             if 'Connect an Android' in self.status:
                                 self.frame = None
+                                self.phone_connected = False
                                 self.mic_requested = self.call_stream = False
                                 self.call = {}
                                 self.media.clear()
@@ -136,7 +139,7 @@ class Engine:
                     if not self.client.playback(data[6:],rate,channels,stream,voice=voice):
                         self.audio_dropped+=1
         except Exception as exc:
-            with self.lock:self.status=str(exc);self.frame=None
+            with self.lock:self.status=str(exc);self.frame=None;self.phone_connected=False
             print(json.dumps({'event':'openauto_error','error':str(exc)}),flush=True)
         finally:
             if decoder:decoder.close()
@@ -361,7 +364,7 @@ def main():
             if active and frame is not None and seq!=last_frame:
                 if client.present(frame):last_frame=seq
             if time.monotonic()-health>2:
-                client.send(type='health',metrics={'engine':'OpenAuto','video_packets':engine.video_packets,
+                client.send(type='health',metrics={'engine':'OpenAuto','phone_connected':engine.phone_connected,'video_packets':engine.video_packets,
                     'frames':engine.decoded,'audio_packets':engine.audio_packets,'audio_dropped':engine.audio_dropped,'visible':active})
                 health=time.monotonic()
             time.sleep(.002 if active else .02)

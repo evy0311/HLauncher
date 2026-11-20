@@ -33,3 +33,23 @@ def carplay_adapter_present(root=None):
             if int((device/'idVendor').read_text().strip(),16)==0x1314 and int((device/'idProduct').read_text().strip(),16) in (0x1520,0x1521):return True
         except (OSError,ValueError):pass
     return False
+
+
+def direct_android_devices(root=None):
+    """Passive discovery only: never send AOA requests to the projection dongle."""
+    root = Path(root) if root is not None else Path(os.environ.get('HLAUNCHER_USB_SYSFS', '/sys/bus/usb/devices'))
+    result = set()
+    for device in root.glob('*'):
+        try:
+            vendor = int((device/'idVendor').read_text().strip(), 16)
+            product = int((device/'idProduct').read_text().strip(), 16)
+            if vendor == 0x1314:
+                continue
+            labels = ' '.join((device/name).read_text().strip().casefold()
+                              for name in ('manufacturer', 'product') if (device/name).exists())
+            accessory = vendor == 0x18d1 and product in (0x2d00, 0x2d01)
+            if accessory or any(word in labels for word in ('android', 'pixel', 'samsung', 'oneplus', 'motorola')):
+                result.add(device.name)
+        except (OSError, ValueError):
+            continue
+    return result

@@ -1,4 +1,4 @@
-# Phone Projection investigation
+# Phone Projection
 
 Related issue: [#7](https://github.com/evy0311/HLauncher/issues/7).
 Branch: `feature/phone-projection`, based on `develop`.
@@ -10,30 +10,85 @@ guide are historical test evidence, not a capability profile for this unit.
 Native fallback in this investigation means **Android Auto over a USB cable
 directly into the Pi**. Native wireless AA is outside this scope.
 
-## Current implementation and findings
+## Implemented on this branch
 
-The launcher exposes separate CarPlay and Android Auto entries, but already has
-shared media, voice, picture controls, background playback, and an exclusive
-projection lease. The existing adapter driver recognizes both CarPlay (phone
-type 3) and AA (type 5). Its startup settings include AA display dimensions.
-This makes a shared adapter backend plausible; it does not establish that the
-new dongle accepts AA or that its AA audio, buttons, microphone and exit action
-work through HLauncher.
+Home, Plugins settings, and setup expose one **Phone Projection** entry. The
+landing page shows a phone/display symbol and live waiting/connection status.
+A bottom-left settings cog opens combined settings, including Phones, dongle
+information and explicit dongle/direct USB connection choices. A reported phone
+connection automatically brings its projection session to the foreground when
+the landing page is visible; settings remain open until the user leaves them. The waiting/disconnected view
+uses that same landing page. The two
+existing engine IDs, enable flags, startup IDs, media routing, and exclusive
+process-tree lease remain intact for upgrade/rollback compatibility. Existing
+startup choices still start their selected engine automatically. Settings retain
+independent GPS/headlight preferences for the dongle and direct USB paths.
 
-The bridge currently discards the Plugged transport field and logs BoxSettings
-without delivering adapter capabilities to the core. The adapter landing page
-calls every connection an iPhone. Native AA uses a distinct OpenAuto/aasdk
-process with its own USB discovery. A worker being ready means the process is
-running, not that a phone has completed projection negotiation.
+Passive sysfs discovery recognizes AOA accessory IDs and Android-labelled USB
+phones, excluding the Carlinkit vendor. A newly attached candidate can hand off
+an idle dongle worker to native AA. It never preempts a reported connected
+session. Native negotiation gets 30 seconds; an unsuccessful automatic attempt
+returns to dongle standby. An unplug gets an eight-second grace for AOA
+re-enumeration. Unrecognized phones can always use the explicit direct USB
+button. A phone plugged into an AA-incapable dongle must physically move its
+cable to the Pi; the native engine cannot reach through the dongle.
 
-This branch adds **Settings → Plugins → CarPlay → Dongle info** as a diagnostic
-foundation. It exposes bounded live firmware, USB/product/hardware identifiers,
-advertised AA support, phone protocol and reported transport through worker
-health. Missing information remains Unknown. USB loss clears adapter facts;
-phone disconnect clears session protocol/transport. No phone history is recorded
-yet, and the two plugins have not yet been combined.
+The aasdk integration additionally excludes vendor 1314 from both hotplug and
+startup AOA enumeration before opening the USB device. This patch must be built
+into the native engine; Python changes alone cannot update an installed binary.
 
-## Proposed architecture
+**Phones** distinguishes an identified live peer from paired-only devices and
+previously observed phones. DevList and current-session btMacAddr/btName reports
+are used; adapter Bluetooth names are never treated as phone names. Local
+`projection-phones.json` retains at most 32 records with a hashed peer identity,
+name, last protocol/transport and last observed connection time. Live/paired
+flags are not restored across reboot. Repeated reports do not rewrite storage.
+Phone details are removed from normal health/status logging. The direct USB
+engine currently shows a generic session row; it does not expose a durable phone
+identity. No remote phone switching or unpairing is claimed.
+
+Dongle info shows live USB/product/hardware, firmware, advertised AA support,
+negotiated protocol and reported transport. Unknown facts remain Unknown;
+advertised AA is not a successful AA connection test.
+
+### Audio dropout diagnostics
+
+- Bridge reports use a monotonic timestamp and include per-stream PCM gaps of
+  at least 100 ms, USB receive silence, Node event-loop delay and PCM backlog.
+- Existing one-second packet/video-gap statistics include event-loop/backlog
+  fields, surfaced in worker health alongside decode/forward/drop counters.
+- HDMI mixer logs input gaps, starvation/resumption, maximum player write time,
+  and existing ALSA stderr/underrun/player errors with correlation timestamps.
+- Slow launcher draws are sampled during projection. Route selections, automatic
+  fallback, and fresh/expired parking-brake changes are logged explicitly.
+
+Pauses, track transitions and voice-stream stops can legitimately create gaps.
+These observations locate the interrupted stage; they do not establish a cause
+or promise that the previously observed cutouts are fixed. HDMI output routing,
+48 kHz stereo target and EQ processing are unchanged by this branch.
+
+### Parking brake and linked project
+
+Reviewed [bean-headunit's CarPlay notes](https://github.com/AliMacky/bean-headunit/blob/main/docs/carplay.md).
+Its A15W / YMA0-WN16-0003 adapter and 2026.07.31 firmware family match the owner's
+reports. The notes confirm DevList and current-peer fields, retry/heartbeat
+requirements, and Bluetooth disconnects during otherwise working sessions.
+Its audio implementation is explicitly untested, so it supplies no dropout fix.
+It documents no parking-brake host message.
+
+Neither our pinned node-carplay driver nor the inspected CCPA USB protocol
+reference provides a verified parking-brake wire format. Therefore the dongle
+path logs the car's brake reading with `forwarded=false` and
+`reason=usb_protocol_unverified`; it does not invent a command, write an unknown
+firmware setting or simulate a permanently parked car. Native direct USB AA
+retains its existing fresh speed/brake sensor forwarding. Dongle forwarding
+needs a verified command or a capture of a known host sending real brake changes.
+
+## Remaining architecture research
+
+The following design and test matrix describe follow-up work, including real
+hardware validation; they are not claims that every adapter/phone combination
+has passed.
 
 Present one **Phone Projection** entry and settings page, backed by a core route
 controller and two retained engines:
@@ -105,13 +160,13 @@ adapter or firmware changes.
 
 For recent phones, distinguish **paired devices** from **observed connected
 sessions**. The pinned driver parses the paired-list message and a transport
-field; HLauncher currently does not surface them. Newer CCPA research describes
-additional peer-address and BoxSettings identity data. Validate the exact
-messages on this dongle before attributing a name to a session. Adapter Bluetooth
+field. This implementation uses validated BoxSettings peer identity reports
+from the newer dongle; the older paired-list message is not used to infer an
+active phone. Additional firmware-specific peer messages still need validation. Adapter Bluetooth
 name/address and Wi-Fi SSID are not phone identity. The paired list alone does
 not prove which phone is active, and phone type alone does not prove wireless.
 
-Proposed local history: display name or user alias, identity confidence, last
+Further history improvements: user aliases, identity confidence, last
 connection time, protocol, transport evidence, and adapter association. Use an
 adapter-scoped keyed identity where a peer identifier is actually observed.
 When identity or transport is unavailable, retain Unknown rather than merging
@@ -135,26 +190,29 @@ and phone history. Existing releases must still read their original settings
 after rollback. Verify updater installation and rollback from the current release
 before publishing this as a release.
 
-## Implementation order and validation
+## Validation and remaining hardware checks
 
-1. Collect Dongle Info and session reports from this CPC200-CCPA, including its
-   firmware. Wireless CarPlay and the presence of session name/peer-identifier
-   fields have now been observed on the target adapter. Obtain an adapter AA
-   capture with an Android phone before claiming that route works.
-2. Add validated structured session/capability reports end to end; correct the
-   adapter worker's protocol-specific labels and controls.
-3. Add selected-device discovery/exclusions and test native AA with an idle dongle
-   attached. Preserve the process-tree lease during handoff.
-4. Implement the route controller against the cases above using fake devices,
-   stale-report injection, re-enumeration, delayed USB release and failure tests.
-5. Add the unified tile/settings and backward-compatible preference resolution.
-6. Add observed-phone history using verified identity fields.
-7. Bench and in-car test startup, background audio, reconnect, explicit switching,
-   calls/mic/guidance, media clearing, radio controls, GPS/night mode, and updates.
+79 focused tests pass, including waiting-screen/cog navigation, automatic
+foreground connection, idle USB fallback versus an established session,
+negotiation timeout, lease handoff, phone identity/history and PCM gap logging.
+The full Mac suite ran 376 tests: 368 passed, three skipped, and five errored
+because libsoxr is not installed. The bridge self-test, Python compilation,
+shell syntax and whitespace checks pass. The native USB exclusion patch applies
+and reverses against the pinned aasdk source. OEM, Touring and Drive previews
+were rendered and reviewed at 720×480.
 
-Keep HDMI media at 48 kHz stereo PCM with the existing S32_LE endpoint. Neither
-the unified UI nor phone history requires changing the audio format or the
-radio's Bluetooth ownership.
+This branch has not been deployed to the Pi. The native USB exclusion requires
+rebuilding the external AA engine. Before release, verify:
+
+- Wireless CarPlay reconnect, the named phone list, microphone/voice and exit.
+- Dongle Android Auto using a real Android phone; advertised support is not proof.
+- Direct USB AA with the dongle attached, AOA re-enumeration, unplug and handoff.
+- Audio dropout reproduction while navigating, correlating the new diagnostics.
+- Updater installation/rollback from the released image.
+
+No confirmed dropout fix or dongle parking-brake forwarding is claimed. Neither
+the unified UI nor phone history changes the HDMI format or radio Bluetooth
+ownership.
 
 ## Sources and evidence
 

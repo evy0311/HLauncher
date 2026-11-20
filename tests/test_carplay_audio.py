@@ -139,7 +139,7 @@ class CarplayAudio(unittest.TestCase):
         self.assertTrue(audio_received.wait(2))
         _, frame, _, status = carplay.snapshot()
         self.assertIsNone(frame)
-        self.assertEqual(status, 'iPhone disconnected')
+        self.assertEqual(status, 'Phone disconnected')
 
     def test_cached_video_is_hidden_until_phone_connects_and_cleared_on_disconnect(self):
         carplay=backend.CarplayHDMI()

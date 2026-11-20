@@ -298,6 +298,19 @@ class Launcher:
         self.press = None
         self.draw()
 
+    def toggle_source_updates(self):
+        previous=self.prefs.data.get('source_updates',False)
+        self.prefs.data['source_updates']=not previous
+        try:
+            self.prefs.save(force={'source_updates'})
+        except OSError:
+            self.prefs.data['source_updates']=previous
+            self.banner='Could not save source testing preference'
+            self.draw()
+            return
+        self.update_request('check')
+        self.draw()
+
     def select_development_branch(self, branch):
         from .development_builds import branch_name
         previous = self.prefs.data['development_branch']
@@ -318,6 +331,7 @@ class Launcher:
         self.confirm_update_version = target or offer.get('available')
         self.confirm_update_branch = offer.get('available_branch') if self.confirm_update_version == offer.get('available') else None
         self.confirm_update_commit = offer.get('available_commit') if self.confirm_update_branch else None
+        self.confirm_update_source = offer.get('available_channel')=='source' and self.confirm_update_version==offer.get('available')
         self.confirm_stable_return = (offer.get('stable_return') is True
                                       and self.confirm_update_version == offer.get('stable_available'))
         api = offered_plugin_api(self.confirm_update_version)

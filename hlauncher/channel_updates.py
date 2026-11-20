@@ -16,7 +16,7 @@ ASSETS = 'https://github.com/' + updater.REPOSITORY + '/releases/download/'
 
 def channel(info):
     value = info.get('channel', 'stable')
-    if value not in ('stable', 'beta', 'development'):
+    if value not in ('stable', 'beta', 'development', 'source'):
         raise ValueError('Invalid signed release channel')
     return value
 
@@ -37,7 +37,7 @@ class ChannelInstaller(updater.Installer):
                 if channel(info) != 'development':
                     raise ValueError('Only signed development builds support branch switching')
                 metadata(info)
-            elif self.current_channel() not in ('beta', 'development') or channel(info) != 'stable':
+            elif self.current_channel() not in ('beta', 'development', 'source') or channel(info) != 'stable':
                 raise ValueError('Only a development or beta build can return to stable')
             if target_version == current:
                 raise ValueError('That version is already installed')
@@ -129,11 +129,14 @@ class ChannelService(Service):
                     notes=str(release.get('body') or '')[:128000])
 
     def check(self):
+        if self.beta_enabled() and updater.read(self.state/'settings.json').get('source_updates') is True:
+            from .source_updates import check
+            return check(self)
         self.report('checking', 'Checking GitHub Releases')
         offers_path = self.cache/'offers.json'
         offers_path.unlink(missing_ok=True)
         current = updater.version(self.installer.current())
-        installed_beta = self.installer.current_channel() in ('beta', 'development')
+        installed_beta = self.installer.current_channel() in ('beta', 'development', 'source')
         listing = self.cache/'github.json'
         self.fetch(RELEASES + '/latest', listing, 1024*1024)
         stable = self.release(updater.read(listing), 'stable')
@@ -213,6 +216,10 @@ class ChannelService(Service):
 
     def install_version(self, version):
         updater.version(version)
+        source_offer = updater.read(self.cache/'source-offer.json')
+        if source_offer.get('version') == version:
+            from .source_updates import install
+            return install(self, source_offer)
         offer = updater.read(self.cache/'offers.json').get(version)
         if not offer:
             raise ValueError('Check for updates before installing')
@@ -234,7 +241,7 @@ class ChannelService(Service):
             raise ValueError('Update offer changed; check for updates again')
         current = updater.version(self.installer.current())
         returning = updater.version(version) < current
-        if returning and offered_channel != 'development' and (offered_channel != 'stable' or self.installer.current_channel() not in ('beta', 'development')):
+        if returning and offered_channel != 'development' and (offered_channel != 'stable' or self.installer.current_channel() not in ('beta', 'development', 'source')):
             raise ValueError('Only a beta can return to an older stable release')
         if updater.version(version) == current:
             raise ValueError('That version is already installed')

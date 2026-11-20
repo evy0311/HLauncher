@@ -8,20 +8,29 @@ from .projection import wrap_status
 from sdk.hlauncher_sdk.fonts import font
 
 
+def page_for(launcher,title,back):
+    if hasattr(Page,'for_launcher'):
+        return Page.for_launcher(launcher,title,back)
+    # Source testing can run branches from before themed Page constructors.
+    return Page(title,back,launcher.prefs.data['tile_color'],(launcher.fb.w,launcher.fb.h),
+                launcher.pressed_box if launcher.press is not None else None,
+                show_clock=launcher.prefs.data['show_clock'])
+
+
 def draw_launcher(launcher):
     info=status(launcher.prefs.path.parent)
     if launcher.mode == 'development_branches':
         return branches(launcher, info)
-    page=Page('Software updates',(launcher.updates_page if launcher.mode == 'update_confirm' else launcher.system_settings),launcher.prefs.data['tile_color'],
-              (launcher.fb.w,launcher.fb.h),launcher.pressed_box if launcher.press is not None else None,show_clock=launcher.prefs.data['show_clock'], layout_theme=getattr(launcher, 'layout_theme', None))
+    page=page_for(launcher,'Software updates',launcher.updates_page if launcher.mode=='update_confirm' else launcher.system_settings)
     if launcher.mode == 'update_confirm':
-        action = 'Return to stable ' if launcher.confirm_stable_return else 'Install HLauncher '
+        source=getattr(launcher,'confirm_update_source',False)
+        action = 'Test source ' if source else 'Return to stable ' if launcher.confirm_stable_return else 'Install HLauncher '
         page.text((24, 120), action + (launcher.confirm_update_version or ''), 26)
         branch = getattr(launcher, 'confirm_update_branch', None)
         if branch:
             page.text((24, 160), page.fit(branch+' · '+str(launcher.confirm_update_commit or '')[:8], 672, 20), 20)
-        page.text((24, 190), 'Your plugins and their data will be kept.', 22)
-        page.text((24, 230), 'Some plugins may stop working after this update.', 21)
+        page.text((24, 190), 'Unsigned code from evy0311/HLauncher' if source else 'Your plugins and their data will be kept.', 22)
+        page.text((24, 230), 'Previous installation remains available to restore.' if source else 'Some plugins may stop working after this update.', 21)
         incompatible = launcher.update_incompatible_plugins
         if incompatible:
             text = f'{len(incompatible)} incompatible: ' + ', '.join(incompatible)
@@ -35,7 +44,7 @@ def draw_launcher(launcher):
     installed_channel = info.get('current_channel')
     if installed_channel is None:
         installed_channel = read(ROOT/'build-info.json').get('channel')
-    suffix = ' · Development' if installed_channel == 'development' else ' · Beta' if installed_channel == 'beta' else ''
+    suffix = ' · Source test' if installed_channel=='source' else ' · Development' if installed_channel == 'development' else ' · Beta' if installed_channel == 'beta' else ''
     page.text((696,120),info.get('current',__version__)+suffix,20,fill='#efedf6',anchor='rt')
     previous=info.get('previous')
     page.text((24,156),'Previous',18)
@@ -49,13 +58,16 @@ def draw_launcher(launcher):
         available = info.get('available')
         stable = info.get('stable_available')
         beta_enabled = launcher.prefs.data['include_beta_updates']
-        if (info.get('available_channel') in ('beta', 'development') and not beta_enabled
-                or info.get('available_channel') == 'development' and info.get('available_branch') != launcher.prefs.data['development_branch']):
+        if (info.get('available_channel') in ('beta', 'development','source') and not beta_enabled
+                or info.get('available_channel') in ('development','source') and info.get('available_branch') != launcher.prefs.data['development_branch']
+                or info.get('available_channel')=='source' and not launcher.prefs.data.get('source_updates',False)):
             available = stable
         if available:
             alternate = stable if stable != available else None
             if available == stable and info.get('stable_return'):
                 label = 'Return to stable ' + available
+            elif info.get('available_channel')=='source' and available!=stable:
+                label='Install unsigned source'
             elif info.get('available_channel') == 'development' and available != stable:
                 label = 'Install branch build'
             elif info.get('available_channel') == 'beta' and available != stable:
@@ -95,7 +107,8 @@ def branches(launcher, info):
     from .scroll_list import Row, draw
     from .theme_menu import settings_menu, row_items
     from ..development_builds import branch_name
-    rows=[]
+    source=launcher.prefs.data.get('source_updates',False)
+    rows=[Row('Unsigned source testing',launcher.toggle_source_updates,value='On' if source else 'Off')]
     if launcher.prefs.data['include_beta_updates']:
         for item in info.get('branches', [])[:128]:
             try:name=branch_name(item.get('branch'))
@@ -103,10 +116,10 @@ def branches(launcher, info):
             commit=str(item.get('commit', ''))[:8]
             label=('Selected · ' if name == launcher.prefs.data['development_branch'] else '')+name
             rows.append(Row(label,lambda name=name:launcher.select_development_branch(name),value=commit))
-    footer='Select a branch to check its latest signed build' if rows else 'No compatible branch builds found · check for updates first'
+    footer=('Select a GitHub branch to test its source' if source else 'Select a branch to check its latest signed build') if len(rows)>1 else 'Check for branches or builds first'
     rows.append(Row('Check for builds',lambda:launcher.update_request('check')))
     if settings_menu(launcher,'Development branch',launcher.updates_page,row_items(rows),footer=footer):return
-    page=Page.for_launcher(launcher,'Development branch',launcher.updates_page)
+    page=page_for(launcher,'Development branch',launcher.updates_page)
     draw(launcher,page,rows,bottom=422,key='development-branches',size=22)
     page.notice(launcher.banner or footer)
     present(launcher,page)

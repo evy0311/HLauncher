@@ -215,7 +215,7 @@ branch, then review **Install branch build**. The confirmation shows its branch
 and exact commit; the update page also shows the build date in UTC. The selected
 branch is remembered. Installations are manual, not automatic.
 
-Only compatible, signed, published builds appear. The catalogue checks up to
+In the default signed-build mode, only compatible, signed, published builds appear. The catalogue checks up to
 500 recent GitHub releases and chooses the highest installation build number
 per branch. A raw Git branch without a published build cannot be installed.
 The Pi needs Wi-Fi, not Git, a compiler, SSH access or a GitHub account.
@@ -323,3 +323,50 @@ packaging/publication and UI tests pass. The full Mac suite ran 374 tests:
 The existing updater contract hash is unchanged. Workflow YAML and embedded
 shell blocks parse successfully; the complete ARM64 workflow and live Pi
 installation remain to be verified on the release builder/test Pi.
+
+### Unsigned GitHub source testing
+
+Under Development builds → Branch, enable **Unsigned source testing** to list
+GitHub branches directly. Select a branch and review **Install unsigned source**;
+the confirmation identifies its exact commit and explicitly labels it unsigned.
+This opt-in applies only to source testing from `evy0311/HLauncher`. Normal
+stable/beta/published development updates still require signed metadata and the
+image's existing pinned key.
+
+The Pi downloads the selected commit archive over HTTPS, checks archive paths,
+file counts and size limits, and stages a separate installation. It reuses the
+installed native runtime only when native inputs, dependency locks, system
+contract and existing boot service definitions match. Branches requiring
+different native dependencies or boot services need a built update. No branch
+installation scripts, package managers or build hooks run during staging.
+
+The staged app retains source-updater controls when a branch predates this
+capability. This compatibility overlay is recorded in `build-info.json` and
+`release.json`; it means the result is the selected source plus the current
+updater controls, rather than a byte-identical checkout. Branches advertising
+`SOURCE_UPDATE_API=1` use their own source updater. Preferences/state remain
+outside the release. The original durable activation, health check, rollback and
+interrupted-update recovery paths are used. Source testing is checked again
+after downloading. Switching it or Development builds off blocks queued source
+installs. Signed return-to-stable discovery remains available.
+
+Live bootstrap deployment on 2026-11-20 applied only the updater/UI changes to
+the Pi's existing app, preserving its boot optimizations and boot files. Exact
+originals are backed up under `/persist/hlauncher-source-updater-backup-20261120`
+and on the research share. The runtime startup check passed; HLauncher,
+reconnect and updater returned active with Bluetooth profiles registered and
+zero app restarts. At the user's request, no feature branch was selected or
+installed by the agent: the user performed that live test. The Pi confirmed a
+successful unsigned installation of `feature/audio-eq` at
+`03a7b9c8d05533501e97d4e1baae0285cd5053a3` with source-overlay metadata,
+no pending transaction and previous version `0.2.12` retained. Bluetooth profiles
+were registered, the app was active and its restart count was zero. Rollback
+was not exercised on the live Pi. The compatibility overlay also publishes
+UI readiness on older branches so the installed deferred-network policy can
+resume networking after their UI; this adjustment was compiled/deployed without
+another restart or branch switch. Twelve signed-development
+tests and five source tests pass locally; 31 of 32 existing updater tests pass,
+with the remaining test blocked by the Mac sandbox's local socket restriction.
+Source tests cover raw branch discovery, multiple source installs and rollback,
+native-input rejection, unsafe archives, opt-out during download and failed
+activation. The stable updater source/installed contract was not changed.

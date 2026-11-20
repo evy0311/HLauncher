@@ -161,7 +161,7 @@ class DevelopmentUI(unittest.TestCase):
         self.assertIn(ui.development_branches_page,[action for _,action in ui.actions])
         ui.development_branches_page()
         with patch.object(ui,'update_request') as request:
-            next(action for box,action in ui.actions if box[:2]==(24,128))()
+            next(action for box,action in ui.actions if box[:2]==(24,192))()
             request.assert_called_once_with('check')
         self.assertEqual(Preferences(ui.prefs.path).data['development_branch'],'feature/audio')
         self.assertEqual(ui.mode,'updates')

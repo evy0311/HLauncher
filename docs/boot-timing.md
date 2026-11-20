@@ -379,3 +379,63 @@ installation are experimental base-system policy, not an automatically deployed
 application update. Existing-updater migration and upgrade/rollback testing are
 still required before release; the source installer/updater contract files were
 not modified to bypass compatibility checks.
+
+## Black startup display: 2026-11-20
+
+The user requested a black screen until HLauncher is ready. The paired-boot
+renderer now submits a completely black frame without text or font loading;
+the first-time pairing welcome remains available. The existing
+`splash_frame_submitted` milestone now denotes that black frame on paired boots.
+Framebuffer/KMS initialization is still reused by the full UI, and the early
+forced HDMI mode remains unchanged for HondaLink.
+
+Applied `disable_splash=1` in a global firmware-config section and quiet kernel
+console settings: `quiet loglevel=3 logo.nologo systemd.show_status=false
+rd.systemd.show_status=false vt.global_cursor_default=0`. Removed the HDMI VT
+console argument while retaining the existing serial console. Masked
+`getty@tty1.service` so a login prompt cannot paint over the display. Plymouth is
+not installed on this Pi. Kernel/journal logging, overlayroot, initramfs,
+persistent mounts and `video=HDMI-A-1:720x480@60D` are preserved. Quiet display
+defaults were proposed for the offline image builder, but withdrawn after the
+failed test; the unverified candidate is saved on the research share instead.
+
+The renderer test confirms all pixels are black without heavy UI or NumPy
+imports. Configuration checks confirm HDMI/storage/serial preservation and
+idempotent command-line/config transforms. Original firmware config, command
+line, renderer and getty state are backed up under
+`/persist/hlauncher-boot-test-20261120/black-boot` and in
+`live-black-boot-backup.tar.gz` on the research share. These boot-partition and
+getty changes remain part of the manual base-system experiment; they need the
+same validated existing-installation migration before release.
+
+The reboot failed validation: SSH and Bluetooth did not return. The user reports
+a steady red power LED, brief green activity on a subsequent physical power
+cycle, then a black display and no further observed activity. This does not
+identify the boot stage or establish hardware failure. Stop boot tuning and
+restore the prior boot-partition configuration before investigating further.
+Exact original `config.txt` and `cmdline.txt` are also extracted under
+`black-boot-recovery` on the research share for SD-reader recovery. Do not ship
+the quiet-boot image defaults until the cause is understood and boot is verified.
+
+SD-reader recovery: identified the 31 GB Pi card and matched both modified boot
+files against the known silent-boot transforms. Saved their current contents,
+restored original `config.txt` (1247 bytes) and `cmdline.txt` (158 bytes) in place,
+verified exact bytes/SHA-256 against the pre-change backup, synced and safely
+ejected the card. Recovery metadata is under `sd-reader-recovery` on the share.
+No partitions or other card files were modified.
+
+The user subsequently reported a successful boot. SSH verification confirms all
+prior service reductions, delayed growth timer and UI-first network gate remain
+active. The black waiting-frame renderer and getty mask also remain installed;
+only the two boot-partition text files were restored. Systemd reports no failed
+units, zero app restarts and a read-only lower root. Current measured timings:
+2.624 s kernel/initramfs + 4.211 s userspace = 6.835 s system startup; Bluetooth
+profiles ready at 6.769 s, black frame submitted at 7.256 s and full UI frame at
+8.418 s (initialization complete at 8.419 s). Network services were verified to
+start after UI completion. Report: `live-recovered-boot.json` on the share.
+
+The cause of the silent-boot failure is not isolated. Keep the working boot
+files and retain the verified app/service optimizations; do not reapply the
+combined firmware/console settings or ship the proposed image defaults based
+on speculation. The candidate is preserved as `unverified-quiet-image-candidate.py`
+on the share for later investigation.

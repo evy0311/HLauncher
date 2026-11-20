@@ -10,7 +10,7 @@ class BootSplash(unittest.TestCase):
         result=subprocess.run([sys.executable,'-c',
             'from hlauncher.ui.boot_splash import render; import sys; '
             'frame=render((720,480)); assert frame.size==(720,480); '
-            'assert frame.mode=="RGB" and frame.getbbox(); '
+            'assert frame.mode=="RGB" and frame.getbbox() is None; '
             'assert "hlauncher.ui.controls" not in sys.modules; '
             'assert "hlauncher.ui.home_art" not in sys.modules; '
             'assert "numpy" not in sys.modules'],

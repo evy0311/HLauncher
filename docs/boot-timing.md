@@ -7,6 +7,80 @@ renders Home next. Initial pairing still prepares Home while waiting for the
 radio. Bluetooth profile registration and its systemd readiness notification
 remain ahead of graphics initialization.
 
+## Boot-time goal
+
+Target a usable HLauncher screen within 5–10 seconds of power-on on the supported
+Pi 4 hardware, with under 5 seconds as the stretch goal. Measure the actual radio
+display and input readiness, not just systemd startup completion or a splash.
+Track phone-projection readiness separately because dongle startup and phone
+reconnection can add time beyond launcher startup. These are goals, not measured
+results. The first live software timing run is recorded below; physical
+power-on/display timing remains unmeasured.
+
+## Priority: Bluetooth and an early HDMI signal
+
+Optimize for the radio being able to start HondaLink as early as possible, not
+just for a fast finished Home screen. Bluetooth connectivity and a valid HDMI
+signal are the first functional priorities; neither should wait for plugin
+discovery, projection startup, network availability or decorative UI work.
+
+The intended sequence is:
+
+1. Establish HDMI output as early as the platform permits. Fresh images already
+   force `video=HDMI-A-1:720x480@60D` in the kernel command line. Preserve this
+   mode and verify that the radio detects a stable signal during cold boot;
+   writing the setting does not prove when the physical signal becomes usable.
+2. Start BlueZ and BlueALSA, enroll/restore the radio and register the HondaLink
+   Bluetooth profiles. Keep required persistent mounts and updater recovery
+   ahead of application startup so saved pairing and safe rollback remain valid.
+3. As soon as profiles register, notify systemd readiness so the reconnect
+   worker can run. Prepare the basic HDMI splash on a background thread at the
+   same time; Bluetooth event handling and HondaLink authentication must remain
+   responsive while graphics initialize. Do not wait for the full Home screen
+   before attempting the radio connection.
+4. Load the full launcher and plugins after the splash. Keep nonessential
+   maintenance and network-dependent work outside this critical path.
+
+The existing `radio.py` readiness path and `BootstrapLauncher.prepare()` already
+implement profile registration before asynchronous splash/full-UI preparation.
+`hlauncher-connect.service` follows that readiness notification, not completion
+of graphics. This investigation preserves that ordering. Kernel HDMI output
+precedes the application splash; a basic valid signal is useful even before
+there is polished content to display.
+
+When physical timing testing resumes, record power-on to HDMI detection, Bluetooth
+profile readiness, radio connection, HondaLink handshake/display enable, splash
+and usable Home separately. Correlate the physical observations with the journal
+milestones. The radio may gate its visible display until authentication, so a
+black screen alone does not prove the Pi has no HDMI signal. If the first frame
+is late, investigate kernel/firmware HDMI setup and minimal splash initialization
+before spending time on visual polish. Do not change bootloader settings or
+bypass recovery solely to improve a systemd timing figure.
+
+## Service-disable candidates
+
+These began as candidates; the live service-trimming results below record which
+have now been disabled on the test Pi. Confirm presence, enabled state and contribution to the critical
+path or CPU/SD contention on our actual image. Compare cold boots before and after
+each change; a large `systemd-analyze blame` duration alone is insufficient.
+
+| Candidate | Proposed treatment and conditions |
+| --- | --- |
+| `NetworkManager-wait-online.service` | Disable the network-readiness wait if no required service needs it. HLauncher does not depend on `network-online.target`. Keep NetworkManager itself for Wi-Fi, recovery and updates. |
+| `cloud-init` | Disable if installed and no longer needed after provisioning. Audit any image provisioning dependency first; retain HLauncher's own first-boot setup and storage expansion. |
+| `rpi-eeprom-update.service` | Consider removing automatic boot-time firmware maintenance from the normal startup path. Retain a deliberate, supported bootloader firmware update procedure. |
+| `e2scrub_reap.service` | Consider disabling on our standard non-LVM SD-card layout. This cleans stale LVM scrub snapshots; retain normal filesystem checks and persistent-storage integrity checks. |
+
+References: [NetworkManager wait-online](https://www.networkmanager.dev/docs/api/1.38.6/NetworkManager-wait-online.service.html),
+[disabling cloud-init](https://docs.cloud-init.io/en/latest/howto/disable_cloud_init.html),
+[Raspberry Pi EEPROM updates](https://github.com/raspberrypi/rpi-eeprom),
+[e2scrub_reap service](https://github.com/tytso/e2fsprogs/blob/v1.47.0/scrub/e2scrub_reap.service.in)
+and [e2scrub manual](https://manpages.debian.org/bookworm/e2fsprogs/e2scrub.8.en.html).
+
+Any eventual service-policy changes must also work through the existing updater
+and rollback path; changing only the fresh-install image would leave existing
+installations behind. No service is disabled by this documentation change.
+
 ## Capture a cold boot
 
 After installing this branch, perform a normal, safely shut-down cold boot.
@@ -64,7 +138,8 @@ Keep the initramfs: `hlauncher.storage.verify_overlay()` explicitly requires its
 overlayroot hook and kernel overlay module for SD-card protection. Bootloader
 HDMI/boot-order changes and base-image service pruning are separate image or
 validated-system-migration experiments, not ordinary app-update changes.
-No kernel/EEPROM/network/service-order settings are changed by this branch.
+The application patch changes no kernel/EEPROM/network/service-order settings.
+The separate live base-system service experiment is recorded below.
 
 The existing updater system contract is unchanged. Live Pi timing and
 installation/rollback verification are still required before publishing a
@@ -74,3 +149,92 @@ Offline validation on 2026-11-20: 28 focused boot/display/collector tests pass.
 The full suite ran 368 tests: 360 passed, three skipped and five errored because
 libsoxr is not installed on the Mac. The dongle-free bridge self-test passes.
 A source comparison confirms the immutable updater system contract is unchanged.
+
+## First live software timing run: 2026-11-20
+
+Installed a boot-only patch onto the Pi's existing 0.2.12 application, preserving
+its older application code outside these changes. Backed up the exact original
+files on the Pi and research share. Storage protection remained enabled; no boot
+units, firmware settings or candidate services were changed. The app activated
+successfully before reboot and returned after reboot with zero service restarts.
+
+| Measurement | Existing boot | Instrumented reboot |
+| --- | --- | --- |
+| Kernel plus userspace startup completion (`systemd-analyze time`) | 14.183 s | 13.996 s |
+| Bluetooth profiles ready (kernel clock) | 7.481 s (systemd readiness) | 7.342 s |
+| Splash submitted (kernel clock) | Not instrumented | 8.965 s |
+| First full UI frame submitted (kernel clock) | Not instrumented | 9.410 s |
+
+This is one existing boot and one reboot, not a repeated cold-boot comparison.
+The 0.187 s total difference does not establish an improvement. Firmware/power-on
+time and the radio's physical HDMI detection/display were not measured; do not
+claim the power-on goal is met from these numbers. The user requested raw Pi
+boot timings for this pass, without an in-car visual timing check.
+
+`NetworkManager-wait-online` finished at 13.943 s and took 6.299 s on the reboot,
+after HLauncher had already started. It is a strong candidate for reducing the
+overall system startup figure, without assuming the same gain for Bluetooth or
+the UI. `e2scrub_reap` took 1.499 s and `rpi-eeprom-update` 1.014 s; these overlap
+other work. The launcher dependency chain includes about 1.508 s of updater
+startup/recovery, which must remain safe. Reports and the exact live patch are
+under `radio-research/boot-time-2026-11-20` on the research share.
+
+## Live service-trimming experiment: 2026-11-20
+
+At the user's request, disabled the installed boot enables for
+`NetworkManager-wait-online.service`, `rpi-eeprom-update.service` and
+`e2scrub_reap.service`. `cloud-init` units are absent on this Pi. NetworkManager
+itself remains enabled. The SD card uses three ordinary partitions, with no LVM
+volumes or mounted network filesystems. The only observed consumer of
+`network-online.target` was NFS restart notification, not HLauncher.
+
+Used the installed `overlayroot-chroot` maintenance utility to persist the unit
+enable changes. Its cleanup could not remount the underlying root read-only, so
+synced and rebooted immediately. Both subsequent boots confirmed the underlying
+root was read-only again and `/` remained an overlay. All three disabled units
+had zero execution timestamps, and systemd reported no failed units.
+
+| Measurement from kernel startup | Before service changes | Trimmed reboot 1 | Trimmed reboot 2 |
+| --- | --- | --- | --- |
+| Kernel/initramfs phase | 2.229 s | 3.610 s | 2.212 s |
+| Userspace startup completion | 11.766 s | 5.697 s | 5.694 s |
+| Kernel plus userspace total | 13.996 s | 9.308 s | 7.907 s |
+| Bluetooth profiles ready | 7.342 s | 8.592 s | 7.244 s |
+| Splash frame submitted | 8.965 s | 10.161 s | 8.786 s |
+| Full UI frame submitted | 9.410 s | 10.606 s | 9.243 s |
+
+Userspace startup completion improved by about 6.07 s on both trimmed boots.
+The large gain is in the overall system startup figure; Bluetooth and UI gains
+are much smaller. The first trimmed boot's slower kernel/initramfs phase affected
+all later markers. These are warm reboots, not power-on or physical HDMI-display
+measurements. Systemd completion precedes the first full UI frame because the
+app deliberately announces Bluetooth readiness before graphics are finished.
+
+Original enabled states and unit definitions are backed up under
+`/persist/hlauncher-boot-test-20261120/service-policy` and in
+`live-service-analysis.tar.gz` on the research share. Restoration consists of
+re-enabling those three units in writable maintenance mode and rebooting.
+EEPROM firmware can still be maintained deliberately with its installed tool.
+This is a base-system experiment; the application bundle does not yet apply or
+roll back these service-policy changes. A validated migration for existing
+installations is required before shipping that policy through HLauncher updates.
+
+## Further trimming candidates, not yet changed
+
+Durations below are from the second trimmed boot. They overlap and must not be
+added together as projected savings.
+
+| Candidate | Evidence and next investigation |
+| --- | --- |
+| `udisks2.service` | 1.111 s. HLauncher's USB plugin source code uses `lsblk` and direct read-only `mount`/`umount`, rather than UDisks. Investigate removing its boot enable while retaining USB installation and any needed on-demand activation. |
+| `ModemManager.service` | 0.704 s. No HLauncher source dependency found. Consider excluding cellular-modem management from the appliance profile after checking NetworkManager/USB behavior; ordinary disabling may still permit D-Bus activation. |
+| `hlauncher-grow.service` | 1.155 s. Even the already-expanded path probes partition geometry with several subprocesses. Investigate deferring routine checks until after the first UI frame. Preserve first-boot growth, replacement-card detection and interrupted-growth retries. |
+| `dphys-swapfile.service` | 0.467 s, but `swapon --show` reported no active swap. Verify overlayroot behavior and whether this service does useful work before disabling it. Retain an appropriate memory policy for projection workloads. |
+| NFS client target/notification | No network filesystem mounts were present. NFS notification is what pulled in `network-online.target`; investigate removing the unused client boot path if remote filesystems are not a supported feature. |
+| Basic splash preparation | About 1.54 s between display preparation and first splash submission on the repeat boot. A separate warm import profile attributes about 0.308 s to `hlauncher.display`, including about 0.183 s to NumPy. Profile cold imports, framebuffer setup and rendering separately, then consider a minimal/cached splash and deferred image-processing imports. Warm import numbers do not explain the entire cold-boot interval. |
+| Updater startup/recovery | 1.347 s on the app dependency chain. Profile the no-pending-update path for avoidable work; preserve transaction recovery, rollback and safe persistent mounts before starting the app. |
+
+Keep BlueZ, Bluetooth UART setup, BlueALSA, HondaLink pairing/reconnect, required
+filesystem checks, overlayroot/initramfs and recovery functionality. Do not prune
+security or OS-update maintenance merely because it appears in the enabled-unit
+list; schedule nonessential work after startup where appropriate.

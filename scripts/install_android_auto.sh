@@ -32,13 +32,6 @@ apply_patch() {
   fi
 }
 apply_patch aasdk
-# Apply the USB exclusion independently so installations with the original
-# integration patch can upgrade without discarding their recognized changes.
-projection_patch="$(pwd)/third_party/patches/aasdk-projection.patch"
-if ! git -C "$prefix/src/aasdk" apply --reverse --check "$projection_patch" 2>/dev/null; then
-  git -C "$prefix/src/aasdk" apply --check "$projection_patch"
-  git -C "$prefix/src/aasdk" apply "$projection_patch"
-fi
 apply_patch openauto
 cmake -S "$prefix/src/aasdk" -B "$prefix/build/aasdk" -DCMAKE_BUILD_TYPE=Release \
   -DCMAKE_INSTALL_PREFIX="$prefix" -DSKIP_BUILD_PROTOBUF=ON -DSKIP_BUILD_ABSL=ON \

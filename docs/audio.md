@@ -243,7 +243,8 @@ Phone-call routing and microphone support remain separate checks.
 ## Clean shutdown
 
 Settings → System → Shut down opens a confirmation page and requests
-`systemctl poweroff --no-block`. Diagnostics also links to that confirmation.
+`systemctl poweroff --no-block`. The same page offers **Restart**, which requests
+`systemctl reboot --no-block` and shows restart progress. Diagnostics also links to that confirmation.
 See the [optional Arduino Nano power controller](../firmware/power-controller/README.md)
 for the separate ignition and shutdown hardware experiment.
 

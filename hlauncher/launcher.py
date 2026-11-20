@@ -821,24 +821,32 @@ class Launcher:
         self.tone_test.stop()
         self.diagnostics.stop()
         self.shutdown_return = self.system_diagnostics if self.mode in ('diagnostics','protocol_tests') or self.mode.startswith('debug_') else self.system_settings
+        self.shutdown_action = 'poweroff'
         self.mode = 'shutdown_confirm'
         self.press = self.pressed_box = None
         self.banner = ''
         self.draw()
 
     def shutdown_pi(self):
+        self.request_power_action('poweroff')
+
+    def restart_pi(self):
+        self.request_power_action('reboot')
+
+    def request_power_action(self, action):
         self.tone_test.stop()
+        self.shutdown_action = action
         self.mode = 'shutdown_pending'
         self.banner = ''
         self.draw()
         try:
-            subprocess.run(['systemctl','poweroff','--no-block'], check=True,
+            subprocess.run(['systemctl',action,'--no-block'], check=True,
                            capture_output=True, text=True, timeout=3)
-            self.event(state='system_poweroff_requested')
+            self.event(state='system_'+action+'_requested')
         except (OSError, subprocess.SubprocessError) as exc:
             self.mode = 'shutdown_confirm'
-            self.banner = 'Shutdown failed; Pi is still running.'
-            self.event(state='system_poweroff_failed', error=str(exc))
+            self.banner = ('Restart' if action=='reboot' else 'Shutdown')+' failed; Pi is still running.'
+            self.event(state='system_'+action+'_failed', error=str(exc))
             self.draw()
 
     def diagnostic_runtime(self):

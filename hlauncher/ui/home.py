@@ -236,7 +236,10 @@ def render(layout, *, theme='Red', size=(720,480), page=0, clock=None,
 def launcher_layout(launcher, presentation=None):
     from .home_edit import SETTINGS, display_pages
 
-    entries=[Entry(m.name,'phone-projection' if m.id in ('carplay','android-auto') else m.icon or m.id,lambda pid=m.id:launcher.open_plugin(pid),m.id)
+    projection_name, projection_icon = launcher.projection_tile()
+    entries=[Entry(projection_name if m.id in ('carplay','android-auto') else m.name,
+                   projection_icon if m.id in ('carplay','android-auto') else m.icon or m.id,
+                   lambda pid=m.id:launcher.open_plugin(pid),m.id)
              for m in launcher.home_manifests()]
     # entries.append(Entry('Audio', 'audio', launcher.audio_page, AUDIO))
     entries.append(Entry('Settings', 'settings', launcher.settings, SETTINGS))

@@ -1340,6 +1340,21 @@ class Launcher:
     def test_radio_button(self, name):
         self.inputs.offer(name,'trigger','screen')
 
+    def projection_tile(self):
+        order = (self.host.active,) + tuple(ident for ident in ('carplay', 'android-auto') if ident != self.host.active)
+        for ident in order:
+            if ident not in PROJECTIONS:
+                continue
+            metrics = getattr(self.host.workers.get(ident), 'metrics', {})
+            if metrics.get('phone_connected') is not True:
+                continue
+            protocol = 'Android Auto' if ident == 'android-auto' else metrics.get('adapter_info', {}).get('protocol')
+            if protocol == 'CarPlay':
+                return 'CarPlay', 'carplay'
+            if protocol == 'Android Auto':
+                return 'Android Auto', 'android-auto'
+        return 'Phone Projection', 'phone-projection'
+
     def home_manifests(self):
         from dataclasses import replace
         entries = sorted(self.enabled(), key=lambda m: (not m.bundled, m.id != 'carplay', m.name.casefold()))
@@ -1584,7 +1599,10 @@ class Launcher:
             self.audio_process_checked = now
             if hasattr(self.audio.playback, 'check'):
                 self.audio.playback.check()
+        previous_projection_tile = self.projection_tile()
         self.host.tick()
+        if self.mode == 'home' and self.projection_tile() != previous_projection_tile:
+            self.draw()
         if self.mode == 'phone_projection':
             connected = next((ident for ident, worker in self.host.workers.items()
                 if ident in PROJECTIONS and (getattr(worker, 'video_available', False)

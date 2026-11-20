@@ -28,6 +28,35 @@ class RadioUI(unittest.TestCase):
         self.ui=Launcher(framebuffer=Display(),preferences=prefs,manifests=manifests)
     def tearDown(self):self.ui.close();self.temp.cleanup()
 
+    def test_projection_tile_tracks_negotiated_protocol_without_changing_home_identity(self):
+        from hlauncher.ui.home import launcher_layout
+        ui = self.ui
+        original = ui.home_pages()
+        worker = SimpleNamespace(metrics={'phone_connected': True, 'adapter_info': {'protocol': 'CarPlay'}})
+        with patch.object(ui.host, 'workers', {'carplay': worker}):
+            for connected, protocol, expected in (
+                    (True, 'CarPlay', ('CarPlay', 'carplay')),
+                    (True, 'Android Auto', ('Android Auto', 'android-auto')),
+                    (False, 'CarPlay', ('Phone Projection', 'phone-projection')),
+                    (True, '', ('Phone Projection', 'phone-projection'))):
+                worker.metrics = {'phone_connected': connected, 'adapter_info': {'protocol': protocol}}
+                entry = next(entry for page in launcher_layout(ui) for entry in page if entry and entry.id == 'carplay')
+                self.assertEqual((entry.label, entry.icon), expected)
+                self.assertEqual(ui.home_pages(), original)
+            worker.metrics = {'phone_connected': True}
+            with patch.object(ui.host, 'workers', {'android-auto': worker}):
+                entry = next(entry for page in launcher_layout(ui) for entry in page if entry and entry.id == 'carplay')
+                self.assertEqual((entry.label, entry.icon), ('Android Auto', 'android-auto'))
+        ui.home_clock = time.strftime('%Y-%m-%d %H:%M')
+        ui.projection_checked = time.monotonic()
+        ui.projection_appearance_checked = time.monotonic()
+        def connect():
+            worker.metrics = {'phone_connected': True, 'adapter_info': {'protocol': 'CarPlay'}}
+        worker.metrics = {'phone_connected': False}
+        with patch.object(ui.host, 'workers', {'carplay': worker}), patch.object(ui.host, 'tick', side_effect=connect), patch.object(ui, 'draw') as draw:
+            ui.tick()
+            draw.assert_called_once()
+
     def test_phone_favorite_and_connect_controls_use_known_paired_identity(self):
         import hashlib
         ui = self.ui

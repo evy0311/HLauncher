@@ -71,7 +71,7 @@ class RadioUI(unittest.TestCase):
     def test_every_settings_and_diagnostics_page_has_identical_header_and_valid_actions(self):
         ui=self.ui
         ui.system_settings();header=ui.fb.last.crop((80,0,720,52))
-        methods=[ui.ssh_settings,ui.adapter_branding_page,ui.appearance_settings,ui.startup_settings,ui.recovery_page,lambda:ui.storage_confirm(True),ui.plugin_settings,lambda:ui.plugin_detail('carplay'),lambda:ui.plugin_detail('obd'),ui.tile_colors,
+        methods=[ui.ssh_settings,ui.adapter_branding_page,ui.adapter_info_page,ui.appearance_settings,ui.startup_settings,ui.recovery_page,lambda:ui.storage_confirm(True),ui.plugin_settings,lambda:ui.plugin_detail('carplay'),lambda:ui.plugin_detail('obd'),ui.tile_colors,
                  ui.color_settings,ui.system_diagnostics,ui.protocol_tests,
                  lambda:ui.protocol_tab(4),
                  lambda:ui.set_integration_tab('Buttons'),
@@ -264,13 +264,15 @@ class RadioUI(unittest.TestCase):
         self.assertTrue(ui.prefs.auto_night('carplay'))
         self.assertTrue(ui.prefs.auto_night('android-auto'))
         ui.plugin_detail('carplay')
+        ui.list_offsets['plugin:carplay'] = 56
+        ui.draw()  # Keep the existing controls visible below Dongle info.
         carplay = SimpleNamespace(manifest=ui.manifests['carplay'], send=Mock(return_value=True))
         with patch.object(ui.host, 'workers', {'carplay': carplay}), \
                 patch.object(ui.protocols, 'illumination_night_mode', return_value=True):
             ui.host.sync_projection_appearance()
             ui.host.sync_projection_appearance()
             carplay.send.assert_called_once_with(type='projection.appearance', night_mode=True)
-            next(action for box, action in ui.actions if box[:2] == (24, 320))()
+            next(action for box, action in ui.actions if box[:2] == (24, 328))()
             carplay.send.assert_called_with(type='projection.appearance', night_mode=False)
             self.assertTrue(ui.projection_night_mode('android-auto'))
         ui.plugin_detail('android-auto')
@@ -284,7 +286,9 @@ class RadioUI(unittest.TestCase):
         ui.plugin_detail('carplay')
         self.assertFalse(ui.prefs.car_gps('carplay'))
         self.assertFalse(ui.prefs.car_gps('android-auto'))
-        next(action for box, action in ui.actions if box[:2] == (24, 384))()
+        ui.list_offsets['plugin:carplay'] = 56
+        ui.draw()
+        next(action for box, action in ui.actions if box[:2] == (24, 392))()
         self.assertTrue(Preferences(ui.prefs.path).car_gps('carplay'))
         ui.plugin_detail('android-auto')
         next(action for box, action in ui.actions if box[:2] == (24, 256))()

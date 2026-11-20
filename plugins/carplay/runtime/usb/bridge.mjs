@@ -375,6 +375,7 @@ while(!device && !shutting) {
 }
 if(shutting) process.exit(0);
 await device.open();
+status('dongle_identity',{vendor_id:device.vendorId,product_id:device.productId});
 // Remote USB exporters may not survive a USB reset. Default: no automatic reset.
 if(process.env.CIVIC_CARPLAY_RESET==='1') {
   status('resetting_dongle');await device.reset();await device.close();
@@ -409,6 +410,10 @@ driver.on('message',message=>{
   }
   else if(message instanceof BoxInfo) {
     console.error(JSON.stringify({state:'dongle_box_info',settings:message.settings}));
+    const settings=Object.fromEntries(['productType','hwVersion','boxType','supportLinkType']
+      .filter(key=>typeof message.settings?.[key]==='string')
+      .map(key=>[key,message.settings[key].slice(0,160)]));
+    status('dongle_box_info',{settings});
   }
   else if(message instanceof Opened) {
     adapterOpened=true;
@@ -418,7 +423,7 @@ driver.on('message',message=>{
   }
   else if(message instanceof MediaData) { handleMedia(message); }
   else if(message instanceof Plugged) {
-    video.reset();lastPCM.clear();status('phone_connected',{phone_type:message.phoneType});
+    video.reset();lastPCM.clear();status('phone_connected',{phone_type:message.phoneType,wifi:message.wifi});
     appliedNightMode = undefined;
     void syncNightMode();
     gpsPhoneConnected = true;

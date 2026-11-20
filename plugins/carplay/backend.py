@@ -8,6 +8,7 @@ from hlauncher_sdk.projection import inherited_fds
 from collections import deque
 from input import TouchRouter
 from media import normalize
+from hlauncher.adapter_info import AdapterInfo
 
 RUNTIME = pathlib.Path(__file__).resolve().parent / "runtime/usb"
 LOG_DIR = pathlib.Path(
@@ -121,6 +122,7 @@ class CarplayHDMI:
         self.stop_event = threading.Event()
         self.frame = None
         self.phone_connected = False
+        self.adapter_info = AdapterInfo()
         self.last_decoded_at = None
         self.connection_epoch = 0
         self.version = 0
@@ -174,6 +176,7 @@ class CarplayHDMI:
         self.touch_router = TouchRouter()
         self.frame = None
         self.phone_connected = False
+        self.adapter_info = AdapterInfo()
         self.last_decoded_at = None
         self.frames = 0
         self.host_ui_requested = False
@@ -357,6 +360,7 @@ class CarplayHDMI:
     def metrics(self):
         with self.lock:
             return {
+                "adapter_info": self.adapter_info.snapshot(),
                 "adapter_branding": self.adapter_branding,
                 "adapter_branding_request_id":self.adapter_branding_request_id,
                 "adapter_branding_error":self.adapter_branding_error,
@@ -445,6 +449,8 @@ class CarplayHDMI:
 
     def receive_state(self, state):
         self.last_bridge_message = time.monotonic()
+        with self.lock:
+            self.adapter_info.update(state)
         self.receive_connection_state(state)
         if state.get('state') == 'stream_stats':
             with self.lock:

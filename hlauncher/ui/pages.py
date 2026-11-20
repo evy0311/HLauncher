@@ -330,6 +330,7 @@ def plugin_detail(ui):
         vehicle_settings(ui, rows)
         return
     if manifest.id=='carplay':
+        rows.append(Row('Dongle info', ui.adapter_info_page))
         rows.append(Row('Frame rate', ui.toggle_carplay_fps, value=f'{ui.prefs.carplay_fps} FPS'))
         rows.append(Row('Adapter icon',ui.adapter_branding_page))
     elif manifest.id=='obd':rows.append(Row('Coming soon', None))
@@ -346,6 +347,23 @@ def plugin_detail(ui):
     draw_rows(ui,p,rows,key='plugin:'+manifest.id)
     p.notice(ui.banner)
     present(ui,p)
+
+
+def adapter_info(ui):
+    p = page_for(ui, 'Dongle info', ui.plugin_detail)
+    worker = ui.host.workers.get('carplay')
+    info = getattr(worker, 'metrics', {}).get('adapter_info', {})
+    if not isinstance(info, dict):
+        info = {}
+    from ..adapter_info import text
+    fields = (('USB ID', 'usb_id'), ('Firmware', 'firmware'), ('Product', 'product'),
+              ('Hardware', 'hardware'), ('AA support', 'aa_support'),
+              ('Phone protocol', 'protocol'), ('Transport', 'transport'))
+    rows = [Row(label, None, value=text(info.get(key)) or 'Unknown') for label, key in fields]
+    draw_rows(ui, p, rows, bottom=422, key='adapter-info', size=22)
+    p.notice('Live adapter reports; AA support still needs a connection test' if info
+             else 'Waiting for reports; enable CarPlay and connect the dongle')
+    present(ui, p)
 
 
 def adapter_branding(ui):
@@ -549,7 +567,7 @@ def waiting(ui):
     present(ui,p)
 
 
-PAGES={'ssh_settings':ssh,'adapter_branding':adapter_branding,'appearance_settings':appearance,'startup_settings':startup,'system_settings':system,'recovery_settings':network,'hotspot_settings':hotspot,'wifi_power_settings':wifi_power,'storage_confirm':storage,
+PAGES={'ssh_settings':ssh,'adapter_branding':adapter_branding,'adapter_info':adapter_info,'appearance_settings':appearance,'startup_settings':startup,'system_settings':system,'recovery_settings':network,'hotspot_settings':hotspot,'wifi_power_settings':wifi_power,'storage_confirm':storage,
        'plugins_settings':plugins,'plugin_detail':plugin_detail,'tile_colors':themes,'colors':picture,'hdmi_test':hdmi,
        'shutdown_confirm':shutdown,'shutdown_pending':shutdown,'about_settings':about,
        'legal_info':legal_info,'audio_coming_soon':audio_coming_soon,

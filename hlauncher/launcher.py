@@ -645,6 +645,12 @@ class Launcher:
         self.banner=''
         self.draw()
 
+    def adapter_info_page(self):
+        self.host.deactivate()
+        self.mode = 'adapter_info'
+        self.press = None
+        self.draw()
+
     def toggle_carplay_fps(self):
         fps = 60 if self.prefs.carplay_fps == 30 else 30
         try:
@@ -1467,7 +1473,7 @@ class Launcher:
                 from .storage import status
                 self.storage_info = status()
             threading.Thread(target=inspect_storage,daemon=True).start()
-        if self.mode in ('onboarding','system_settings','recovery_settings','hotspot_settings','wifi_power_settings','storage_confirm','updates','update_notes','adapter_branding','ssh_settings'):
+        if self.mode in ('onboarding','system_settings','recovery_settings','hotspot_settings','wifi_power_settings','storage_confirm','updates','update_notes','adapter_branding','adapter_info','ssh_settings'):
             if time.monotonic()-getattr(self,'setup_redraw',0)>1:
                 self.setup_redraw=time.monotonic()
                 if self.mode=='updates' and self.banner=='Requested':self.banner=''

@@ -1,0 +1,12 @@
+[Unit]
+Description=Keep Wi-Fi quiet until HLauncher finishes startup
+Before=hlauncher.service NetworkManager.service wpa_supplicant.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/sbin/rfkill block wifi
+ExecStart=/usr/bin/touch /run/hlauncher-wifi-boot-hold
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

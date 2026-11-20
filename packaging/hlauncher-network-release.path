@@ -1,0 +1,9 @@
+[Unit]
+Description=Release network services after the first complete HLauncher UI
+
+[Path]
+PathExists=/run/hlauncher-ui-ready
+Unit=hlauncher-network-release.service
+
+[Install]
+WantedBy=paths.target

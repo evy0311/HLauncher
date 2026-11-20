@@ -1,0 +1,9 @@
+[Unit]
+Description=Release deferred HLauncher network and maintenance services
+RequiresMountsFor=/persist
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/touch /run/hlauncher-network-ready
+ExecStart=/bin/systemctl start --no-block hlauncher-network.target
+RemainAfterExit=yes

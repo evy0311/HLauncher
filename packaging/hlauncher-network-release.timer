@@ -1,0 +1,10 @@
+[Unit]
+Description=Recover network access if HLauncher does not finish booting
+
+[Timer]
+OnBootSec=60s
+AccuracySec=1s
+Unit=hlauncher-network-release.service
+
+[Install]
+WantedBy=timers.target

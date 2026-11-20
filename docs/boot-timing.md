@@ -297,3 +297,85 @@ they are not automatically deployed by an application update. Production image
 policy and a reversible migration for existing installations remain required
 before shipping those settings. Do not apply a fresh-image-only shortcut that
 leaves current installations or rollback behind.
+
+## UI-first network startup experiment: 2026-11-20
+
+At the user's request, defer Pi IP networking and boot maintenance until the
+launcher has submitted its full first UI frame and completed initialization.
+Bluetooth remains on the early path. The gate uses a fresh `/run` marker each
+boot, so restarting the application later does not interrupt networking.
+
+- `BootstrapLauncher` publishes `/run/hlauncher-ui-ready` after the factory
+  finishes and `launcher_initialized` is logged. A systemd path unit then starts
+  the release service, which creates `/run/hlauncher-network-ready` and starts
+  `hlauncher-network.target` asynchronously.
+- The live experiment installs `ConditionPathExists` gates on NetworkManager
+  and its dispatcher, supplicant services/templates, networkd/service socket,
+  Avahi/service socket, time synchronization, SSH/service socket, SSH-switch
+  handling, recovery, first-boot maintenance, cron and maintenance services/timers.
+  They cannot start via ordinary boot dependencies or D-Bus/socket activation
+  before the release marker. The target starts the previously used network and
+  maintenance services after release. SSH is started by first-boot maintenance
+  according to the existing saved owner opt-in, not unconditionally.
+- An early Wi-Fi-only rfkill hold prevents radio activity; recovery retains the
+  existing Wi-Fi On/Off/Auto policy when it resumes. Bluetooth is not blocked.
+- The updater's original interrupted-update preflight remains before the app.
+  Its long-running, network-capable daemon waits for the network-release marker
+  through a separate wrapper. Persisted bytecode avoids recompiling the stable
+  updater source on each overlay boot; source hashes were verified unchanged.
+  This does not claim a new or bypassed recovery algorithm.
+- A separate 60-second timer releases networking if UI initialization fails or
+  an older app does not publish readiness. This is an intentional recovery
+  exception to the normal UI-first rule. The normal path was observed twice;
+  a deliberately broken-UI boot was not tested.
+- Raised startup CPU weight to 500 for BlueZ, BlueALSA, HLauncher and reconnect.
+  Deferred NumPy until RGB565 encoding is actually needed and submitted the
+  paired-boot KMS splash directly in BGRX. The framebuffer fallback and the
+  normal UI/picture-processing path remain available.
+
+| Measurement from kernel startup | Previous combined batch, reboot 2 | Network gate, reboot 1 | Network gate, reboot 2 |
+| --- | --- | --- | --- |
+| Kernel/initramfs phase | 2.258 s | 3.636 s | 2.239 s |
+| Userspace startup completion | 4.863 s | 3.875 s | 4.160 s |
+| Kernel plus userspace total | 7.121 s | 7.511 s | 6.400 s |
+| Bluetooth profiles ready | 6.386 s | 7.451 s | 6.338 s |
+| Splash frame submitted | 7.780 s | 8.022 s | 6.911 s |
+| Full UI frame submitted | 8.343 s | 9.095 s | 7.986 s |
+| Launcher initialization complete | 8.344 s | 9.096 s | 7.987 s |
+| Network release service starts | Not gated | 9.134 s | 8.026 s |
+| NetworkManager starts | Before full UI | 9.617 s | 8.497 s |
+| Supplicant starts | Before full UI | 9.293 s | 8.166 s |
+| Avahi starts | Before full UI | 9.256 s | 8.129 s |
+| Time synchronization starts | Before full UI | 9.287 s | 8.160 s |
+| SSH starts | Before full UI | 9.969 s | 8.856 s |
+
+All recorded network/recovery/cron starts followed UI completion on both boots.
+The expanded final report also confirms first-boot maintenance starts after UI
+completion and that unused SSH/networkd sockets remain inactive. Both boots had
+no failed units, zero app restarts, successful deferred storage checking and an
+overlay root with the lower root read-only. The 21 focused startup, collector,
+network-signal and display tests passed; collector checks were repeated after
+expanding its unit inventory.
+
+The systemd startup figure excludes work intentionally deferred beyond normal
+target completion. On the two comparable shorter-kernel reboots, the new policy
+reduced that figure by 0.721 s, the splash time by 0.869 s and full UI time by
+0.357 s. Bluetooth readiness changed little. These are software reboot timings,
+not power-on/firmware or physical headunit-display measurements, and combined
+changes do not establish an individual contribution for each optimization.
+
+Backups are under `/persist/hlauncher-boot-test-20261120/network-gate` and
+`live-network-gate-backup.tar.gz` on the share. The exact experimental installer,
+root-file manifest/policy, both timing reports and expanded final validation are
+saved beside them. To restore the preceding experiment in writable maintenance
+mode: disable the three newly enabled gate units, remove only the root files
+listed in the backup manifest, restore backed-up app files and remove the two
+new app files, reload systemd and reboot. Do not remove shared drop-in directories
+or other administrators' files. Cached bytecode may remain; sources are unchanged.
+
+Source templates, UI signaling, display optimization and daemon wrapper are on
+the feature branch. The condition drop-ins, startup weights and root wrapper
+installation are experimental base-system policy, not an automatically deployed
+application update. Existing-updater migration and upgrade/rollback testing are
+still required before release; the source installer/updater contract files were
+not modified to bypass compatibility checks.

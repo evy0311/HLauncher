@@ -2,12 +2,16 @@
 
 import os, fcntl, struct
 from array import array
+from functools import lru_cache
 from PIL import Image, ImageEnhance
 from sdk.hlauncher_sdk.picture import DEFAULTS, NEUTRAL, validate
-try:
-    import numpy as np
-except ImportError:
-    np = None
+@lru_cache(maxsize=1)
+def numpy():
+    try:
+        import numpy as np
+        return np
+    except ImportError:
+        return None
 
 
 class Framebuffer:
@@ -116,6 +120,19 @@ class Framebuffer:
         # bypass this path; projection adjusts inside its existing swscale pass.
         self.blit(encode(adjust_image(im if im.mode=='RGB' else im.convert('RGB'), self.picture)))
 
+    def image_early(self, im):
+        """Submit the transient boot frame without loading RGB565 processing."""
+        self.open()
+        if self.kms is not None:
+            try:
+                self.kms.present(im.convert('RGB').tobytes('raw','BGRX'))
+                self.boot_frame_submitted()
+                return
+            except RuntimeError as exc:
+                self.event(state='display_fallback',reason=str(exc))
+                self.kms.close();self.kms=None
+        self.blit(encode(im),apply_picture=False)
+
     def image_exact(self,im, *, apply_picture=True):
         """Keep all 8 bits per channel on the HDMI calibration screen only."""
         self.open()
@@ -168,6 +185,7 @@ def adjust_image(image, values):
 
 
 def encode(im):
+    np = numpy()
     if np is not None:
         rgb = np.asarray(im.convert('RGB'), dtype=np.uint16)
         packed = ((rgb[:, :, 0] >> 3) << 11) | ((rgb[:, :, 1] >> 2) << 5) | (rgb[:, :, 2] >> 3)

@@ -51,6 +51,9 @@ class BootstrapLauncher:
         mark('launcher_initialization_started')
         self.ui = factory(self.event,**options)
         mark('launcher_initialized')
+        from .network_boot import signal_ui_ready
+        if not signal_ui_ready():
+            self.event(state='network_boot_signal_error')
         self.ui.request_hondalink_display_test = self.queue_display_test
         self.splash=None
         self.inputs = self.ui.inputs
@@ -139,7 +142,7 @@ class BootstrapLauncher:
         if paired:
             # Get a simple frame out before loading themed controls and artwork.
             from .ui.boot_splash import render
-            self.splash.image(render((self.splash.w,self.splash.h)))
+            self.splash.image_early(render((self.splash.w,self.splash.h)))
             self.splash_key=(True,time.strftime('%Y-%m-%d %H:%M'))
             return
         from .ui.first_boot import render

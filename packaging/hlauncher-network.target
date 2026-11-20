@@ -1,0 +1,4 @@
+[Unit]
+Description=HLauncher networking and maintenance after UI initialization
+Wants=NetworkManager.service hlauncher-recovery.service hlauncher-firstboot.service wpa_supplicant.service avahi-daemon.service avahi-daemon.socket systemd-timesyncd.service sshswitch.service
+Wants=cron.service apt-daily.timer apt-daily-upgrade.timer dpkg-db-backup.timer logrotate.timer man-db.timer fstrim.timer e2scrub_all.timer

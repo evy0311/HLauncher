@@ -11,6 +11,14 @@ UNITS = ('hlauncher.service', 'hlauncher-updater.service', 'hlauncher-audio.serv
          'NetworkManager-wait-online.service', 'rpi-eeprom-update.service', 'e2scrub_reap.service',
          'ModemManager.service', 'udisks2.service', 'dphys-swapfile.service', 'nfs-client.target',
          'hlauncher-grow.service', 'hlauncher-grow.timer', 'cloud-init.service')
+UNITS += ('hlauncher-network-hold.service', 'hlauncher-network-release.service',
+          'hlauncher-network-release.path', 'hlauncher-network-release.timer',
+          'NetworkManager.service', 'wpa_supplicant.service', 'avahi-daemon.service',
+          'systemd-timesyncd.service', 'ssh.service', 'ssh.socket', 'sshswitch.service',
+          'avahi-daemon.socket', 'hlauncher-firstboot.service', 'cron.service',
+          'systemd-networkd.service', 'systemd-networkd.socket',
+          'apt-daily.service', 'apt-daily-upgrade.service', 'dpkg-db-backup.service',
+          'logrotate.service', 'man-db.service', 'fstrim.service')
 PROPERTIES = ('Id', 'LoadState', 'UnitFileState', 'Type', 'After', 'Wants', 'Requires', 'ActiveState', 'SubState',
               'ExecMainStartTimestampMonotonic', 'ActiveEnterTimestampMonotonic', 'NRestarts')
 

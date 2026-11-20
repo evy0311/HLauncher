@@ -2,11 +2,12 @@
 
 Open **Settings → Audio**. Main media audio is fixed to stereo HDMI.
 The EQ screen has one PipeWire on/off control and fourteen gain controls.
-**Low** and **High** retain their existing six-band pages; **Deep bass** adds
-20 and 25 Hz. Tap a frequency or its track
+Frequencies run in order across three pages, with up to six bands per page.
+Swipe left/right over the tracks or use **Previous** and **Next**; the page
+count shows your position. Tap a frequency or its track
 to select a band. One shared pair of large +/− buttons adjusts the selected
 band, with its frequency and exact gain shown between them. Selection alone
-does not change the sound. Each bank remembers its selection while the page
+does not change the sound. Each page remembers its selection while the page
 is open. Tall tracks show the saved positions against +6, 0 and −6 dB marks.
 Each band moves in 1 dB steps from −6 to +6 dB:
 
@@ -23,7 +24,7 @@ preset persist atomically in `/var/lib/hlauncher/audio.json`, on the image's
 writable state partition. The audio process restores the selected route even
 while idle. First-boot maintenance no longer stops its graph after restoration.
 
-Old saved gains beyond ±6 dB are preserved. A bank containing them displays the
+Old saved gains beyond ±6 dB are preserved. A page containing them displays the
 previous ±12 dB scale and their exact values. Its outlying gains can be reduced
 toward the new range but cannot be increased farther. Choosing a preset replaces
 them explicitly. The saved format still accepts ±12 dB for updater rollback.
@@ -70,8 +71,8 @@ bass shelf behind a new preset. The development Pi had all three at zero.
 
 ### Two saved user presets
 
-Open **Presets → User presets**, then **Save current** beside **User 1** or
-**User 2**. Replacing an occupied slot requires confirmation. Tap a saved slot
+Open **Presets** to see all eight factory curves and both user slots on one
+screen. Tap **Save current** beside **User 1** or **User 2**. Replacing an occupied slot requires confirmation. Tap a saved slot
 to load it; saving/loading keeps PipeWire on/off and EQ bypass as selected.
 User slots capture all fourteen bands and any previous tone gains. Their active
 name and curve survive reboots; both slots survive application updates.

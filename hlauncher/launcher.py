@@ -586,10 +586,9 @@ class Launcher:
         self.audio_settings.refresh()
         self.mode = 'audio_settings'
         self.audio_bank = 0
-        self.audio_selected_bands = {0: 'b50', 1: 'b1k', 2: 'b25'}
+        self.audio_selected_bands = {0: 'b50', 1: 'b1k', 2: 'b8k'}
         self.audio_presets_open = False
-        self.audio_presets_page = 0
-        self.audio_user_presets = False
+        self.audio_swipe = None
         self.audio_confirm_save = None
         self.press = None
         self.audio_notice = ''
@@ -1359,6 +1358,9 @@ class Launcher:
             return
         if self.swipe_home(action, point):
             return
+        if self.mode=='audio_settings':
+            from .ui.audio import touch as audio_touch
+            if audio_touch(self,action,point):return
         from .ui.scroll_list import touch as scroll_touch
         if scroll_touch(self,action,point or self.last_xy):return
         if self.mode=='custom_color':

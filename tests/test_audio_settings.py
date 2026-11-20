@@ -60,7 +60,7 @@ class AudioSettingsTests(unittest.TestCase):
                 with patch.object(ui.audio_settings, 'status', return_value='PipeWire ready'):
                     ui.change_audio(pipewire=True)
                 self.assertTrue(AudioSettings(Path(folder)/'audio.json').values['pipewire'])
-                self.assertEqual(len(ui.actions), 14)
+                self.assertEqual(len(ui.actions), 13)
             finally:ui.close()
 
     def test_six_band_pages_keep_all_gains_and_presets_keep_bypass_state(self):
@@ -78,9 +78,9 @@ class AudioSettingsTests(unittest.TestCase):
 
             try:
                 ui.audio_page()
-                from hlauncher.ui.audio import BANKS
-                for bank,(_,keys) in enumerate(BANKS):
-                    tap(100+bank*228,456)
+                from hlauncher.ui.audio import BAND_PAGES
+                for bank,keys in enumerate(BAND_PAGES):
+                    if bank:tap(610,456)
                     for i, key in enumerate(keys):
                         before = dict(ui.audio_settings.values['bands'])
                         tap(80+i*112 if len(keys)==6 else 248+i*224,300)
@@ -90,20 +90,19 @@ class AudioSettingsTests(unittest.TestCase):
                 self.assertEqual(list(ui.audio_settings.values['bands'].values()), [1]*14)
                 # Editing remains possible while bypassed; it does not change the route.
                 self.assertFalse(ui.audio_settings.values['pipewire'])
-                tap(360,456)
+                tap(100,456)
                 tap(80, 300)
                 tap(84, 406)
-                self.assertEqual(ui.audio_settings.values['bands']['b500'], 0)
+                self.assertEqual(ui.audio_settings.values['bands']['b200'], 0)
                 tap(100, 456)
-                self.assertEqual(ui.audio_selected_bands[0], 'b315')
-                tap(360, 456)
-                self.assertEqual(ui.audio_selected_bands[1], 'b500')
+                self.assertEqual(ui.audio_selected_bands[0], 'b125')
+                tap(610, 456)
+                self.assertEqual(ui.audio_selected_bands[1], 'b200')
                 ui.change_audio(eq=False)
                 for index, name in enumerate(PRESETS):
                     ui.adjust_eq('bass', 2)
                     tap(580, 132)  # Presets
-                    if index==4:tap(610,456)
-                    tap(200, 134+(index%4)*72)
+                    tap(180+(index%2)*344,138+(index//2)*64)
                     self.assertFalse(ui.audio_presets_open)
                     self.assertEqual(ui.audio_bank, 1)
                     self.assertEqual(ui.audio_settings.preset_name(), name)
@@ -120,6 +119,35 @@ class AudioSettingsTests(unittest.TestCase):
                 self.assertEqual(ui.mode, 'home')
             finally:
                 ui.close()
+
+    def test_frequency_swipes_change_one_page_without_selecting_a_band(self):
+        from hlauncher.launcher import Launcher
+        from hlauncher.config import Preferences
+        from test_architecture import Display
+        with tempfile.TemporaryDirectory() as folder:
+            prefs=Preferences(Path(folder)/'settings.json');prefs.accept_safety_notice()
+            ui=Launcher(framebuffer=Display(),preferences=prefs,manifests={})
+            def event(action,x=0,y=0):
+                ui.update({'contacts':[dict(slot=0,action=action,has_position=action!='up',
+                    x_raw=round(x*32767/719),y_raw=round(y*32767/479))]})
+            def swipe(start,end):
+                event('down',*start);event('move',*end);event('up')
+            try:
+                ui.audio_page();before=dict(ui.audio_settings.values['bands'])
+                selected=dict(ui.audio_selected_bands)
+                swipe((600,280),(160,280));self.assertEqual(ui.audio_bank,1)
+                swipe((600,280),(160,280));self.assertEqual(ui.audio_bank,2)
+                swipe((600,280),(160,280));self.assertEqual(ui.audio_bank,2)
+                swipe((160,280),(600,280));self.assertEqual(ui.audio_bank,1)
+                swipe((160,240),(160,350));self.assertEqual(ui.audio_bank,1)
+                swipe((416,280),(430,280));self.assertEqual(ui.audio_bank,1)
+                self.assertEqual(ui.audio_selected_bands,selected)
+                self.assertEqual(ui.audio_settings.values['bands'],before)
+                # Preset selection remains a tap, never frequency-page navigation.
+                event('down',530,136);event('up')
+                self.assertTrue(ui.audio_presets_open)
+                swipe((600,280),(160,280));self.assertEqual(ui.audio_bank,1)
+            finally:ui.close()
 
     def test_single_pipewire_control_applies_eq_and_preserves_curve(self):
         from hlauncher.launcher import Launcher

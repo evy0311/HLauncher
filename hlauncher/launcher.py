@@ -8,7 +8,7 @@ from . import __version__
 from .debug_tools import InputMonitor, ToneTest
 from . import config
 from .diagnostics import Diagnostics
-from .audio_settings import AudioSettings, EQ_BANDS
+from .audio_settings import AudioSettings, EQ_BANDS, EQ_GAIN_LIMIT
 from .audio import AudioBroker
 from .catalog import discover
 from .config import Preferences
@@ -585,6 +585,9 @@ class Launcher:
         self.host.deactivate()
         self.audio_settings.refresh()
         self.mode = 'audio_settings'
+        self.audio_bank = 0
+        self.audio_selected_bands = {0: 'b50', 1: 'b1k'}
+        self.audio_presets_open = False
         self.press = None
         self.audio_notice = ''
         self.draw()
@@ -601,7 +604,13 @@ class Launcher:
     def adjust_eq(self, key, delta):
         if key in EQ_BANDS:
             bands = dict(self.audio_settings.values['bands'])
-            bands[key] = max(-12, min(12, bands[key]+delta))
+            gain = bands[key]
+            if gain > EQ_GAIN_LIMIT:
+                bands[key] = gain + min(0, delta)
+            elif gain < -EQ_GAIN_LIMIT:
+                bands[key] = gain + max(0, delta)
+            else:
+                bands[key] = max(-EQ_GAIN_LIMIT, min(EQ_GAIN_LIMIT, gain + delta))
             self.change_audio(bands=bands)
         else:
             self.change_audio(**{key: max(-12, min(12, self.audio_settings.values[key]+delta))})

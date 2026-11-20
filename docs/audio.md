@@ -1,16 +1,33 @@
 # Audio output and PipeWire EQ
 
-Open **Settings → Audio & EQ**. Main media audio is fixed to stereo HDMI.
-The page has PipeWire on/off, EQ bypass, **Flat**, **EDM Bass**, and twelve gain
-controls. Each band moves in 1 dB steps from −12 to +12 dB:
+Open **Settings → Audio**. Main media audio is fixed to stereo HDMI.
+The EQ screen has one PipeWire on/off control and twelve gain controls split
+between **Low** and **High**, six bands per page. Tap a frequency or its track
+to select a band. One shared pair of large +/− buttons adjusts the selected
+band, with its frequency and exact gain shown between them. Selection alone
+does not change the sound. Each bank remembers its selection while the page
+is open. Tall tracks show the saved positions against +6, 0 and −6 dB marks.
+Each band moves in 1 dB steps from −6 to +6 dB:
 
 31.5, 50, 80, 125, 200, 315, 500 Hz; 1, 2, 4, 8 and 16 kHz.
 
 The bands are peaking biquads with Q=1.4. Adjacent responses overlap: a +3 dB
-slider does not define a rectangular frequency bin. Flat sets every gain to zero;
-EQ bypass neutralizes all filters while leaving PipeWire running. PipeWire Off
-uses direct ALSA and does not process EQ. Settings persist atomically in
-`/var/lib/hlauncher/audio.json`. Gain changes apply during playback.
+slider does not define a rectangular frequency bin. **PipeWire On** enables the
+saved EQ curve; **Off** uses direct ALSA without EQ. There is no separate EQ
+switch. Choose **Flat** for neutral filters while PipeWire remains on. The status
+line distinguishes the selected route and saved adjustments. Band edits remain
+available while PipeWire is off, so you can prepare a curve without changing
+playback. Settings persist atomically in `/var/lib/hlauncher/audio.json`.
+
+Old saved gains beyond ±6 dB are preserved. A bank containing them displays the
+previous ±12 dB scale and their exact values. Its outlying gains can be reduced
+toward the new range but cannot be increased farther. Choosing a preset replaces
+them explicitly. The saved format still accepts ±12 dB for updater rollback.
+
+The old `eq` preference is retained for state compatibility. If an installation
+has PipeWire enabled with EQ bypassed, the screen shows **PipeWire bypassed**
+until the user acts. Tapping it enables both PipeWire and the saved curve;
+subsequent taps switch between that processed route and direct output.
 
 There is **no automatic preamp attenuation, normalization, compressor or limiter**.
 Float processing preserves peaks above unity; the final integer HDMI endpoint
@@ -20,16 +37,37 @@ something else. The sliders remain uncompensated as requested.
 
 ## Presets and previous settings
 
-EDM Bass sets +2/+3/+2 dB at 31.5/50/80 Hz, 0 at 125 Hz, −1 at 200/315 Hz and 0
-above. Its measured response is about +4.35 dB at 50 Hz because bands overlap.
-It is a starting point, not a car-specific subwoofer calibration. Flat is the
-initial reference for comparisons; presets do not turn PipeWire on automatically.
+Open **Presets / Reset** to select one of four starting points. The values below
+follow the twelve-band order above:
+
+| Preset | Band gains (dB) |
+| --- | --- |
+| Flat | 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 |
+| Bass lift | +1, +2, +1, 0, −1, −1, 0, 0, 0, 0, 0, 0 |
+| Vocal clarity | 0, 0, −1, −1, −1, 0, 0, +1, +2, +1, 0, 0 |
+| Softer treble | 0, 0, 0, 0, 0, 0, 0, 0, 0, −1, −2, −2 |
+
+These are mild tonal starting points, not measured corrections for a particular
+car or speaker system. Overlapping bands can produce more boost than any single
+slider value. Choosing a preset replaces all twelve bands and clears previous
+tone gains; manual changes become **Custom**. **Flat** is also the reset action.
+Presets preserve whether PipeWire is on or off (and any legacy bypass state). Existing saved
+curves, including the former EDM Bass curve, remain intact and appear as Custom.
 
 Existing bass/mid/treble values are preserved in three compatibility filters.
-If any are nonzero, the page explicitly says previous tone gains are active.
-Choosing either new preset clears those old gains before applying the twelve
+When EQ is enabled through PipeWire, the page says if previous tone gains also apply.
+Choosing any preset clears those old gains before applying the twelve
 bands. This avoids silently losing saved settings or silently stacking an old
 bass shelf behind a new preset. The development Pi had all three at zero.
+
+## PipeWire with neutral EQ
+
+Enabling PipeWire alone does not enable an enhancement, normalization,
+compression or limiting. Direct output and PipeWire both receive the same float
+mixer output and SoXR sample-rate conversion described below. With the Flat preset,
+the intended frequency response is neutral in both paths. PipeWire adds its
+graph, buffering, and endpoint conversion; it is not an automatic quality upgrade
+or a guaranteed bit-exact alternative. Timing and numerical output can differ.
 
 ## Processing and timing
 
@@ -149,8 +187,8 @@ capture-file A/B diagnostic (`--compare-pw-cat`), not as a production fallback.
 2. Start with Flat and PipeWire Off. Play a familiar track for several minutes
    and navigate HLauncher. Record any interruption.
 3. Turn PipeWire On with Flat. Repeat the same track/navigation and inspect drops,
-   graph errors and levels. Compare EQ bypass against Flat without changing route.
-4. Compare the radio's own subwoofer level first. Then try EDM Bass, adjusting
+   graph errors and levels. Use PipeWire Off to compare against the direct route.
+4. Compare the radio's own subwoofer level first. Then try Bass lift, adjusting
    31.5/50/80 Hz separately. Use 125/200/315 Hz to reduce upper-bass muddiness.
 5. If distortion appears, return to Flat and compare stage peaks. Any boost can
    exceed full scale on a loud recording; lower individual bands as desired.

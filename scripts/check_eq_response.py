@@ -68,7 +68,7 @@ def main():
                 error=float(np.max(np.abs(actual-expected[:,None])))
                 assert error<.12,(name,error)
                 report['presets'][name]=dict(measured_db=actual[:,0].tolist(),max_model_error_db=error)
-            bypass,_=bench.render(stereo,values=dict(eq=False,bands=PRESETS['EDM Bass'],bass=12,mid=-6,treble=4))
+            bypass,_=bench.render(stereo,values=dict(eq=False,bands=PRESETS['Bass lift'],bass=12,mid=-6,treble=4))
             report['bypass_gain_db']=(20*np.log10(spectrum(bypass,freqs)/flat)).tolist()
             assert np.max(np.abs(report['bypass_gain_db']))<.02
             # Large boost must remain visible above unity in float, not trigger compensation.

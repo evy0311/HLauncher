@@ -13,8 +13,13 @@ RUNTIME = os.environ.get('HLAUNCHER_PIPEWIRE_RUNTIME_DIR', '/run/hlauncher-pipew
 BANDS = {'bass': ('Bass', 100), 'mid': ('Mid', 1000), 'treble': ('Treble', 8000)}
 EQ_BANDS = dict(zip(('b31','b50','b80','b125','b200','b315','b500','b1k','b2k','b4k','b8k','b16k'),
                    (31.5,50,80,125,200,315,500,1000,2000,4000,8000,16000)))
+# New UI adjustments use this range. Keep accepting saved ±12 dB values below
+# so an update or rollback never silently rewrites an existing curve.
+EQ_GAIN_LIMIT = 6
 PRESETS = {'Flat': dict.fromkeys(EQ_BANDS, 0),
-           'EDM Bass': dict(zip(EQ_BANDS, (2,3,2,0,-1,-1,0,0,0,0,0,0)))}
+           'Bass lift': dict(zip(EQ_BANDS, (1,2,1,0,-1,-1,0,0,0,0,0,0))),
+           'Vocal clarity': dict(zip(EQ_BANDS, (0,0,-1,-1,-1,0,0,1,2,1,0,0))),
+           'Softer treble': dict(zip(EQ_BANDS, (0,0,0,0,0,0,0,0,0,-1,-2,-2)))}
 
 
 class PipeWireService:

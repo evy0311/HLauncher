@@ -52,7 +52,7 @@ class AudioSettingsTests(unittest.TestCase):
             ui = Launcher(framebuffer=Display(), preferences=Preferences(Path(folder)/'settings.json'), manifests={})
             try:
                 ui.settings()
-                self.assertNotIn(ui.audio_page, [action for _, action in ui.actions])
+                self.assertIn(ui.audio_page, [action for _, action in ui.actions])
                 ui.audio_page()
                 self.assertEqual(ui.mode, 'audio_settings')
                 ui.adjust_eq('bass', 1)
@@ -60,47 +60,133 @@ class AudioSettingsTests(unittest.TestCase):
                 with patch.object(ui.audio_settings, 'status', return_value='PipeWire ready'):
                     ui.change_audio(pipewire=True)
                 self.assertTrue(AudioSettings(Path(folder)/'audio.json').values['pipewire'])
-                self.assertEqual(len(ui.actions), 28)
+                self.assertEqual(len(ui.actions), 13)
             finally:ui.close()
 
-    def test_themed_audio_controls_route_each_band_and_home(self):
+    def test_six_band_pages_keep_all_gains_and_presets_keep_bypass_state(self):
         from hlauncher.launcher import Launcher
         from hlauncher.config import Preferences
         from test_architecture import Display
         with tempfile.TemporaryDirectory() as folder:
             prefs = Preferences(Path(folder)/'settings.json')
             prefs.accept_safety_notice()
-            ui=Launcher(framebuffer=Display(),preferences=prefs,manifests={})
+            ui = Launcher(framebuffer=Display(), preferences=prefs, manifests={})
+
+            def tap(x, y):
+                next(action for (l, t, r, b), action in ui.actions
+                     if l <= x < r and t <= y < b)()
+
             try:
                 ui.audio_page()
-                for i,key in enumerate(EQ_BANDS):
-                    ui.actions[4+2*i][1]()
-                    self.assertEqual(ui.audio_settings.values['bands'][key],1)
-                self.assertEqual(list(ui.audio_settings.values['bands'].values()),[1]*12)
-                ui.adjust_eq('bass',2)
-                ui.actions[2][1]()  # EQ Off
-                ui.actions[3][1]()  # Reset EQ
-                self.assertEqual(ui.audio_settings.values['bass'],0)
-                self.assertFalse(ui.audio_settings.values['eq'])
-                self.assertEqual(ui.audio_settings.preset_name(),'Flat')
+                for bank in (0, 1):
+                    tap(180 if bank == 0 else 530, 456)
+                    for i, key in enumerate(list(EQ_BANDS)[bank*6:bank*6+6]):
+                        before = dict(ui.audio_settings.values['bands'])
+                        tap(80+i*112, 300)  # Select a band without changing its gain.
+                        self.assertEqual(ui.audio_settings.values['bands'], before)
+                        tap(636, 406)  # Shared increase control.
+                        self.assertEqual(ui.audio_settings.values['bands'][key], 1)
+                self.assertEqual(list(ui.audio_settings.values['bands'].values()), [1]*12)
+                # Editing remains possible while bypassed; it does not change the route.
                 self.assertFalse(ui.audio_settings.values['pipewire'])
-                ui.actions[0][1]()
-                self.assertEqual(ui.mode,'home')
-            finally:ui.close()
+                tap(80, 300)
+                tap(84, 406)
+                self.assertEqual(ui.audio_settings.values['bands']['b500'], 0)
+                tap(180, 456)
+                self.assertEqual(ui.audio_selected_bands[0], 'b315')
+                tap(530, 456)
+                self.assertEqual(ui.audio_selected_bands[1], 'b500')
+                ui.change_audio(eq=False)
+                for index, name in enumerate(PRESETS):
+                    ui.adjust_eq('bass', 2)
+                    tap(580, 132)  # Presets
+                    tap(200, 134+index*76)
+                    self.assertFalse(ui.audio_presets_open)
+                    self.assertEqual(ui.audio_bank, 1)
+                    self.assertEqual(ui.audio_settings.preset_name(), name)
+                    self.assertEqual(ui.audio_settings.values['bass'], 0)
+                    self.assertFalse(ui.audio_settings.values['eq'])
+                    self.assertFalse(ui.audio_settings.values['pipewire'])
+                    self.assertEqual(AudioSettings(Path(folder)/'audio.json').values,
+                                     ui.audio_settings.values)
+                tap(580, 132)
+                tap(40, 26)  # Preset back returns to the same EQ bank.
+                self.assertFalse(ui.audio_presets_open)
+                self.assertEqual(ui.audio_bank, 1)
+                tap(40, 26)
+                self.assertEqual(ui.mode, 'home')
+            finally:
+                ui.close()
+
+    def test_single_pipewire_control_applies_eq_and_preserves_curve(self):
+        from hlauncher.launcher import Launcher
+        from hlauncher.config import Preferences
+        from test_architecture import Display
+        with tempfile.TemporaryDirectory() as folder:
+            prefs = Preferences(Path(folder)/'settings.json')
+            prefs.accept_safety_notice()
+            ui = Launcher(framebuffer=Display(), preferences=prefs, manifests={})
+            try:
+                for pipewire, eq in ((False, False), (False, True), (True, False), (True, True)):
+                    with self.subTest(pipewire=pipewire, eq=eq):
+                        ui.audio_settings.save(pipewire=pipewire, eq=eq,
+                                               **ui.audio_settings.preset_changes('Vocal clarity'))
+                        ui.audio_page()
+                        # The route control is the only processing toggle.
+                        next(action for (l, t, r, b), action in ui.actions
+                             if l <= 180 < r and t <= 132 < b)()
+                        saved = AudioSettings(Path(folder)/'audio.json')
+                        self.assertEqual(saved.values['pipewire'], not (pipewire and eq))
+                        self.assertTrue(saved.values['eq'])
+                        self.assertEqual(saved.values['bands'], PRESETS['Vocal clarity'])
+            finally:
+                ui.close()
+
+    def test_six_db_adjustment_limits_preserve_and_allow_reducing_old_gains(self):
+        from hlauncher.launcher import Launcher
+        from hlauncher.config import Preferences
+        from test_architecture import Display
+        with tempfile.TemporaryDirectory() as folder:
+            prefs = Preferences(Path(folder)/'settings.json')
+            prefs.accept_safety_notice()
+            ui = Launcher(framebuffer=Display(), preferences=prefs, manifests={})
+            try:
+                bands = dict.fromkeys(EQ_BANDS, 0)
+                bands.update(b31=12, b50=-12, b80=6, b125=-6)
+                ui.audio_settings.save(bands=bands)
+                ui.audio_page()
+                self.assertEqual(ui.audio_settings.values['bands'], bands)
+                for key, delta in (('b31', 1), ('b50', -1), ('b80', 1), ('b125', -1)):
+                    ui.adjust_eq(key, delta)
+                    self.assertEqual(ui.audio_settings.values['bands'], bands)
+                ui.adjust_eq('b31', -1)
+                ui.adjust_eq('b50', 1)
+                self.assertEqual(ui.audio_settings.values['bands']['b31'], 11)
+                self.assertEqual(ui.audio_settings.values['bands']['b50'], -11)
+                for _ in range(5):
+                    ui.adjust_eq('b31', -1)
+                    ui.adjust_eq('b50', 1)
+                ui.adjust_eq('b31', 1)
+                ui.adjust_eq('b50', -1)
+                loaded = AudioSettings(Path(folder)/'audio.json')
+                self.assertEqual(loaded.values['bands']['b31'], 6)
+                self.assertEqual(loaded.values['bands']['b50'], -6)
+            finally:
+                ui.close()
 
     def test_twelve_band_presets_persist_and_flat_clears_legacy_gains(self):
         with tempfile.TemporaryDirectory() as folder:
             path=Path(folder)/'audio.json'
             settings=AudioSettings(path)
             settings.save(bass=12)
-            settings.save(**settings.preset_changes('EDM Bass'))
-            self.assertEqual(settings.preset_name(),'EDM Bass')
+            settings.save(**settings.preset_changes('Bass lift'))
+            self.assertEqual(settings.preset_name(),'Bass lift')
             self.assertFalse(settings.values['bass'])
-            self.assertEqual(AudioSettings(path).values['bands'], PRESETS['EDM Bass'])
+            self.assertEqual(AudioSettings(path).values['bands'], PRESETS['Bass lift'])
             bands=dict(settings.values['bands'],b50=4)
             settings.save(bands=bands)
             self.assertEqual(settings.preset_name(),'Custom')
-            self.assertEqual(settings.values['bands']['b31'],2)
+            self.assertEqual(settings.values['bands']['b31'],1)
             before=path.read_bytes()
             for invalid in ({},dict(bands,b50=True),dict(bands,b50=13),dict(bands,unknown=0)):
                 with self.assertRaises(ValueError):settings.save(bands=invalid)
@@ -117,6 +203,19 @@ class AudioSettingsTests(unittest.TestCase):
             self.assertEqual(settings.values['bass'],4)
             self.assertEqual(settings.preset_name(),'Custom')
             self.assertEqual(settings.values['bands'], PRESETS['Flat'])
+
+    def test_retired_preset_curve_survives_as_custom_without_rewriting_state(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / 'audio.json'
+            old_curve = dict(zip(EQ_BANDS, (2,3,2,0,-1,-1,0,0,0,0,0,0)))
+            path.write_text(json.dumps(dict(pipewire=True, eq=False, bands=old_curve)))
+            original = path.read_bytes()
+            settings = AudioSettings(path)
+            self.assertEqual(settings.preset_name(), 'Custom')
+            self.assertEqual(settings.values['bands'], old_curve)
+            self.assertTrue(settings.values['pipewire'])
+            self.assertFalse(settings.values['eq'])
+            self.assertEqual(path.read_bytes(), original)
 
     def test_graph_is_started_on_demand_and_stopped_on_bypass(self):
         from hlauncher.audio_settings import PipeWireService

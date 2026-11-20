@@ -130,6 +130,9 @@ class Launcher:
         self.started = False
         self.pending_default = False
         self.last_frame_at = 0
+        from .wifi_status import indicator
+        self.header_wifi = indicator()
+        self.wifi_checked = time.monotonic()
         self.draw()
 
     def font(self, size):

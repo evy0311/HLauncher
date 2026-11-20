@@ -1187,7 +1187,18 @@ class Launcher:
         )
 
     def draw(self):
+        previous_view=getattr(self,'scroll_view',None)
         self.scroll_view=None
+        try:
+            self.draw_page()
+        finally:
+            # Keep position during redraws, but forget a list once it is left.
+            # Compare list keys too: tabs/subsections can share the same mode.
+            if previous_view and (not self.scroll_view or previous_view['key']!=self.scroll_view['key']):
+                self.list_offsets.pop(previous_view['key'],None)
+                self.list_drag=None
+
+    def draw_page(self):
         self.sync_parked_screen()
         if self.parked_screen_locked:
             if self.parked_overlay_at is not None and not self.parked_overlay_due():

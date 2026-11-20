@@ -31,6 +31,7 @@ class Launcher:
     ):
         self.event = event
         self.fb = framebuffer or Framebuffer(event)
+        self.fb.boot_stage = 'ui_first_frame_submitted'
         self.fb.open()
         self.prefs = preferences or Preferences()
         from .themes import Themes

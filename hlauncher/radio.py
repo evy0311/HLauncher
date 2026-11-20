@@ -46,6 +46,8 @@ def main():
     p = argparse.ArgumentParser()
     p.add_argument("--seconds", type=int, default=900)
     a = p.parse_args()
+    from .boot_timing import mark
+    mark('radio_dependencies_loaded')
     protocols = ProtocolDiagnostics(vehicle_path=STATE_DIR/'vehicle-last-known.json')
     event = EventLog(protocols)
     state = SetupState()
@@ -339,6 +341,7 @@ def main():
             registry.tick()
             if not announced and all(profile.registered for _,profile in profiles):
                 announced=True
+                mark('bluetooth_profiles_ready')
                 event(state='bluetooth_profiles_ready')
                 notify_ready()
                 launcher.prepare()

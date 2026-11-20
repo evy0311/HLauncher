@@ -17,6 +17,30 @@ reconnect=importlib.util.module_from_spec(spec);spec.loader.exec_module(reconnec
 
 
 class Boot(unittest.TestCase):
+    def test_boot_milestones_are_bounded_and_do_not_import_graphics(self):
+        from hlauncher.boot_timing import BootTimeline
+        samples=iter((10,10.125,10.5));events=[]
+        clock=BootTimeline(clock=lambda:next(samples),emit=events.append)
+        clock.mark('python_entry');clock.mark('python_entry');clock.mark('ui_first_frame_submitted')
+        self.assertEqual(len(events),2)
+        self.assertEqual(events[0]['boot_ms'],10125)
+        self.assertEqual(events[1]['process_ms'],500)
+        result=subprocess.run([sys.executable,'-c',
+            'import hlauncher.boot_timing; import sys; assert "PIL" not in sys.modules and "numpy" not in sys.modules'],
+            cwd=ROOT,capture_output=True,text=True)
+        self.assertEqual(result.returncode,0,result.stderr)
+
+    def test_paired_startup_skips_offscreen_home_but_fresh_pairing_keeps_it(self):
+        from hlauncher.bootstrap import BootstrapLauncher
+        for peer in (None,'fixture-radio'):
+            launcher=BootstrapLauncher(lambda **kw:None,SimpleNamespace(close=lambda:None),state=SimpleNamespace(peer=peer))
+            with patch.object(launcher,'show_pairing'),patch.object(launcher,'prewarm_home') as prewarm,patch('hlauncher.bootstrap.mark'):
+                launcher.prepare();launcher.preparing.join(3)
+                self.assertFalse(launcher.preparing.is_alive())
+                self.assertEqual(prewarm.call_count,0 if peer else 1)
+                self.assertTrue(launcher.boot_pending)
+                launcher.close()
+
     def test_default_hostname_survives_overlay_reinitialization_and_preserves_custom_name(self):
         from hlauncher.firstboot import default_hostname
         with tempfile.TemporaryDirectory() as folder:

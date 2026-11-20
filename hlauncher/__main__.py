@@ -18,6 +18,8 @@ def main():
     elif command == "run":
         if len(sys.argv) > 1:
             del sys.argv[1]
+        from .boot_timing import mark
+        mark('python_entry')
         from .radio import main as run
 
         run()

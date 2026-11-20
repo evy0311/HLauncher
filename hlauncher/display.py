@@ -19,6 +19,8 @@ class Framebuffer:
         self.tty_mode = None
         self.picture = dict(DEFAULTS)
         self.last_frame = None
+        self.boot_stage = None
+        self.boot_stages = set()
 
     def open(self):
         if self.fd is not None:
@@ -77,6 +79,7 @@ class Framebuffer:
         if self.kms is not None:
             try:
                 self.kms.present(raw)
+                self.boot_frame_submitted()
                 return
             except RuntimeError as exc:
                 self.event(state="display_fallback", reason=str(exc))
@@ -92,6 +95,14 @@ class Framebuffer:
                     self.fd, row, (y + self.yo) * self.stride + self.xo * 2
                 ) != len(row):
                     raise OSError("short framebuffer row write")
+
+        self.boot_frame_submitted()
+
+    def boot_frame_submitted(self):
+        if self.boot_stage and self.boot_stage not in self.boot_stages:
+            from .boot_timing import mark
+            mark(self.boot_stage)
+            self.boot_stages.add(self.boot_stage)
 
     def snapshot(self):
         if self.last_frame is not None:
@@ -115,6 +126,7 @@ class Framebuffer:
         self.last_frame = encode(rgb)
         try:
             self.kms.present(rgb.tobytes('raw','BGRX'))
+            self.boot_frame_submitted()
             return True
         except RuntimeError as exc:
             self.event(state='display_fallback',reason=str(exc))

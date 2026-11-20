@@ -9,6 +9,21 @@ from sdk.hlauncher_sdk.picture import DEFAULTS, NEUTRAL
 
 
 class DisplayPicture(unittest.TestCase):
+    def test_boot_frame_milestones_require_successful_submission_and_follow_splash_handoff(self):
+        fb=self.framebuffer();fb.boot_stage='splash_frame_submitted';raw=bytes(6)
+        with patch('hlauncher.boot_timing.mark') as mark:
+            fb.blit(raw);fb.blit(raw)
+            mark.assert_called_once_with('splash_frame_submitted')
+            fb.boot_stage='ui_first_frame_submitted';fb.blit(raw)
+            self.assertEqual(mark.call_count,2)
+            mark.assert_called_with('ui_first_frame_submitted')
+        fb=self.framebuffer();fb.boot_stage='ui_first_frame_submitted'
+        fb.stride=6;fb.xo=fb.yo=0
+        fb.kms.present.side_effect=RuntimeError('fixture KMS failure')
+        with patch('hlauncher.boot_timing.mark') as mark,patch('hlauncher.display.os.pwrite',return_value=0):
+            with self.assertRaises(OSError):fb.blit(raw)
+            mark.assert_not_called()
+
     def framebuffer(self):
         fb=Framebuffer();fb.fd=1;fb.w=3;fb.h=1
         fb.kms=SimpleNamespace(present=Mock(),close=Mock())

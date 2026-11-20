@@ -2,6 +2,7 @@
 from .setup_state import SetupState
 import time
 import threading
+from .boot_timing import mark
 
 
 class QuietInputs:
@@ -47,7 +48,9 @@ class BootstrapLauncher:
         else: factory = self.factory
         options=dict(independent_audio=True,protocol_diagnostics=self.protocols)
         if self.splash is not None:options['framebuffer']=self.splash
+        mark('launcher_initialization_started')
         self.ui = factory(self.event,**options)
+        mark('launcher_initialized')
         self.ui.request_hondalink_display_test = self.queue_display_test
         self.splash=None
         self.inputs = self.ui.inputs
@@ -147,11 +150,16 @@ class BootstrapLauncher:
         # Bluetooth profiles are already registered. Display I/O/imports run off its loop.
         if self.preparing or self.closing:return
         def work():
+            mark('display_preparation_started')
             self.show_pairing()
             if not self.closing:
                 try:
                     from . import launcher  # cache imports before the radio asks to launch
-                    if self.ui is None and not self.closing:self.prewarm_home()
+                    mark('launcher_imports_loaded')
+                    # Paired boots open the real UI immediately after imports.
+                    # Do not hold that up with a complete offscreen Home render.
+                    if self.ui is None and not self.closing and not self.state.peer:
+                        self.prewarm_home()
                     self.event(state="display_prepared",monotonic=time.monotonic())
                 except Exception as exc:self.event(state="display_prepare_error",error=str(exc))
         self.preparing=threading.Thread(target=work,name="display-prepare",daemon=True)
@@ -186,7 +194,9 @@ class BootstrapLauncher:
             from .display import Framebuffer
             import subprocess
             subprocess.run(['fbset','-depth','16'], check=True, capture_output=True, timeout=3)
-            self.splash = Framebuffer(self.event); self.splash.open()
+            self.splash = Framebuffer(self.event)
+            self.splash.boot_stage = 'splash_frame_submitted'
+            self.splash.open()
             self.render_splash()
         except Exception as exc:
             if self.splash:self.splash.close();self.splash=None

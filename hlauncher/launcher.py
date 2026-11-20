@@ -1327,9 +1327,11 @@ class Launcher:
 
     def draw_camera(self):
         from .ui.plugin_overlay import camera_header
+        from .wifi_status import indicator
         header = camera_header(self.prefs.data['tile_color'], self.fb.w, self.fb.h,
                                show_clock=self.prefs.data['show_clock'],
-                               pressed=self.plugin_home_pressed, clock=time.strftime('%-I:%M'))
+                               pressed=self.plugin_home_pressed, clock=time.strftime('%-I:%M'),
+                               wifi=indicator())
         self.fb.blit(header + self.camera_frame)
 
     def input_tab(self, index):
@@ -1566,6 +1568,16 @@ class Launcher:
         if not self.parked_screen_locked:
             self.home_editor.tick(now)
         self.tick_home_slide(now)
+        if now - getattr(self, 'wifi_checked', 0) >= 2:
+            from .wifi_status import indicator
+            self.wifi_checked = now
+            wifi = indicator()
+            if wifi != getattr(self, 'header_wifi', None):
+                self.header_wifi = wifi
+                if self.mode != 'shutdown_pending' and (self.mode != 'plugin' or not self.has_frame):
+                    self.draw()
+                elif self.mode == 'plugin' and self.has_frame and self.camera_frame is not None:
+                    self.draw_camera()
         waiting_projection = (self.mode == "plugin" and self.host.active in ('carplay','android-auto')
                               and not self.has_frame)
         if (self.mode not in ("plugin","shutdown_pending") or waiting_projection) and time.strftime('%Y-%m-%d %H:%M') != getattr(self, 'home_clock', None):

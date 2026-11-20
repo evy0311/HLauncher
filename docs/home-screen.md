@@ -45,8 +45,10 @@ Settings → Appearance → Background color offers Blue, Red, Green, Amber,
 Purple or Graphite. The migrated screens map these names to the shared stock-style accent palette. All tile gradients, edges, tab
 color and background illumination derive from that accent. Icon colors stay
 consistent when switching themes: CarPlay stays green, Android Auto
-stays blue, and the gauge/EQ retain their instrument colors. There is no Bluetooth
-icon in the header. When enabled under Settings → Appearance → Show clock, the clock follows the
+stays blue, and the gauge/EQ retain their instrument colors. The header has a Wi-Fi icon at the far right, moving left of the optional
+clock. One to four lit signal marks show connected signal strength; an × means
+disconnected, a slash means the radio is off, and ? means telemetry is unavailable.
+Status refreshes about every two seconds without scanning for networks. When enabled under Settings → Appearance → Show clock, the clock follows the
 Pi's configured local timezone and updates once per minute. The OBD dashboard
 refreshes its own cached header when the minute changes.
 
@@ -64,7 +66,7 @@ automatically or expose them over the network.
 ## Projection connection pages
 
 CarPlay and Android Auto use the same `ui/chrome.py` header as Home, including
-its author credit and minute-updating clock. The top-left tab shows a back arrow
+its Wi-Fi status and minute-updating clock. The top-left tab shows a back arrow
 on child pages; its scaled touch target returns directly to Home.
 `ui/projection.py` renders each source's connection/status page using its
 original colored icon, fading reflection, themed background and illuminated

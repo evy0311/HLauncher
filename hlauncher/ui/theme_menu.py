@@ -9,7 +9,7 @@ from sdk.hlauncher_sdk.fonts import font
 from sdk.hlauncher_sdk.palette import PALETTE
 from sdk.hlauncher_sdk.theme import dither_rgb565
 
-from .chrome import scale_bounds
+from .chrome import scale_bounds, draw_wifi
 from .home import Frame
 from .home_art import blend, glyph
 
@@ -107,6 +107,10 @@ def render(theme, layout, title, pages, *, size=(720, 480), page=0, back=None,
     modern = layout in MODERN
     bottom_nav = layout in BOTTOM_NAV
     edge = blend(colors['panel'], colors['text'], .13)
+    wifi_right = 696
+    if clock and not bottom_nav and layout != 'rail':
+        wifi_right -= draw.textlength(clock, font=font(28 if modern else 25)) + 14
+    title_right = wifi_right - 52
 
     def text(x, y, label, size, color='text', *, width=650, weight=400, anchor='lm'):
         face = font(size, weight)
@@ -244,7 +248,7 @@ def render(theme, layout, title, pages, *, size=(720, 480), page=0, back=None,
                 for line_number, line in enumerate(wrap_status(footer, draw, font(16), 168)):
                     text(24, 116 + 24 * line_number, line, 16, 'muted', width=168)
         else:
-            text(24, 36, title, 30, weight=600)
+            text(24, 36, title, 30, width=title_right-24, weight=600)
         draw.rectangle((0, 420, 719, 479), fill=colors['panel'])
         draw.line((0, 420, 719, 420), fill=edge)
         if back:
@@ -269,7 +273,7 @@ def render(theme, layout, title, pages, *, size=(720, 480), page=0, back=None,
         draw.line((24, 72, 696, 72), fill=edge)
         if back:
             button((24, 12, 120, 60), 'Back', back)
-        text(144 if back else 24, 36, title, 30, width=440, weight=600)
+        text(144 if back else 24, 36, title, 30, width=title_right-(144 if back else 24), weight=600)
         if clock:
             text(696, 36, clock, 28, anchor='rm')
     else:
@@ -277,9 +281,11 @@ def render(theme, layout, title, pages, *, size=(720, 480), page=0, back=None,
         draw.line((0, 72, 719, 72), fill=colors['accent'], width=2)
         if back:
             button((24, 12, 112, 59), 'Back', back)
-        text(136 if back else 24, 36, title, 34, width=450, weight=700)
+        text(136 if back else 24, 36, title, 34, width=title_right-(136 if back else 24), weight=700)
         if clock:
             text(696, 36, clock, 25, 'accent', anchor='rm')
+
+    draw_wifi(image, wifi_right, center_y=36, color=colors['text'], muted=colors['muted'])
 
     if len(pages) > 1 and change_page:
         if bottom_nav:

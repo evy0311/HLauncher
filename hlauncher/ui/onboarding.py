@@ -109,8 +109,18 @@ def draw_launcher(launcher):
     if step==0:
         welcome(page)
     elif step in (1,2):
-        choices=sorted(launcher.manifests.values(),key=lambda m:m.name)
-        if step==2:choices=[None]+[m for m in choices if launcher.prefs.enabled(m)]
+        from dataclasses import replace
+        choices=sorted(launcher.manifests.values(),key=lambda m:m.id != 'carplay')
+        grouped=[]
+        projection=False
+        for manifest in choices:
+            if manifest.id in ('carplay', 'android-auto'):
+                if projection:continue
+                projection=True
+                manifest=replace(manifest,name='Phone Projection')
+            grouped.append(manifest)
+        choices=grouped
+        if step==2:choices=[None]+launcher.home_manifests()
         per_page=3 if step==1 else 4
         total=max(1,math.ceil(len(choices)/per_page))
         launcher.setup_list_page=min(launcher.setup_list_page,total-1)
@@ -118,13 +128,22 @@ def draw_launcher(launcher):
             pid=m.id if m else None
             selected=launcher.prefs.enabled(m) if step==1 else launcher.prefs.data['default_plugin']==pid
             callback=launcher.wizard.plugin if step==1 else launcher.wizard.default
-            action=lambda pid=pid,callback=callback:launcher.setup_action(callback,pid)
+            if step == 1 and pid in ('carplay', 'android-auto'):
+                selected=any(launcher.prefs.enabled(launcher.manifests[ident]) for ident in ('carplay','android-auto') if ident in launcher.manifests)
+                def action(selected=selected):
+                    for ident in ('carplay','android-auto'):
+                        if ident in launcher.manifests and launcher.prefs.enabled(launcher.manifests[ident]) == selected:
+                            launcher.setup_action(launcher.wizard.plugin, ident)
+            else:
+                action=lambda pid=pid,callback=callback:launcher.setup_action(callback,pid)
+            if step == 2 and pid in ('carplay','android-auto'):
+                selected=launcher.prefs.data['default_plugin'] in ('carplay','android-auto')
             title=m.name if m else 'Home'
             if step==1:
                 y=144+i*68
                 page.button((24,y,696,y+56),'',action,selected)
                 page.label((42,y+7),title,23)
-                requirement=REQUIREMENTS.get(pid,'')
+                requirement='CarPlay / Android Auto dongle, or direct USB Android Auto' if pid in ('carplay','android-auto') else REQUIREMENTS.get(pid,'')
                 page.text((42,y+34),requirement,14)
                 page.text((676,y+28),'Enabled' if selected else 'Disabled',17,anchor='rm')
             else:

@@ -1,5 +1,6 @@
 """Shared settings, connection and picture pages; no display or service ownership."""
 import math
+import time
 from datetime import datetime
 from functools import lru_cache
 from pathlib import Path
@@ -86,11 +87,12 @@ def parked_only(ui):
     page.draw.text((360, 203), 'Come to a complete stop and engage the parking brake.',
                    font=font(19), fill='#e8e8e8', anchor='mm')
     speed, brake = ui.protocols.parked_setup_readings()
-    lines = ('Waiting for the radio to confirm the parking brake.',
-             'If it is already engaged, keep the brake pedal pressed.',
-             'Then release and re-engage the parking brake.')
-    if (speed is not None and speed > 0) or (ui.mode == 'parked_plugin' and brake is True):
-        lines = ('Waiting for the radio to confirm the vehicle has stopped.',)
+    if speed is not None and speed > 0:
+        lines = ('The radio reports that the vehicle is moving.',)
+    elif brake is False:
+        lines = ('The radio reports that the parking brake is released.',)
+    else:
+        lines = ('Waiting for vehicle status to update.',)
     for index, line in enumerate(lines):
         page.draw.text((360, 254 + index * 28), line, font=font(17), fill='#bbbbbb', anchor='mm')
     if ui.prefs.safety_notice_accepted and ui.prefs.data['setup_complete']:
@@ -111,7 +113,7 @@ def system(ui):
           ('Debug mode','On' if ui.prefs.data['debug_mode'] else 'Off',ui.toggle_debug),
           ('Storage protection','Enabled' if info['protected'] else 'Off' if info['available'] else 'Unavailable',lambda:ui.storage_confirm(not info['protected'])),
           ('Shut down','',ui.shutdown_page)]
-    if ui.prefs.data['debug_mode']:rows.append(('Diagnostics','',ui.system_diagnostics))
+    if ui.prefs.data['debug_mode']:rows.insert(4,('Debug','',ui.debug_tools))
     rows = [Row(title, action, toggle=ui.prefs.data['debug_mode']) if title == 'Debug mode'
             else Row(title, action, value=value) for title, value, action in rows]
     if settings_menu(ui, 'System', ui.settings, row_items(rows)):
@@ -249,8 +251,11 @@ def storage(ui):
 
 def plugins(ui):
     entries=sorted(ui.manifests.values(),key=lambda m:m.id!='carplay')
-    rows = [Row(m.name, lambda pid=m.id: ui.plugin_detail(pid),
-                value='' if m.bundled else m.version) for m in entries]
+    projection = [m for m in entries if m.id in ('carplay', 'android-auto')]
+    rows = ([Row('Phone Projection', ui.projection_settings_page)] if projection else [])
+    rows += [Row(m.name, lambda pid=m.id: ui.plugin_detail(pid),
+                 value='' if m.bundled else m.version) for m in entries
+             if m.id not in ('carplay', 'android-auto')]
     if ui.plugin_manager:
         rows.append(Row('Add plugin', ui.plugin_manager.add))
         if ui.plugin_store.legacy_sources():
@@ -330,6 +335,7 @@ def plugin_detail(ui):
         vehicle_settings(ui, rows)
         return
     if manifest.id=='carplay':
+        rows.append(Row('Dongle info', ui.adapter_info_page))
         rows.append(Row('Frame rate', ui.toggle_carplay_fps, value=f'{ui.prefs.carplay_fps} FPS'))
         rows.append(Row('Adapter icon',ui.adapter_branding_page))
     elif manifest.id=='obd':rows.append(Row('Coming soon', None))
@@ -348,9 +354,156 @@ def plugin_detail(ui):
     present(ui,p)
 
 
+def phone_projection(ui):
+    p = page_for(ui, 'Phone Projection', ui.home)
+    source = ui.host.active if ui.host.active in ('carplay', 'android-auto') else next(
+        (ident for ident in ('carplay', 'android-auto') if ident in ui.host.workers), None)
+    worker = ui.host.workers.get(source)
+    metrics = getattr(worker, 'metrics', {})
+    info = metrics.get('adapter_info', {})
+    connected = metrics.get('phone_connected') is True
+    protocol = 'Android Auto' if source == 'android-auto' else info.get('protocol') or 'phone projection'
+    title = 'Starting ' + protocol if connected else 'Waiting for your phone'
+    detail = ('Connect your Android phone to the Pi by USB' if source == 'android-auto'
+              else 'Connect to the dongle, or plug Android into the Pi')
+    status = getattr(worker, 'status', '')
+    if connected:
+        detail = status or 'Your phone is connected · preparing the display'
+    if ui.banner or any(word in status.casefold() for word in ('failed', 'error', 'lost', 'not installed', 'paused')):
+        title, detail = 'Check phone connection', ui.banner or status
+    icon = art.glyph('phone-projection', 144)
+    p.image.paste(icon, (288, 124), icon)
+    p.text((360, 288), title, 30, fill='#ffffff', anchor='mm')
+    lines = wrap_status(detail, p.draw, font(19), 624)[:2]
+    for index, line in enumerate(lines):
+        p.text((360, 328 + index*24), line, 19, anchor='mm')
+    modes = 'CarPlay · Android Auto'
+    if info.get('aa_support') == 'Not advertised':
+        modes = 'CarPlay via dongle · Android Auto via direct USB'
+    p.text((360, 384), modes, 16, anchor='mm')
+    p.button((24, 408, 80, 464), '', ui.projection_settings_page, secondary=True)
+    gear = art.glyph('settings', 36)
+    p.image.paste(gear, (34, 418), gear)
+    p.text((96, 436), 'Settings', 18, anchor='lm')
+    present(ui, p)
+
+
+def projection_settings(ui):
+    rows = []
+    for ident, label in (('carplay', 'Use USB dongle'), ('android-auto', 'Use direct USB Android Auto')):
+        manifest = ui.manifests.get(ident)
+        if manifest:
+            rows.append(Row(label, lambda ident=ident: ui.toggle_plugin(ident), toggle=ui.prefs.enabled(manifest)))
+    rows += [Row('Phones', ui.projection_phones_page), Row('Dongle info', ui.adapter_info_page),
+             Row('Dongle frame rate', ui.toggle_carplay_fps, value=f'{ui.prefs.carplay_fps} FPS'),
+             Row('Adapter icon', ui.adapter_branding_page)]
+    for ident, label in (('carplay', 'Dongle'), ('android-auto', 'Direct USB')):
+        if ident in ui.manifests:
+            rows += [Row(label + ': follow headlights', lambda ident=ident: ui.toggle_auto_night(ident), toggle=ui.prefs.auto_night(ident)),
+                     Row(label + ': car GPS', lambda ident=ident: ui.toggle_car_gps(ident), toggle=ui.prefs.car_gps(ident))]
+    for ident, label in (('carplay', 'Connect through dongle'), ('android-auto', 'Connect Android Auto via direct USB')):
+        manifest = ui.manifests.get(ident)
+        if manifest and ui.prefs.enabled(manifest):
+            rows.append(Row(label, lambda ident=ident: ui.start_projection(ident)))
+    back = getattr(ui, 'projection_settings_return', ui.plugin_settings)
+    if settings_menu(ui, 'Phone Projection', back, row_items(rows), footer=ui.banner):
+        return
+    p = page_for(ui, 'Phone Projection', back)
+    draw_rows(ui, p, rows, bottom=422, key='projection-settings', size=22)
+    p.notice(ui.banner)
+    present(ui, p)
+
+
+def projection_phones(ui):
+    rows = []
+    for phone in ui.host.projection_phones.snapshot():
+        status = 'Connected' if phone['connected'] else 'Paired with dongle' if phone['paired'] else 'Previously connected' if phone.get('last_connected') else 'Previously reported'
+        detail = status
+        rows.append(Row(('Favorite · ' if phone.get('favorite') else '') + phone['name'], lambda key=phone['id']: ui.projection_phone_page(key), value=detail))
+    if 'android-auto' in ui.host.workers:
+        worker = ui.host.workers['android-auto']
+        rows.insert(0, Row('Direct USB Android Auto', None, value='Connected' if (getattr(worker, 'video_available', False) or getattr(worker, 'metrics', {}).get('phone_connected') is True) else 'Waiting for phone'))
+    footer = '' if rows else 'No phones reported yet. Connect a phone through the dongle or direct USB.'
+    if settings_menu(ui, 'Phones', ui.projection_settings_page, row_items(rows), footer=footer):
+        return
+    p = page_for(ui, 'Phones', ui.projection_settings_page)
+    draw_rows(ui, p, rows, bottom=422, key='projection-phones', size=21)
+    p.notice(footer)
+    present(ui, p)
+
+
+def projection_phone(ui):
+    phone = next((phone for phone in ui.host.projection_phones.snapshot()
+                  if phone['id'] == getattr(ui, 'projection_phone_id', None)), {})
+    p = page_for(ui, phone.get('name', 'Phone'), ui.projection_phones_page)
+    last = phone.get('last_connected')
+    try:
+        last = datetime.fromtimestamp(last).strftime('%b %d, %Y %H:%M') if last else 'Not observed'
+    except (ValueError, OverflowError, OSError):
+        last = 'Unknown'
+    key = phone.get('id')
+    known = key in ui.host.projection_phones.addresses and phone.get('paired')
+    favorite = phone.get('favorite', False)
+    rows = [Row('Connect now', ui.connect_projection_phone if known else None,
+                value='Connected' if phone.get('connected') else '' if known else 'Connect dongle')]
+    if favorite or known:
+        rows.append(Row('Favorite phone', ui.favorite_projection_phone, toggle=favorite))
+    else:
+        rows.append(Row('Favorite phone', None, value='Connect dongle'))
+    worker = ui.host.workers.get('carplay')
+    attempt = getattr(worker, 'metrics', {}).get('phone_connection', {})
+    request = getattr(ui, 'projection_phone_request', None)
+    detail = ui.banner or 'Connect now switches away from the current dongle phone'
+    if (not ui.banner or ui.banner == 'Connection requested') and isinstance(attempt, dict) and attempt.get('phone_id') == key:
+        result = attempt.get('result')
+        labels = {'disconnecting':'Disconnecting current phone', 'connecting':'Connecting to phone',
+                  'connected':'Selected phone connected', 'failed':'Connection failed',
+                  'skipped':'Current session kept'}
+        if not request or request[0] != key or attempt.get('request_id') == request[1]:
+            detail = labels.get(result, 'Waiting for dongle')
+            reasons = {'busy':'Another connection attempt is running', 'not_paired':'Phone is not in the dongle paired list',
+                       'disconnect_send_failed':'Dongle rejected the disconnect request',
+                       'connect_send_failed':'Dongle rejected the connection request',
+                       'autoconnect_send_failed':'Dongle rejected auto-connect setup',
+                       'disconnect_timeout':'Current phone did not disconnect',
+                       'connection_timeout':'Selected phone did not connect',
+                       'adapter_disconnected':'Dongle connection lost', 'worker_queue_full':'Dongle command queue is full'}
+            if attempt.get('reason') in reasons:
+                detail = reasons[attempt['reason']]
+    if request and request[0] == key and time.monotonic() > request[2] and (attempt.get('request_id') != request[1] or attempt.get('result') in ('connecting', 'disconnecting')):
+        detail = 'Connection request timed out · no dongle response'
+    rows += [Row('Status', None, value='Connected' if phone.get('connected') else 'Disconnected'),
+             Row('Last protocol', None, value=phone.get('protocol') or 'Unknown'),
+             Row('Last transport', None, value=phone.get('transport') or 'Unknown'),
+             Row('Last connected', None, value=last)]
+    if settings_menu(ui, phone.get('name', 'Phone'), ui.projection_phones_page, row_items(rows), footer=detail):
+        return
+    draw_rows(ui, p, rows, bottom=422, key='projection-phone', size=22)
+    p.notice(detail)
+    present(ui, p)
+
+
+def adapter_info(ui):
+    p = page_for(ui, 'Dongle info', ui.projection_settings_page)
+    worker = ui.host.workers.get('carplay')
+    info = getattr(worker, 'metrics', {}).get('adapter_info', {})
+    if not isinstance(info, dict):
+        info = {}
+    from ..adapter_info import text
+    fields = (('USB ID', 'usb_id'), ('Firmware', 'firmware'), ('Product', 'product'),
+              ('Hardware', 'hardware'), ('AA support', 'aa_support'),
+              ('Phone protocol', 'protocol'), ('Transport', 'transport'))
+    rows = [Row(label, None, value=text(info.get(key)) or 'Unknown') for label, key in fields]
+    rows.append(Row('Parking brake forwarding', None, value='Unverified'))
+    draw_rows(ui, p, rows, bottom=422, key='adapter-info', size=22)
+    p.notice('Live adapter reports; AA support still needs a connection test' if info
+             else 'Waiting for reports; enable the dongle and connect it')
+    present(ui, p)
+
+
 def adapter_branding(ui):
     from ..config import ROOT
-    p=page_for(ui,'CarPlay adapter icon',ui.plugin_detail)
+    p=page_for(ui,'Adapter icon',ui.projection_settings_page)
     with Image.open(ROOT/'hlauncher/ui/assets/branding/hlauncher-180.png') as icon:
         icon=icon.convert('RGBA').resize((132,132),Image.Resampling.LANCZOS)
         p.image.paste(icon,(294,120),icon)
@@ -438,7 +591,7 @@ def theme_preview(ui):
 
 def startup(ui):
     manifest=ui.manifests.get(ui.prefs.data['default_plugin'])
-    value=manifest.name if manifest and manifest.id != 'obd' and ui.prefs.enabled(manifest) else 'Home'
+    value=('Phone Projection' if manifest.id in ('carplay', 'android-auto') else manifest.name) if manifest and manifest.id != 'obd' and ui.prefs.enabled(manifest) else 'Home'
     if settings_menu(ui, 'Startup', ui.settings, (Item('Start with', ui.cycle_default, value),),
                      footer='Tap to cycle through Home and enabled apps'):
         return
@@ -551,7 +704,7 @@ def waiting(ui):
     present(ui,p)
 
 
-PAGES={'ssh_settings':ssh,'adapter_branding':adapter_branding,'appearance_settings':appearance,'startup_settings':startup,'system_settings':system,'recovery_settings':network,'hotspot_settings':hotspot,'wifi_power_settings':wifi_power,'storage_confirm':storage,
+PAGES={'projection_phone':projection_phone,'phone_projection':phone_projection,'projection_settings':projection_settings,'projection_phones':projection_phones,'ssh_settings':ssh,'adapter_branding':adapter_branding,'adapter_info':adapter_info,'appearance_settings':appearance,'startup_settings':startup,'system_settings':system,'recovery_settings':network,'hotspot_settings':hotspot,'wifi_power_settings':wifi_power,'storage_confirm':storage,
        'plugins_settings':plugins,'plugin_detail':plugin_detail,'tile_colors':themes,'colors':picture,'hdmi_test':hdmi,
        'shutdown_confirm':shutdown,'shutdown_pending':shutdown,'about_settings':about,
        'legal_info':legal_info,'audio_coming_soon':audio_coming_soon,

@@ -13,6 +13,18 @@ with patch.object(sys,'path',[str(ROOT/'sdk'),str(ROOT/'plugins/carplay'),*sys.p
 
 
 class CarplayDisconnect(unittest.TestCase):
+    def test_adapter_reports_reach_health_without_inventing_device_support(self):
+        carplay = backend.CarplayHDMI()
+        carplay.receive_state(dict(state='dongle_software_version', version='fixture-version'))
+        carplay.receive_state(dict(state='dongle_box_info', settings={'productType': 'fixture-product'}))
+        carplay.receive_state(dict(state='phone_connected', phone_type=3, wifi=1))
+        info = carplay.metrics()['adapter_info']
+        self.assertEqual(info['firmware'], 'fixture-version')
+        self.assertEqual(info['protocol'], 'CarPlay')
+        self.assertNotIn('aa_support', info)
+        carplay.receive_state(dict(state='usb_failure'))
+        self.assertEqual(carplay.metrics()['adapter_info'], {})
+
     def test_missing_unplug_event_hides_frozen_video_and_allows_recovery(self):
         carplay = backend.CarplayHDMI()
         carplay.receive_state(dict(state='phone_connected'))

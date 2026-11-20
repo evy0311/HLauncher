@@ -52,12 +52,11 @@ def render(rows, back, *, theme='Red', size=(720,480), clock=None,
 
 def categories(launcher):
     return [Row('Plugins','',launcher.plugin_settings),
-            Row('Appearance','',launcher.appearance_settings),
             Row('About','',launcher.about_settings),
-            Row('Startup','',launcher.startup_settings),
-            Row('System','',launcher.system_settings),
             Row('Audio','',launcher.audio_page),
-            Row('Diagnostics','',launcher.diagnostics_menu)]
+            Row('Startup','',launcher.startup_settings),
+            Row('Appearance','',launcher.appearance_settings),
+            Row('System','',launcher.system_settings)]
 
 
 def draw_launcher(launcher):

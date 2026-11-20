@@ -45,8 +45,10 @@ Settings → Appearance → Background color offers Blue, Red, Green, Amber,
 Purple or Graphite. The migrated screens map these names to the shared stock-style accent palette. All tile gradients, edges, tab
 color and background illumination derive from that accent. Icon colors stay
 consistent when switching themes: CarPlay stays green, Android Auto
-stays blue, and the gauge/EQ retain their instrument colors. There is no Bluetooth
-icon in the header. When enabled under Settings → Appearance → Show clock, the clock follows the
+stays blue, and the gauge/EQ retain their instrument colors. The header has a Wi-Fi icon at the far right, moving left of the optional
+clock. One to four lit signal marks show connected signal strength; an × means
+disconnected, a slash means the radio is off, and ? means telemetry is unavailable.
+Status refreshes about every two seconds without scanning for networks. When enabled under Settings → Appearance → Show clock, the clock follows the
 Pi's configured local timezone and updates once per minute. The OBD dashboard
 refreshes its own cached header when the minute changes.
 
@@ -64,7 +66,7 @@ automatically or expose them over the network.
 ## Projection connection pages
 
 CarPlay and Android Auto use the same `ui/chrome.py` header as Home, including
-its author credit and minute-updating clock. The top-left tab shows a back arrow
+its Wi-Fi status and minute-updating clock. The top-left tab shows a back arrow
 on child pages; its scaled touch target returns directly to Home.
 `ui/projection.py` renders each source's connection/status page using its
 original colored icon, fading reflection, themed background and illuminated
@@ -85,7 +87,7 @@ The clock updates while this page is open. All child settings and diagnostics sc
 
 ## Audio and OBD pages
 
-The Audio settings page shows Coming soon. The bundled OBD dashboard shares
+The Audio settings page provides the equalizer and saved presets. The bundled OBD dashboard shares
 the UI artwork and typography and uses vehicle data from HondaLink. Missing or disconnected readings
 remain unavailable, and the dashboard caches its header until the minute or
 pressed state changes.
@@ -128,8 +130,9 @@ Storage restart is offered only after the protection job has completed.
 
 ## Settings categories and early welcome
 
-Settings uses two columns of rectangular category bars: Plugins, Appearance,
-About, Startup, System and Audio. About shows the project logo, version, creator,
+Settings uses two columns of rectangular category bars: Plugins / About,
+Audio / Startup, and Appearance / System. Diagnostics lives under System → Debug
+(enable Debug mode in System to show the menu). About shows the project logo, version, creator,
 GitHub address and the Legal info button. Child lists use the shared horizontal
 color wash with inset values or Off/On controls. Appearance contains background
 color, clock visibility and global Picture controls; individual plugin pages contain their enable switch and plugin options

@@ -62,12 +62,6 @@ def render(source, status, back, *, theme='Red', size=(720,480), clock=None, pre
 
 
 def draw_launcher(launcher):
-    from .theme_menu import resolved_colors
-    theme = launcher.layout_theme
-    colors = resolved_colors(theme, 'menu', launcher.prefs.data['tile_color']) if theme.colors else {}
-    frame=render(launcher.host.active,launcher.host.status(),launcher.home,
-                 theme=launcher.prefs.data['tile_color'],size=(launcher.fb.w,launcher.fb.h),
-                 pressed=launcher.pressed_box if launcher.press is not None else None,show_clock=launcher.prefs.data['show_clock'],colors=colors)
-    launcher.actions=frame.actions
-    launcher.home_clock=datetime.now().strftime('%Y-%m-%d %H:%M')
-    launcher.fb.image(dither_rgb565(frame.image))
+    from .pages import phone_projection
+    phone_projection(launcher)
+    return

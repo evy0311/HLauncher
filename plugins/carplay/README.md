@@ -155,6 +155,16 @@ radio depends on the selected radio screen and its AVRCP connection.
 
 ## Troubleshooting
 
+Open **Settings → Plugins → CarPlay → Dongle info** for live adapter reports:
+USB ID, firmware version, product/hardware identifiers, advertised Android Auto
+support, active phone protocol, and reported USB/wireless transport. Scroll for
+additional fields. Unreported fields stay **Unknown**; the product name or USB
+ID does not prove AA support. **Reported** means the firmware advertises AA,
+not that a connection has been tested. Reports clear after adapter loss and are
+not saved as facts about a replacement adapter. Enable the plugin and connect
+the adapter to collect reports. This page does not interrupt another projection
+session or enable a disabled plugin.
+
 ```bash
 lsusb -d 1314:
 sudo node /opt/hlauncher/plugins/carplay/runtime/usb/bridge.mjs --check

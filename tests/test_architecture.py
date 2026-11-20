@@ -125,7 +125,7 @@ class Architecture(unittest.TestCase):
             with patch.object(ui, "open_plugin") as opened:
                 self.assertTrue(ui.launch("com.honda.hondalink.launcher"))
                 ui.tick()
-                opened.assert_called_once_with("carplay")
+                opened.assert_called_once_with("carplay", projection_engine=True)
                 ui.home()
                 ui.tick()
                 self.assertEqual(opened.call_count, 1)
@@ -294,7 +294,8 @@ class Architecture(unittest.TestCase):
                 ui.mode='plugin';ui.host.active=source;ui.has_frame=False
                 with patch.object(ui.host,'status',return_value='Waiting for phone'):
                     ui.draw()
-                self.assertEqual([box for box,_ in ui.actions],[(0,0,80,52)])
+                self.assertIn(((0,0,80,52), ui.home), ui.actions)
+                self.assertIn(((24,408,80,464), ui.projection_settings_page), ui.actions)
                 ui.update({'contacts':[{'slot':0,'action':'down','has_position':True,
                     'x_raw':round(32*32767/719),'y_raw':round(26*32767/479)}]})
                 ui.update({'contacts':[{'slot':0,'action':'up','has_position':False}]})
@@ -306,13 +307,15 @@ class Architecture(unittest.TestCase):
         ui=Launcher(framebuffer=Display(),preferences=self.preferences(),manifests={'carplay':self.carplay})
         try:
             ui.settings()
-            self.assertEqual(len(ui.actions),8)
+            self.assertEqual([action for _, action in ui.actions], [ui.home,
+                ui.plugin_settings, ui.about_settings, ui.audio_page,
+                ui.startup_settings, ui.appearance_settings, ui.system_settings])
             ui.actions[4][1]()
             self.assertEqual(ui.mode,'startup_settings')
             ui.actions[1][1]()
             self.assertEqual(ui.prefs.data['default_plugin'],'carplay')
             self.assertEqual(ui.mode,'startup_settings')
-            ui.settings();ui.actions[2][1]()
+            ui.settings();ui.actions[5][1]()
             self.assertEqual(ui.mode,'appearance_settings')
             ui.actions[1][1]()
             self.assertEqual(ui.mode,'tile_colors')
@@ -320,12 +323,12 @@ class Architecture(unittest.TestCase):
             self.assertEqual(ui.mode,'appearance_settings')
             ui.settings();ui.actions[1][1]()
             self.assertEqual(ui.mode,'plugins_settings')
-            ui.settings();ui.actions[5][1]()
+            ui.settings();ui.actions[6][1]()
             self.assertEqual(ui.mode,'system_settings')
             ui.settings()
             saved = ui.prefs.path.read_bytes()
-            about_box, open_about = ui.actions[3]
-            self.assertEqual(about_box, (24,220,352,284))
+            about_box, open_about = ui.actions[2]
+            self.assertEqual(about_box, (368,144,696,208))
             open_about()
             self.assertEqual(ui.mode, 'about_settings')
             ui.actions[1][1]()

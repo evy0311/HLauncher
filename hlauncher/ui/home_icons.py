@@ -46,6 +46,16 @@ def render_icon(kind, size):
         with Image.open(Path(__file__).parent/'assets/icons'/(kind+'.png')) as source:
             icon=ImageOps.contain(source.convert('RGBA'),(56*S,56*S),Image.Resampling.LANCZOS)
         canvas.alpha_composite(icon,((canvas.width-icon.width)//2,7*S))
+    elif kind == 'phone-projection':
+        ink = '#dbe5f0'
+        d.rounded_rectangle(box(26,16,40,30),radius=4*S,outline=ink,width=2*S)
+        line([(41,47),(41,54),(53,54)],ink,2)
+        d.rounded_rectangle(box(7,26,23,38),radius=4*S,fill='#111820',outline=ink,width=2*S)
+        line([(14,31),(23,31)],ink,1.5)
+        line([(16,59),(21,59)],ink,1.5)
+        # A link between the phone and display, rather than either protocol's logo.
+        line([(37,30),(45,30),(45,37)],'#8bbde6',2)
+        line([(41,34),(45,38),(49,34)],'#8bbde6',2)
     elif kind == 'vehicle':
         ink = '#eef3fa'
         line([(8,49),(9,39),(18,34),(27,23),(46,23),(55,34),(64,39),

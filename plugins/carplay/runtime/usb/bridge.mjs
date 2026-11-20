@@ -3,9 +3,11 @@
 // only (1=H264, 4=reset). The inherited PCM socket carries status and audio.
 // stdin: JSON lines: single touch or two fixed-slot multitouch contacts (normalized x/y).
 import fs from 'node:fs';
+import {monitorEventLoopDelay} from 'node:perf_hooks';
 import {Socket} from 'node:net';
 import {VideoOutput} from './video_output.mjs';
 import readline from 'node:readline';
+import {PhoneConnections} from './phone_connections.mjs';
 import {applyBranding} from './branding.mjs';
 import {SendGpsReporting, SendVehicleGps} from './vehicle_gps.mjs';
 import { format } from 'node:util';
@@ -77,12 +79,13 @@ let maxAudioGap = 0, pcmPackets = 0;
 const testStatuses=process.argv.includes('--self-test')?[]:null;
 function status(state, extra={}) {
   if(testStatuses) testStatuses.push({state,...extra});
-  packet(2,JSON.stringify({state,...extra}));
+  packet(2,JSON.stringify({state,monotonic_ms:Number(process.hrtime.bigint()/1000000n),wall_ms:Date.now(),...extra}));
 }
 process.stdout.on('error',()=>{ if (realtime === process.stdout) process.exit(0); });
 if (realtime !== process.stdout) realtime.on('error',()=>process.exit(0));
 let touchChain=Promise.resolve(), touchSequence=0;
 let voice={call_audio:false,siri:false,recording:false};
+const phones=new PhoneConnections(message=>driver.send(message),status,process.env.HLAUNCHER_PHONE_FAVORITE);
 let micChain=Promise.resolve(),micPending=0,micBytes=0,micDropped=0,micErrors=0;
 let mediaSchema='',mediaState='';
 let brandingBusy=false, brandingPending=null, adapterOpened=false, initialBrandingOK=false;
@@ -124,7 +127,7 @@ function microphone(m) {
   }).finally(()=>{micPending--;});
 }
 function handleCommand(value) {
-  console.error(JSON.stringify({state:'dongle_command',value}));
+  status('dongle_command',{value});
   if(value===3) status('host_ui_requested');
   if(value===1 || value===2)voiceChange({recording:value===1});
 }
@@ -205,6 +208,10 @@ if (!process.argv.includes('--self-test')) readline.createInterface({input:proce
   if (line.length>1024) return;
   try { const m=JSON.parse(line);if(m.type==='adapter.branding') {
     requestBranding(m.request_id);
+  }else if(m.type==='phone.connect') {
+    void phones.request(m.address,m.request_id);
+  }else if(m.type==='phone.favorite') {
+    phones.setFavorite(m.address);
   }else if(m.type==='projection.appearance' && typeof m.night_mode==='boolean') {
     nightMode=m.night_mode;
     void syncNightMode();
@@ -213,7 +220,7 @@ if (!process.argv.includes('--self-test')) readline.createInterface({input:proce
   }else if(m.type==='microphone')microphone(m);else touch(m); } catch(e) { console.error('Bridge input:',String(e)); }
 });
 async function stop() {
-  if (shutting) return; shutting=true;
+  if (shutting) return; phones.close(); shutting=true;
   if (driver) {
     await touchChain;
     if (down) await driver.send(new SendTouch(0,0,16));
@@ -375,6 +382,7 @@ while(!device && !shutting) {
 }
 if(shutting) process.exit(0);
 await device.open();
+status('dongle_identity',{vendor_id:device.vendorId,product_id:device.productId});
 // Remote USB exporters may not survive a USB reset. Default: no automatic reset.
 if(process.env.CIVIC_CARPLAY_RESET==='1') {
   status('resetting_dongle');await device.reset();await device.close();
@@ -396,8 +404,11 @@ driver.on('protocol_message',m=>{
     if(mediaSubtypes[m.subtype]===1) console.error(JSON.stringify({state:'media_packet_seen',...m}));
   }
 });
-driver.on('failure',()=>{status('usb_failure');process.exit(75);});
+driver.on('failure',()=>{phones.close();status('usb_failure');process.exit(75);});
+const loopDelay=monitorEventLoopDelay({resolution:20});loopDelay.enable();
+let lastUsbAt=performance.now();
 driver.on('message',message=>{
+  lastUsbAt=performance.now();
   if(message instanceof Command) {handleCommand(message.value);}
   else if(message instanceof SoftwareVersion) {
     const version=String(message.version).replace(/\0/g,'');
@@ -408,7 +419,13 @@ driver.on('message',message=>{
     console.error(JSON.stringify({state:'dongle_manufacturer_info',a:message.a,b:message.b}));
   }
   else if(message instanceof BoxInfo) {
-    console.error(JSON.stringify({state:'dongle_box_info',settings:message.settings}));
+    void phones.observe(message.settings);
+    // Phone names and identifiers stay on the local control channel, out of logs.
+    const settings=Object.fromEntries(['productType','hwVersion','boxType','supportLinkType','btName','btMacAddr','MDLinkType']
+      .filter(key=>typeof message.settings?.[key]==='string')
+      .map(key=>[key,message.settings[key].slice(0,160)]));
+    if (Array.isArray(message.settings?.DevList)) settings.DevList=message.settings.DevList.slice(0,32).map(device=>Object.fromEntries(['id','name','type'].filter(key=>typeof device?.[key]==='string').map(key=>[key,device[key].slice(0,128)])));
+    status('dongle_box_info',{settings});
   }
   else if(message instanceof Opened) {
     adapterOpened=true;
@@ -418,13 +435,14 @@ driver.on('message',message=>{
   }
   else if(message instanceof MediaData) { handleMedia(message); }
   else if(message instanceof Plugged) {
-    video.reset();lastPCM.clear();status('phone_connected',{phone_type:message.phoneType});
+    phones.plugged();
+    video.reset();lastPCM.clear();status('phone_connected',{phone_type:message.phoneType,wifi:message.wifi});
     appliedNightMode = undefined;
     void syncNightMode();
     gpsPhoneConnected = true;
     void driver.send(new SendGpsReporting(carGps)).catch(() => {});
   }
-  else if(message instanceof Unplugged) { gpsPhoneConnected=false;lastPCM.clear();voiceChange({call_audio:false,siri:false,recording:false});status('phone_disconnected'); }
+  else if(message instanceof Unplugged) { void phones.unplugged();gpsPhoneConnected=false;lastPCM.clear();voiceChange({call_audio:false,siri:false,recording:false});status('phone_disconnected'); }
   else if(message instanceof VideoData && message.data?.length) {
     videoPackets++;
     const receivedAt=Date.now();
@@ -438,7 +456,10 @@ driver.on('message',message=>{
     audioPackets++;
     if(message.data?.length) {
       const now=performance.now(), stream=message.audioType;
-      if(lastPCM.has(stream))maxAudioGap=Math.max(maxAudioGap,now-lastPCM.get(stream));
+      if(lastPCM.has(stream)) {
+        const gap=now-lastPCM.get(stream);maxAudioGap=Math.max(maxAudioGap,gap);
+        if(gap>=100) status('audio_pcm_gap',{stream,gap_ms:Math.round(gap),video_packets:videoPackets,pcm_backlog_bytes:realtime.writableLength});
+      }
       lastPCM.set(stream,now);
       pcmPackets++;
       const h=Buffer.alloc(12);h.writeUInt32LE(message.decodeType,0);
@@ -454,7 +475,8 @@ driver.on('message',message=>{
   const now=Date.now();
   if(now-lastStats>=1000) {
     const elapsed=lastStats ? now-lastStats : 0;
-    status('stream_stats',{video_packets:videoPackets,video_packets_delta:videoPackets-lastStatsVideo,window_ms:elapsed,video_gap_max_ms:maxVideoGap,video_packets_dropped:video.dropped,audio_packets:audioPackets,pcm_packets:pcmPackets,pcm_gap_max_ms:Math.round(maxAudioGap),audio_forwarding:'launcher_hdmi',usb_message_types:usbTypes,media_subtypes:mediaSubtypes,mic_bytes:micBytes,mic_dropped:micDropped,mic_errors:micErrors});
+    status('stream_stats',{event_loop_max_ms:Math.round(loopDelay.max/1e6),pcm_backlog_bytes:realtime.writableLength,video_packets:videoPackets,video_packets_delta:videoPackets-lastStatsVideo,window_ms:elapsed,video_gap_max_ms:maxVideoGap,video_packets_dropped:video.dropped,audio_packets:audioPackets,pcm_packets:pcmPackets,pcm_gap_max_ms:Math.round(maxAudioGap),audio_forwarding:'launcher_hdmi',usb_message_types:usbTypes,media_subtypes:mediaSubtypes,mic_bytes:micBytes,mic_dropped:micDropped,mic_errors:micErrors});
+    loopDelay.reset();
     lastStats=now;lastStatsVideo=videoPackets;maxVideoGap=0;maxAudioGap=0;
   }
 });
@@ -464,7 +486,8 @@ const config={...DEFAULT_CONFIG,width:800,height:480,fps,
 await driver.initialise(device);
 initialBrandingOK=await brandAdapter();
 appliedNightMode=config.nightMode;
-await driver.start(config);connected=true;
+await driver.start(config);connected=true;phones.ready=true;
+void phones.autoConnect();
 void syncNightMode();
 if(adapterOpened && brandingPending!==null){const pending=brandingPending;brandingPending=null;void brandAdapter(pending);}
 status('metadata_requested',{DashboardInfo:1});
@@ -475,3 +498,11 @@ const keyframe=setInterval(()=>{
 },5000);
 setTimeout(()=>driver.send(new SendCommand('wifiPair')),15000).unref();
 process.on('exit',()=>clearInterval(keyframe));
+
+const watchdog=setInterval(()=>{
+  phones.tick();
+  const gap=performance.now()-lastUsbAt;
+  if(gap>=1000) status('usb_receive_gap',{gap_ms:Math.round(gap),event_loop_max_ms:Math.round(loopDelay.max/1e6),pcm_backlog_bytes:realtime.writableLength});
+},1000);
+watchdog.unref();
+process.on('exit',()=>{clearInterval(watchdog);loopDelay.disable();});

@@ -49,6 +49,14 @@ def main():
                     backend.touch(message)
                 elif kind == "host.adapter.branding":
                     backend.apply_branding(message.get("request_id"))
+                elif kind in ('host.adapter.connect', 'host.adapter.favorite'):
+                    command = 'phone.connect' if kind == 'host.adapter.connect' else 'phone.favorite'
+                    if not backend.phone_command(command, message.get('address', ''), message.get('request_id', '')):
+                        if command == 'phone.connect':
+                            backend.receive_state(dict(state='phone_connection', request_id=message.get('request_id'),
+                                                       result='failed', reason='worker_queue_full'))
+                        else:
+                            backend.notify('carplay_favorite_deferred')
                 elif kind == "projection.appearance":
                     backend.set_night_mode(message.get('night_mode') is True)
                 elif kind == "projection.gps":

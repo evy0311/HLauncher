@@ -15,6 +15,7 @@ from .config import RUNTIME_DIR, STATE_DIR, WIFI_POWER_MODES, Preferences
 from .setup_state import SetupState, atomic_json, address
 from .storage import configure, execute, status as storage_status
 from .wifi_power import BOOT_HOLD, WifiPower
+from .wifi_status import sample as sample_wifi
 
 WIFI_PROFILE = Path('/etc/NetworkManager/system-connections/hlauncher-wifi.nmconnection')
 
@@ -769,6 +770,7 @@ def main():
                 wifi_state = 'unavailable'
             try:
                 network = sample_network(maintenance.run)
+                network.update(sample_wifi(maintenance.run))
                 atomic_json(RUNTIME_DIR/'network-status.json',
                             dict(network, wifi_mode=wifi_mode, wifi_state=wifi_state,
                                  wifi_delay_boot=prefs.data['wifi_delay_boot']), durable=False)

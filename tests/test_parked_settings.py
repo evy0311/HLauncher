@@ -26,20 +26,22 @@ class ParkedSettings(unittest.TestCase):
         self.addCleanup(self.ui.close)
 
     def brake(self, engaged, at):
-        self.monitor.vehicle.observe(dict(
-            session=1, message=0x61, protocol=(0, 'jp.co.honda.rd.dispaudio.app.generals'),
-            payload='10100000000000' if engaged else '10000000000000', monotonic=at,
-        ))
+        with patch('hlauncher.protocol_diagnostics.time.monotonic', return_value=at):
+            self.monitor.observe(dict(
+                state='honda_frame', session=1, message=0x61,
+                protocol=(0, 'jp.co.honda.rd.dispaudio.app.generals'),
+                payload='10100000000000' if engaged else '10000000000000',
+            ))
 
     def speed(self, kph, at):
         records = decode_records(can_data([(0x12F85050, bytes([kph]))]), api_ids=[152])
         with patch('hlauncher.protocol_diagnostics.time.monotonic', return_value=at):
             self.monitor.observe(dict(state='honda_can_data', session=1, records=records))
 
-    def test_setup_requires_connection_brake_and_zero_speed(self):
+    def test_setup_allows_missing_data_and_locks_on_reported_motion(self):
         self.ui.start()
-        self.assertTrue(self.ui.parked_screen_locked)
-        self.assertEqual(self.ui.actions, [])
+        self.assertFalse(self.ui.parked_screen_locked)
+        self.assertTrue(self.ui.actions)
         self.ui.accept_safety_notice()
         self.assertFalse(self.prefs.safety_notice_accepted)
 
@@ -76,8 +78,8 @@ class ParkedSettings(unittest.TestCase):
 
         self.monitor.observe(dict(state='closed', uuid='test-cafe'))
         self.ui.tick()
-        self.assertTrue(self.ui.parked_screen_locked)
-        self.assertEqual(self.ui.actions, [])
+        self.assertFalse(self.ui.parked_screen_locked)
+        self.assertTrue(self.ui.actions)
 
     def touch(self, action, x, y):
         contact = dict(slot=0, action=action, has_position=True,
@@ -96,19 +98,24 @@ class ParkedSettings(unittest.TestCase):
             self.touch('up', 556, 434)
         self.assertTrue(self.prefs.safety_notice_accepted)
 
-    def test_brake_heartbeat_and_brake_only_with_stale_zero_speed(self):
+    def test_safe_reports_do_not_expire_out_of_the_parking_gate(self):
         self.monitor.observe(dict(state='connected', uuid='test-cafe'))
         self.brake(True, 100)
         self.speed(0, 104)
         self.assertTrue(self.monitor.parked_for_setup(105))
-        self.assertFalse(self.monitor.parked_for_setup(106))
+        self.assertTrue(self.monitor.parked_for_setup(106))
 
         self.speed(0, 106)
-        self.assertFalse(self.monitor.parked_for_setup(106))
+        self.assertTrue(self.monitor.parked_for_setup(106))
         self.brake(True, 106)
         self.assertTrue(self.monitor.parked_for_setup(106))
         self.assertTrue(self.monitor.parked_for_setup(108))
-        self.assertTrue(self.monitor.parking_snapshot(108)['brake_only'])
+        self.assertFalse(self.monitor.parking_snapshot(108)['brake_only'])
+        self.assertTrue(self.monitor.parked_for_setup(1000))
+        state = self.monitor.plugin_parking_state(1000)
+        self.assertTrue(state['safely_parked'])
+        self.assertIsNone(state['speed_kph'])
+        self.assertIsNone(state['parking_brake'])
 
     def test_confirmed_brake_unlocks_settings_without_speed(self):
         self.prefs.data['setup_complete'] = True
@@ -119,10 +126,10 @@ class ParkedSettings(unittest.TestCase):
         self.assertFalse(self.ui.parked_screen_locked)
         self.assertEqual(self.monitor.parked_setup_readings(), (None, True))
         self.assertTrue(self.monitor.parking_snapshot()['brake_only'])
-        self.assertIn(self.ui.diagnostics_menu, [callback for _, callback in self.ui.actions])
+        self.assertIn(self.ui.system_settings, [callback for _, callback in self.ui.actions])
         self.assertIsNone(self.monitor.projection_vehicle_state()['speed_kph'])
 
-    def test_parked_plugin_needs_both_live_signals_and_closes_when_moving(self):
+    def test_parked_plugin_allows_no_frames_and_closes_on_reported_unsafe_state(self):
         folder = self.prefs.path.parent
         (folder / 'worker.py').touch()
         (folder / 'plugin.json').write_text(json.dumps(dict(
@@ -132,31 +139,16 @@ class ParkedSettings(unittest.TestCase):
         self.ui.manifests['vehicle'] = Manifest.load(folder, bundled=True)
         self.prefs.data['setup_complete'] = True
         self.prefs.accept_safety_notice()
-        self.monitor.observe(dict(state='connected', uuid='test-cafe'))
-        now = time.monotonic()
-        self.brake(True, now)
-
         worker = Mock(manifest=self.ui.manifests['vehicle'], last_parking_state=None, car_gps=False)
+        worker.proc.poll.return_value = None
+        worker.read.return_value = []
         with patch('hlauncher.plugin_host.Worker', return_value=worker) as start:
-            self.assertTrue(self.monitor.parked_for_setup())
             self.ui.open_plugin('vehicle')
-            start.assert_not_called()
-            self.assertEqual(self.ui.mode, 'parked_plugin')
-            self.assertTrue(self.ui.parked_screen_locked)
-            self.assertEqual([action for _, action in self.ui.actions], [self.ui.home])
-            bootstrap = BootstrapLauncher.__new__(BootstrapLauncher)
-            bootstrap.ui, bootstrap.protocols = self.ui, self.monitor
-            self.assertEqual(bootstrap.vehicle_scope(), 'vehicle')
-
-            self.speed(0, now)
-            with patch.object(self.ui.host, 'tick'):
-                self.ui.tick()
             start.assert_called_once()
             self.assertEqual(self.ui.host.active, 'vehicle')
-            worker.send.assert_any_call(type='vehicle.parking', connected=True, speed_kph=0,
-                                        parking_brake=True, safely_parked=True)
-            self.assertEqual(bootstrap.vehicle_scope(), 'vehicle')
-
+            worker.send.assert_any_call(type='vehicle.parking', connected=False, speed_kph=None,
+                                        parking_brake=None, safely_parked=True)
+            self.monitor.observe(dict(state='connected', uuid='test-cafe'))
             self.speed(5, time.monotonic())
             self.ui.host.touch({'contacts': []})
             worker.close.assert_called_once()
@@ -166,30 +158,48 @@ class ParkedSettings(unittest.TestCase):
             self.assertTrue(self.ui.parked_screen_locked)
 
             self.speed(0, time.monotonic())
-            self.ui.open_plugin('vehicle')
+            with patch.object(self.ui.host, 'tick'):
+                self.ui.tick()
             self.assertEqual(self.ui.host.active, 'vehicle')
-            with patch('hlauncher.protocol_diagnostics.time.monotonic', return_value=time.monotonic() + 2.1):
+            with patch('hlauncher.protocol_diagnostics.time.monotonic', return_value=time.monotonic() + 60):
+                worker.last_message = time.monotonic()
                 self.ui.host.tick()
+            self.assertEqual(worker.close.call_count, 1)
+            self.monitor.observe(dict(state='closed', uuid='test-cafe'))
+            self.ui.host.session_changed(connected=False)
+            self.assertEqual(worker.close.call_count, 1)
+            self.assertEqual(self.ui.host.active, 'vehicle')
+
+            self.monitor.observe(dict(state='connected', uuid='test-cafe'))
+            self.brake(False, time.monotonic())
+            self.ui.host.touch({'contacts': []})
             self.assertEqual(worker.close.call_count, 2)
             self.assertEqual(self.ui.mode, 'parked_plugin')
-            self.ui.actions[0][1]()
-            self.assertEqual(self.ui.mode, 'home')
-            self.assertIsNone(self.ui.locked_plugin)
+            self.brake(True, time.monotonic())
+            self.ui.open_plugin('vehicle')
+            self.assertEqual(self.ui.host.active, 'vehicle')
 
-    def test_plugin_parked_state_expires_and_clears_on_disconnect(self):
+    def test_plugin_gate_retains_unsafe_inputs_through_expiry_and_disconnect(self):
+        self.assertTrue(self.monitor.plugin_parking_state(100)['safely_parked'])
         self.monitor.observe(dict(state='connected', uuid='test-cafe'))
-        self.brake(True, 100)
-        self.speed(0, 100)
-        self.assertTrue(self.monitor.plugin_parking_state(101)['safely_parked'])
+        self.brake(False, 100)
+        self.speed(10, 100)
+        self.assertFalse(self.monitor.plugin_parking_state(101)['safely_parked'])
         self.monitor.observe(dict(state='honda_can_subscription_queued', session=1, scope='vehicle'))
-        self.assertTrue(self.monitor.plugin_parking_state(101)['safely_parked'])
-        self.assertFalse(self.monitor.plugin_parking_state(102)['safely_parked'])
-        self.speed(0, 106)
-        self.assertFalse(self.monitor.plugin_parking_state(106)['safely_parked'])
-        self.brake(True, 106)
-        self.assertTrue(self.monitor.plugin_parking_state(106)['safely_parked'])
+        self.assertFalse(self.monitor.plugin_parking_state(300)['safely_parked'])
         self.monitor.observe(dict(state='closed', uuid='test-cafe'))
-        self.assertFalse(self.monitor.plugin_parking_state(106)['safely_parked'])
+        state = self.monitor.plugin_parking_state(301)
+        self.assertFalse(state['connected'])
+        self.assertIsNone(state['speed_kph'])
+        self.assertIsNone(state['parking_brake'])
+        self.assertFalse(state['safely_parked'])
+        self.assertFalse(self.monitor.parked_for_setup(301))
+        self.monitor.observe(dict(state='connected', uuid='test-cafe'))
+        self.speed(0, 302)
+        self.assertFalse(self.monitor.plugin_parking_state(302)['safely_parked'])
+        self.brake(True, 303)
+        self.assertTrue(self.monitor.plugin_parking_state(303)['safely_parked'])
+        self.assertTrue(self.monitor.parked_for_setup(303))
 
     def test_last_moving_speed_vetoes_brake_only_after_subscription_changes(self):
         self.monitor.observe(dict(state='connected', uuid='test-cafe'))
@@ -207,14 +217,16 @@ class ParkedSettings(unittest.TestCase):
         self.monitor.observe(dict(state='connected', uuid='test-cafe'))
         self.assertFalse(self.monitor.parked_for_setup(105))
         self.brake(True, 105)
+        self.assertFalse(self.monitor.parked_for_setup(105))
+        self.speed(0, 105)
         self.assertTrue(self.monitor.parked_for_setup(105))
 
-    def test_settings_waits_for_first_brake_status(self):
+    def test_settings_allows_missing_brake_until_a_released_brake_is_reported(self):
         self.ui.start()
         self.monitor.observe(dict(state='connected', uuid='test-cafe'))
         self.speed(0, time.monotonic())
         self.ui.tick()
-        self.assertTrue(self.ui.parked_screen_locked)
+        self.assertFalse(self.ui.parked_screen_locked)
         self.assertIsNone(self.ui.parked_overlay_at)
 
         self.brake(False, time.monotonic())
@@ -225,6 +237,8 @@ class ParkedSettings(unittest.TestCase):
         self.assertFalse(self.ui.parked_screen_locked)
 
     def test_warning_double_tap_opens_only_readings_and_close_restores_lock(self):
+        self.monitor.observe(dict(state='connected', uuid='test-cafe'))
+        self.brake(False, time.monotonic())
         self.ui.start()
         self.touch('down', 360, 148)
         self.ui.update({'contacts': [{'slot': 0, 'action': 'up', 'has_position': False}]})
@@ -248,7 +262,7 @@ class ParkedSettings(unittest.TestCase):
         self.assertFalse(self.prefs.safety_notice_accepted)
         self.assertEqual(bootstrap.vehicle_scope(), 'driving')
 
-    def test_parking_status_can_be_opened_from_settings_with_debug_off(self):
+    def test_parking_status_is_under_system_debug_diagnostics(self):
         self.prefs.data['setup_complete'] = True
         self.prefs.accept_safety_notice()
         self.monitor.observe(dict(state='connected', uuid='test-cafe'))
@@ -257,13 +271,18 @@ class ParkedSettings(unittest.TestCase):
         self.speed(0, now)
         self.ui.settings()
         self.assertFalse(self.prefs.data['debug_mode'])
+        self.assertNotIn(self.ui.diagnostics_menu, [callback for _, callback in self.ui.actions])
+        next(callback for _, callback in self.ui.actions if callback == self.ui.system_settings)()
+        self.assertNotIn(self.ui.debug_tools, [callback for _, callback in self.ui.actions])
+        self.ui.toggle_debug()
+        next(callback for _, callback in self.ui.actions if callback == self.ui.debug_tools)()
         next(callback for _, callback in self.ui.actions if callback == self.ui.diagnostics_menu)()
         next(callback for _, callback in self.ui.actions if callback == self.ui.open_parking_status)()
         self.assertEqual(self.ui.mode, 'parking_status')
         self.ui.close_parking_status()
         self.assertEqual(self.ui.mode, 'diagnostics_menu')
 
-    def test_candidate_readings_are_scoped_and_do_not_unlock_settings(self):
+    def test_candidate_readings_are_scoped_without_requiring_a_radio_brake_report(self):
         scope = 'driving_parking'
         self.assertEqual({row['message_id'] for row in subscription_rows(scope)},
                          {0x158, 0x1A6, 0x12F85050, 0x12F85150, 0x12F97350})
@@ -279,47 +298,29 @@ class ParkedSettings(unittest.TestCase):
         self.assertTrue(signals[100]['value'])
         self.assertFalse(signals[78]['received'])
         self.assertIsNone(status['radio_brake'])
-        self.assertFalse(status['parked'])
+        self.assertTrue(status['parked'])
+        self.assertTrue(status['assumed_parked'])
         self.monitor.observe(dict(state='closed', uuid='test-cafe'))
         self.assertFalse(any(row['received'] for row in self.monitor.parking_snapshot()['can_signals']))
 
-    def test_short_reading_gap_blocks_touches_without_flashing_the_overlay(self):
+    def test_reading_gap_does_not_cancel_a_pressed_setting(self):
         self.prefs.data['setup_complete'] = True
         self.prefs.accept_safety_notice()
         self.monitor.observe(dict(state='connected', uuid='test-cafe'))
         now = time.monotonic()
         self.brake(True, now)
         self.speed(0, now)
-        self.ui.home()
-        bootstrap = BootstrapLauncher.__new__(BootstrapLauncher)
-        bootstrap.ui = self.ui
-        self.assertEqual(bootstrap.vehicle_scope(), 'driving')
         self.ui.appearance_settings()
-        self.assertEqual(bootstrap.vehicle_scope(), 'driving')
         box = next(box for box, callback in self.ui.actions if callback == self.ui.toggle_clock)
         x, y = (box[0] + box[2]) / 2, (box[1] + box[3]) / 2
         self.touch('down', x, y)
-        settings_frame = self.ui.fb.last
-        with patch('hlauncher.launcher.time.monotonic', return_value=now + 6.2):
+        with patch('hlauncher.launcher.time.monotonic', return_value=now + 60):
             self.touch('up', x, y)
-            self.assertTrue(self.ui.parked_screen_locked)
-            self.assertIs(self.ui.fb.last, settings_frame)
-            self.assertFalse(self.prefs.data['show_clock'])
-
-            self.brake(True, now + 6.2)
-            self.ui.tick()
             self.assertFalse(self.ui.parked_screen_locked)
-            self.assertIn(self.ui.toggle_clock, [callback for _, callback in self.ui.actions])
-
-        with patch('hlauncher.launcher.time.monotonic', return_value=now + 12.3):
-            self.ui.tick()
-            self.assertIsNotNone(self.ui.parked_overlay_at)
-            self.speed(5, now + 12.3)
-            self.ui.tick()
+            self.assertTrue(self.prefs.data['show_clock'])
             self.assertIsNone(self.ui.parked_overlay_at)
-            self.assertEqual([callback for _, callback in self.ui.actions], [self.ui.home])
 
-    def test_sustained_reading_gap_shows_the_overlay(self):
+    def test_sustained_reading_gap_keeps_settings_available(self):
         self.prefs.data['setup_complete'] = True
         self.prefs.accept_safety_notice()
         self.monitor.observe(dict(state='connected', uuid='test-cafe'))
@@ -327,12 +328,12 @@ class ParkedSettings(unittest.TestCase):
         self.brake(True, now)
         self.speed(0, now)
         self.ui.appearance_settings()
-
-        with patch('hlauncher.launcher.time.monotonic', return_value=now + 6):
+        with patch('hlauncher.launcher.time.monotonic', return_value=now + 60):
             self.ui.tick()
-            self.assertTrue(self.ui.parked_screen_locked)
-            self.assertEqual(self.ui.actions, [])
-        with patch('hlauncher.launcher.time.monotonic', return_value=now + 7):
+            self.assertFalse(self.ui.parked_screen_locked)
+            self.assertIn(self.ui.toggle_clock, [callback for _, callback in self.ui.actions])
+            self.assertIsNone(self.ui.parked_overlay_at)
+            self.speed(1, now + 60)
             self.ui.tick()
             self.assertTrue(self.ui.parked_screen_locked)
             self.assertEqual([callback for _, callback in self.ui.actions], [self.ui.home])

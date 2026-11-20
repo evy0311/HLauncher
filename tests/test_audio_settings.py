@@ -99,11 +99,11 @@ class AudioSettingsTests(unittest.TestCase):
                 tap(610, 456)
                 self.assertEqual(ui.audio_selected_bands[1], 'b200')
                 ui.change_audio(eq=False)
+                tap(580, 132)  # Open once, then compare presets without leaving.
                 for index, name in enumerate(PRESETS):
                     ui.adjust_eq('bass', 2)
-                    tap(580, 132)  # Presets
                     tap(180+(index%2)*344,138+(index//2)*64)
-                    self.assertFalse(ui.audio_presets_open)
+                    self.assertTrue(ui.audio_presets_open)
                     self.assertEqual(ui.audio_bank, 1)
                     self.assertEqual(ui.audio_settings.preset_name(), name)
                     self.assertEqual(ui.audio_settings.values['bass'], 0)
@@ -111,7 +111,6 @@ class AudioSettingsTests(unittest.TestCase):
                     self.assertFalse(ui.audio_settings.values['pipewire'])
                     self.assertEqual(AudioSettings(Path(folder)/'audio.json').values,
                                      ui.audio_settings.values)
-                tap(580, 132)
                 tap(40, 26)  # Preset back returns to the same EQ bank.
                 self.assertFalse(ui.audio_presets_open)
                 self.assertEqual(ui.audio_bank, 1)

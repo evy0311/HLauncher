@@ -49,7 +49,6 @@ def draw_launcher(launcher):
         try:changes=settings.preset_changes(name)
         except (OSError,ValueError) as exc:
             launcher.audio_notice=str(exc)[:72];launcher.draw();return
-        launcher.audio_presets_open=False
         launcher.change_audio(**changes)
 
     if presets:

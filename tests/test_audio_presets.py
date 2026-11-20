@@ -88,7 +88,7 @@ class UserPresetTouchscreen(unittest.TestCase):
             def tap(x,y):
                 next(action for (l,t,r,b),action in ui.actions if l<=x<r and t<=y<b)()
             def users():
-                tap(530,136)
+                if not ui.audio_presets_open:tap(530,136)
             try:
                 ui.audio_page()
                 first=dict(PRESETS['Flat'],b20=-3,b25=2)
@@ -98,7 +98,7 @@ class UserPresetTouchscreen(unittest.TestCase):
                 self.assertEqual(ui.audio_settings.preset_name(),'User 1')
                 ui.change_audio(bands=second);tap(636,404)
                 tap(120,404)
-                self.assertFalse(ui.audio_presets_open)
+                self.assertTrue(ui.audio_presets_open)
                 self.assertEqual(ui.audio_settings.values['bands'],first)
                 replacement=dict(first,b20=-4);ui.change_audio(bands=replacement)
                 users();before=ui.audio_settings.presets_path.read_bytes();tap(292,404)

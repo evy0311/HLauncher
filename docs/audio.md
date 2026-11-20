@@ -74,6 +74,8 @@ bass shelf behind a new preset. The development Pi had all three at zero.
 Open **Presets** to see all eight factory curves and both user slots on one
 screen. Tap **Save current** beside **User 1** or **User 2**. Replacing an occupied slot requires confirmation. Tap a saved slot
 to load it; saving/loading keeps PipeWire on/off and EQ bypass as selected.
+Selecting a factory or user preset keeps this screen open for comparison;
+use Back to return to the frequency controls.
 User slots capture all fourteen bands and any previous tone gains. Their active
 name and curve survive reboots; both slots survive application updates.
 

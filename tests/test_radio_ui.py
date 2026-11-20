@@ -89,6 +89,29 @@ class RadioUI(unittest.TestCase):
                     for b,_ in ui.actions[i+1:]:
                         self.assertFalse(a[0]<b[2] and b[0]<a[2] and a[1]<b[3] and b[1]<a[3],ui.mode)
 
+    def test_wifi_change_refreshes_home_before_the_clock_minute_changes(self):
+        ui = self.ui
+        ui.home_clock = time.strftime('%Y-%m-%d %H:%M')
+        ui.header_wifi = ('off', 0)
+        ui.wifi_checked = 0
+        with patch('hlauncher.wifi_status.indicator', return_value=('connected', 3)), patch.object(ui, 'draw') as draw:
+            ui.tick()
+            draw.assert_called_once()
+        self.assertEqual(ui.header_wifi, ('connected', 3))
+
+    def test_wifi_change_does_not_draw_over_live_phone_video(self):
+        ui = self.ui
+        ui.mode = 'plugin'
+        ui.host.active = 'carplay'
+        ui.has_frame = True
+        ui.last_status = ui.host.status
+        ui.projection_checked = time.monotonic()
+        ui.wifi_checked = 0
+        with patch('hlauncher.wifi_status.indicator', return_value=('connected', 3)), patch.object(ui, 'draw') as draw, patch.object(ui.host, 'tick'), patch.object(ui.host, 'frame', return_value=None):
+            ui.tick()
+            draw.assert_not_called()
+        ui.host.active = None
+
     def test_projection_disconnect_with_unchanged_status_restores_back_control(self):
         ui=self.ui;ui.mode='plugin';ui.host.active='carplay';ui.has_frame=True
         ui.last_status='iPhone disconnected';ui.projection_checked=time.monotonic()

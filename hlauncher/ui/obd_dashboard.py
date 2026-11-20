@@ -117,9 +117,11 @@ class Dashboard:
         now=time.monotonic() if now is None else now
         image=self.bases[self.fullscreen].copy()
         if not self.fullscreen:
-            key=(time.strftime('%Y-%m-%d %H:%M'),pressed or self.touch_target=='home')
+            from ..wifi_status import indicator
+            wifi = indicator()
+            key=(wifi, time.strftime('%Y-%m-%d %H:%M'),pressed or self.touch_target=='home')
             if key!=self.header_key:
-                self.header=chrome(self.theme,child=True,pressed=key[1],show_clock=self.show_clock,colors=self.colors).crop((0,0,720,52))
+                self.header=chrome(self.theme,child=True,pressed=key[2],show_clock=self.show_clock,colors=self.colors,wifi=wifi).crop((0,0,720,52))
                 self.header_key=key
             image.paste(self.header,(0,0))
         d=ImageDraw.Draw(image)

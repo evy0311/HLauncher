@@ -14,8 +14,8 @@ def camera_top(height):
 
 
 @lru_cache(maxsize=12)
-def camera_header(theme, width, height, *, show_clock=False, pressed=False, clock=None):
-    header = chrome(theme, child=True, pressed=pressed, show_clock=show_clock, clock=clock)
+def camera_header(theme, width, height, *, show_clock=False, pressed=False, clock=None, wifi=None):
+    header = chrome(theme, child=True, pressed=pressed, show_clock=show_clock, clock=clock, wifi=wifi)
     header = header.crop((0, 0, 720, BACK_BOUNDS[3]))
     return encode(header.resize((width, camera_top(height)), Image.Resampling.LANCZOS))
 

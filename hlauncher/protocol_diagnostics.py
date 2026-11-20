@@ -40,6 +40,10 @@ class ProtocolDiagnostics:
         self.last_reported_speed = None
         self.last_reported_speed_at = None
         self.last_reported_speed_session = None
+        # The parking gate starts permissive and retains each last known input.
+        # A telemetry gap or reconnect must not erase observed motion/brake release.
+        self.parking_speed = None
+        self.parking_brake = None
         self.last_vehicle = VehicleLastKnown(vehicle_path)
         self.app_keys = deque(maxlen=6)
         self.display_trials = deque(maxlen=4)
@@ -67,8 +71,13 @@ class ProtocolDiagnostics:
                 valid_speeds = [speed for speed in speeds if 0 <= speed <= 400]
                 if valid_speeds:
                     self.last_reported_speed = max(valid_speeds)
+                    self.parking_speed = self.last_reported_speed
                     self.last_reported_speed_at = event['monotonic']
                     self.last_reported_speed_session = event['session']
+            if state == 'honda_radio_status' and self.connected:
+                brake = event.get('parking_brake_engaged')
+                if type(brake) is bool:
+                    self.parking_brake = brake
             speed_session_closed = (state == 'iap_data_session_closed'
                                     or (state == 'honda_can_authorization' and not event.get('authorized')))
             if speed_session_closed and item.get('session') in (None, self.last_reported_speed_session):
@@ -291,12 +300,12 @@ class ProtocolDiagnostics:
         return state
 
     def parked_for_setup(self, now=None):
-        """Use the radio brake when speed is missing, with reported motion taking priority."""
+        """Allow missing inputs; retain reported blockers until corrected by the radio."""
         speed, brake = self.parked_setup_readings(now)
-        return brake is True and speed in (None, 0)
+        return brake is not False and speed in (None, 0)
 
     def plugin_parking_state(self, now=None):
-        """Publish only live readings and the stricter parked check for plugins."""
+        """Keep plugin telemetry live while sharing Settings' retained parking gate."""
         now = time.monotonic() if now is None else now
         with self.lock:
             speed = brake = None
@@ -307,7 +316,7 @@ class ProtocolDiagnostics:
                 if at is not None and 0 <= now - at < SPEED_MAX_AGE:
                     speed = self.last_reported_speed
             return dict(connected=self.connected, speed_kph=speed, parking_brake=brake,
-                        safely_parked=speed == 0 and brake is True)
+                        safely_parked=self.parked_for_setup(now))
 
     def _setup_brake(self, now):
         brake = self.vehicle.status
@@ -317,15 +326,9 @@ class ProtocolDiagnostics:
         return None
 
     def parked_setup_readings(self, now=None):
-        now = time.monotonic() if now is None else now
+        """Last reported gate inputs, independent of telemetry freshness or connection."""
         with self.lock:
-            if not self.connected:
-                return None, None
-            speed, _ = self.projection_speed(now)
-            # Losing the speed feed or changing subscriptions must not erase reported motion.
-            if self.last_reported_speed:
-                speed = self.last_reported_speed
-            return speed, self._setup_brake(now)
+            return self.parking_speed, self.parking_brake
 
     def parking_snapshot(self, now=None):
         """Read the gate and candidate signals together for the support screen."""
@@ -334,6 +337,7 @@ class ProtocolDiagnostics:
             brake = self.vehicle.status
             speed, engaged = self.parked_setup_readings(now)
             return dict(connected=self.connected, parked=self.parked_for_setup(now),
+                        assumed_parked=speed is None or engaged is None,
                         brake_only=engaged is True and speed is None,
                         radio_brake=brake.get('parking_brake_engaged'),
                         radio_flags=brake.get('flags'),

@@ -506,7 +506,7 @@ class PluginHost:
         self.session.update(values)
         if values.get('connected') is False:
             for worker in list(self.workers.values()):
-                self._enforce_parking(worker, {'safely_parked': False})
+                self._enforce_parking(worker)
         for worker in self.workers.values():
             if "session" in worker.manifest.capabilities:
                 worker.send(type="radio.session", **self.session)

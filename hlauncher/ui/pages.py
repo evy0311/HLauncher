@@ -87,11 +87,12 @@ def parked_only(ui):
     page.draw.text((360, 203), 'Come to a complete stop and engage the parking brake.',
                    font=font(19), fill='#e8e8e8', anchor='mm')
     speed, brake = ui.protocols.parked_setup_readings()
-    lines = ('Waiting for the radio to confirm the parking brake.',
-             'If it is already engaged, keep the brake pedal pressed.',
-             'Then release and re-engage the parking brake.')
-    if (speed is not None and speed > 0) or (ui.mode == 'parked_plugin' and brake is True):
-        lines = ('Waiting for the radio to confirm the vehicle has stopped.',)
+    if speed is not None and speed > 0:
+        lines = ('The radio reports that the vehicle is moving.',)
+    elif brake is False:
+        lines = ('The radio reports that the parking brake is released.',)
+    else:
+        lines = ('Waiting for vehicle status to update.',)
     for index, line in enumerate(lines):
         page.draw.text((360, 254 + index * 28), line, font=font(17), fill='#bbbbbb', anchor='mm')
     if ui.prefs.safety_notice_accepted and ui.prefs.data['setup_complete']:

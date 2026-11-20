@@ -33,7 +33,7 @@ def parking_status(ui):
     p.button((632, 62, 696, 108), '×', ui.close_parking_status, secondary=True)
     data = ui.protocols.parking_snapshot()
     link = 'Connected' if data['connected'] else 'Disconnected'
-    gate = 'Parked confirmed' if data['parked'] else 'Parked unconfirmed'
+    gate = ('Parked assumed' if data['assumed_parked'] else 'Parked confirmed') if data['parked'] else 'Not parked'
     p.text((24, 113), f'HondaLink: {link}  ·  {gate}', 16, fill='#efedf6')
     if data['brake_only']:
         p.text((696, 115), 'Using parking brake only', 13, anchor='rt')

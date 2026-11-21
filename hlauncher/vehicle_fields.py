@@ -73,3 +73,14 @@ def unit(field):
     if field in ('latitude', 'longitude'):
         return '°'
     return UNITS.get(int(field), '') if field.isdecimal() else ''
+
+
+def minder_oil_life(code):
+    """Percent from the original Connect app's cluster-code conversion (0xE1EC)."""
+    if type(code) is not int:
+        return None
+    if 1 <= code <= 9:
+        return 110 - 10 * code
+    if 10 <= code <= 13:
+        return 65 - 5 * code
+    return 0 if code == 14 else None

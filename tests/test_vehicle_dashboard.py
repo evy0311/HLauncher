@@ -4,7 +4,7 @@ import sys
 import unittest
 from unittest.mock import patch
 
-from hlauncher.vehicle_fields import GROUPS
+from hlauncher.vehicle_fields import GROUPS, minder_oil_life
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -41,3 +41,19 @@ class VehicleDashboard(unittest.TestCase):
         self.assertNotIn('Range', labels)
         self.assertNotIn('Coolant', labels)
         self.assertIn('Not reported', labels)
+
+
+    def test_cluster_minder_code_supplies_the_oil_dial_without_engine_oil_life(self):
+        # Synthetic inputs; conversions verified against the original ARM routine.
+        self.assertIn('15%', self.labels({'72': 10}, 0))
+        self.assertIn('Service due soon', self.labels({'72': 10}, 0))
+        self.assertIn('20%', self.labels({'72': 9, '42': 0}, 0))
+        self.assertIn('35%', self.labels({'72': 0, '42': 35}, 0))
+        self.assertIn('Not reported', self.labels({'72': 15}, 0))
+        self.assertIn('0%', self.labels({'72': 14}, 0))
+
+    def test_all_cluster_oil_life_codes_match_original_connect_conversion(self):
+        self.assertEqual([minder_oil_life(code) for code in range(16)],
+                         [None, 100, 90, 80, 70, 60, 50, 40, 30, 20, 15, 10, 5, 0, 0, None])
+        for invalid in (None, True, False, -1, 16, '10', 10.0):
+            self.assertIsNone(minder_oil_life(invalid))

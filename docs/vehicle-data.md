@@ -40,7 +40,11 @@ integer entries are status/enum codes rather than a physical measurement.
 a received zero or False. **Stale** means the selected source was last received
 more than five seconds ago. Alternative-source selection follows the original
 SDK: the preferred source wins unless another source is over 30 seconds newer.
-Disconnects clear readings, while recordings retain the previous evidence.
+Disconnects clear live readings, while recordings retain the previous evidence.
+The Vehicle tile retains per-radio last-known readings across disconnects and
+restarts, including readings received in Gauges and full diagnostics. Missing
+bytes in a partial record stay unknown; they do not become zero oil life or
+False service-code flags.
 
 The radio must advertise CAN capability during the application handshake.
 Available signals depend on the car, fitted equipment and head-unit forwarding.
@@ -50,7 +54,21 @@ layout but is outside the original 168-entry ALL subscription and is not shown
 as a live reading by this test. Extra diagnostic field sets,
 friendly enum descriptions and Helpnet data assembly remain separate work.
 
-The Vehicle home tile requests its read-only batch on entry and offers
+The Vehicle home tile uses the original SDK ALL subscription: 54 message IDs,
+168 API fields and the three standard diagnostic receive presets. This includes
+engine oil life (API 42), cluster Minder fields (69–74) and service codes
+(114–125). The request format previously delivered live data on the Civic;
+that does not establish delivery or validity of every individual Minder field.
+The oil-life dial uses the cluster Minder code (API 72), matching Connect's
+native conversion: 1–9 represent 100–20%, 10–12 represent 15/10/5%, and
+13–14 represent 0%; 0 and 15 are unavailable. Engine oil life (API 42) is
+used when no valid cluster code is available. Raw API 72 stays a code in
+Readings, and no value is synthesized when neither field was received.
+Expanded masks and optional CRM diagnostic context are excluded from this
+request. Additional gauge fields can still be saved when received by Gauges.
+VIN-only traffic does not suppress the single automatic sensor-data retry.
+
+The tile requests its read-only batch on entry and offers
 **Refresh data** to reissue it on the authenticated session. The original
 Connect app configures a cyclic CAN subscription at startup
 (`HLLpaCommunicator.init`, native address `0x63D7C`); its

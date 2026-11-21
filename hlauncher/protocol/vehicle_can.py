@@ -39,35 +39,6 @@ SCOPED_API_IDS['vehicle'] = tuple(range(1, 169)) + tuple(row['api_id'] for row i
 SCOPES = (*SCOPED_API_IDS, 'diagnostics')
 DIAGNOSTIC_SCOPES = ('diagnostics', 'vehicle')
 
-# Optional CRM snapshot settings recovered from the original native serializer.
-# Selectors 3–5 address B-CAN, F-CAN and virtual records within diagnostics.
-CRM_CONTEXT = (
-    (
-        (0x158, 4, '00000000ffff0000'),
-        (0x335, 4, 'ffffffff00'),
-        (0x454, 4, '00ff000000000000'),
-        (0x12f85050, 3, '00ffff000000'),
-        (0x12f85150, 3, '000000ff00'),
-        (0x12f85351, 3, '000000000000ffc0'),
-        (0x12f96750, 3, 'f000000fff000000'),
-        (0x99f00006, 5, 'ffffffffffffffff'),
-    ),
-    (
-        (0x158, 4, '00000000ffff0000'),
-        (0x1c0, 4, '00000c00000000'),
-        (0x320, 4, '0000000000070000'),
-        (0x335, 4, 'ffffffff00'),
-        (0x35e, 4, '3000000000000000'),
-        (0x409, 4, '0000010000'),
-        (0x454, 4, '00ff000000000000'),
-        (0x12f85050, 3, '00ffff000000'),
-        (0x12f85150, 3, '000000ff00'),
-        (0x12f85351, 3, '000000000000ffc0'),
-        (0x12f96750, 3, 'f000000fff000000'),
-        (0x99f00006, 5, 'ffffffffffffffff'),
-    ),
-)
-
 
 def diagnostic_subscriptions():
     return (*SUBSCRIPTIONS, IMID_AUDIO_SWITCH)
@@ -77,15 +48,9 @@ def subscription_rows(scope):
     if scope == 'diagnostics':
         return diagnostic_subscriptions()
     if scope == 'vehicle':
-        rows = {row['message_id']: row for row in SUBSCRIPTIONS}
-        for extra in signal_subscriptions(row['api_id'] for row in EXTRA_SIGNALS):
-            mid = extra['message_id']
-            base = rows.get(mid)
-            if base:
-                mask = int(base['mask'], 16) | int(extra['mask'], 16)
-                extra = dict(extra, mask=mask.to_bytes(extra['length'], 'big').hex())
-            rows[mid] = extra
-        return tuple(rows[mid] for mid in sorted(rows))
+        # The SDK ALL request produced live Civic data and includes the oil-life
+        # and Minder fields. Expanded masks remain unverified.
+        return SUBSCRIPTIONS
     # Preserve the known full illumination mask, even in mixed subscriptions.
     api_ids = tuple(api for api in SCOPED_API_IDS[scope] if api not in ILLUMINATION_API_IDS)
     rows = signal_subscriptions(api_ids)
@@ -118,7 +83,7 @@ def subscription_ticks(scope):
     return 1 if 'gauges' in scope or 'driving' in scope else 10
 
 
-def subscription_payloads(scope='diagnostics', *, crm=True):
+def subscription_payloads(scope='diagnostics'):
     if scope=='off':return (bytes.fromhex('0200000a0100'),)
     rows=subscription_rows(scope)
     normal = serialize_setting(0, ((r['message_id'], r['can_type'], r['mask']) for r in rows))
@@ -128,8 +93,6 @@ def subscription_payloads(scope='diagnostics', *, crm=True):
     settings = [normal]
     for data_type in (1, 2, 3):
         settings.append(bytes((data_type, 0, 0, 0, 0)))
-        if scope == 'vehicle' and crm:
-            settings.append(serialize_setting(data_type, CRM_CONTEXT[min(data_type-1, 1)]))
     header = bytes((2, 0, 0, ticks, 1, len(settings)))
     # The native serializer sends the normal list and diagnostic settings separately.
     return (header + settings[0], header + b''.join(settings[1:]))
@@ -223,8 +186,9 @@ class VehicleSubscription:
             return age >= .35
         if scope == 'vehicle':
             return (refresh and age >= VEHICLE_REFRESH_INTERVAL) or (
-                previous['crm'] and age >= VEHICLE_RETRY_DELAY
-                and (previous['status'] == 'rejected' or not previous.get('normal_received')))
+                previous['vehicle_retries'] < 1 and age >= VEHICLE_RETRY_DELAY
+                and (previous['status'] == 'rejected' or previous['transport_status'] == 'rejected'
+                     or not previous.get('signals_received')))
         retries = previous['speed_retries']
         return ('driving' in scope and not previous.get('speed_received')
                 and retries < len(SPEED_RETRY_DELAYS) and age >= SPEED_RETRY_DELAYS[retries])
@@ -239,15 +203,14 @@ class VehicleSubscription:
         api_ids = SCOPED_API_IDS.get(scope)
         cycle = subscription_ticks(scope)
         same_scope = previous is not None and previous['scope'] == scope
-        # The Connect app's optional CRM context uses seven settings. If that
-        # exchange fails, try its standard four-setting form with the same live mask.
-        crm = scope == 'vehicle' and (not same_scope or (
-            previous['crm'] and previous.get('normal_received') and previous['status'] != 'rejected'))
-        payloads=subscription_payloads(scope, crm=crm)
+        vehicle_retries = previous['vehicle_retries'] + 1 if same_scope else 0
+        if scope == 'vehicle':
+            api_ids = tuple(range(1, 169))
+        payloads=subscription_payloads(scope)
         request = self.requests[sid] = dict(at=at,scope=scope,api_ids=api_ids,
             previous_api_ids=previous['api_ids'] if previous else None,can_ids={r['message_id'] for r in rows},
             status='pending', protocol=protocol, transport_status='pending', transactions=[], acks={},
-            speed_retries=speed_retries, crm=crm)
+            speed_retries=speed_retries, vehicle_retries=vehicle_retries)
         for index, payload in enumerate(payloads):
             send(sid, 0xc2, payload, events, replies, 'honda_can_subscription_queued')
             events[-1].update(can_ids=[r['message_id'] for r in rows], cycle=cycle,
@@ -304,6 +267,8 @@ class VehicleSubscription:
             request['received'] = True
             if payload[11] == 0 and records:
                 request['normal_received'] = True
+                if any(record['signals'] for record in records):
+                    request['signals_received'] = True
                 if any(0 <= record['signals'].get('152', -1) <= 400 for record in records):
                     request['speed_received'] = True
             events.append(dict(state='honda_can_data', session=sid, sequence=payload[2], scope=request['scope'],

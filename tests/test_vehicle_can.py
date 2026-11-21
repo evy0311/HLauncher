@@ -150,7 +150,7 @@ class VehicleCAN(unittest.TestCase):
         self.assertEqual(p.sync_vehicle_scope(),([],[]))
         self.assertFalse(any(e['state']=='honda_can_data' for e in p.feed(incoming(257,0xc1,raw))[0]))
 
-    def test_vehicle_request_fallback_and_manual_refresh_use_the_authorized_session(self):
+    def test_vehicle_retry_and_manual_refresh_use_the_authorized_session(self):
         probe = self.probe()
         probe.vehicle_scope = lambda: 'vehicle'
         events, _ = self.authenticate(probe)
@@ -174,6 +174,74 @@ class VehicleCAN(unittest.TestCase):
             self.assertEqual(events[-1]['settings_count'], 4)
             self.assertEqual(probe.sync_vehicle_scope(refresh=1), ([], []))
 
+    def test_vehicle_uses_the_live_tested_sdk_masks_and_diagnostic_presets(self):
+        payloads = subscription_payloads('vehicle')
+        self.assertEqual([hashlib.sha256(raw).hexdigest() for raw in payloads],
+                         FIXTURE['payload_sha256'])
+
+    def test_identity_only_data_does_not_suppress_the_bounded_vehicle_retry(self):
+        probe = self.probe()
+        probe.vehicle_scope = lambda: 'vehicle'
+        self.authenticate(probe)
+        key = probe.vehicle_subscription.keys[257]
+        probe.feed(incoming(257, 0xc1, can_data([(0x99f00007, b'TEST')], key=key)))
+        request = probe.vehicle_subscription.requests[257]
+        with patch('hlauncher.protocol.session.time.monotonic', return_value=request['at'] + 6):
+            self.assertEqual(len(probe.sync_vehicle_scope()[1]), 2)
+        request = probe.vehicle_subscription.requests[257]
+        with patch('hlauncher.protocol.session.time.monotonic', return_value=request['at'] + 20):
+            self.assertEqual(probe.sync_vehicle_scope(), ([], []))
+
+    def test_gauges_and_diagnostics_preserve_minder_readings_for_vehicle(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder)/'vehicle.json'
+            monitor = ProtocolDiagnostics(folder, vehicle_path=path)
+            self.addCleanup(monitor.close)
+            monitor.observe(dict(state='connected', uuid='test-cafe', device='radio'))
+            for scope, records in (
+                ('gauges', [(0x324, bytes.fromhex('5000000000000000'))]),
+                ('diagnostics', [(0x454, bytes.fromhex('2300000000000000')),
+                                 (0x12f96750, bytes(8))]),
+            ):
+                monitor.observe(dict(state='honda_can_subscription_queued', session=257, scope=scope))
+                monitor.observe(dict(state='honda_can_data', session=257, scope=scope, data_type=0,
+                                     records=decode_records(can_data(records))))
+            monitor.observe(dict(state='honda_can_subscription_queued', session=257, scope='vehicle'))
+            readings = monitor.vehicle_plugin_snapshot(0)[0]['readings']
+            self.assertEqual(readings['40'], 40)
+            self.assertEqual(readings['42'], 35)
+            self.assertIs(readings['124'], False)
+            # A diagnostic snapshot must never replace the live oil life.
+            monitor.observe(dict(state='honda_can_data', session=257, scope='vehicle', data_type=2,
+                                 records=decode_records(can_data([(0x454, bytes(8))], kind=2))))
+            monitor.close()
+            restored = ProtocolDiagnostics(folder, vehicle_path=path)
+            self.addCleanup(restored.close)
+            self.assertEqual(restored.vehicle_plugin_snapshot(0)[0]['readings'], readings)
+
+    def test_six_byte_minder_frame_retains_oil_life_and_service_codes(self):
+        # Stock radio's normal preset uses six bytes; the SDK layout has eight.
+        # Synthetic A1 / oil-life code 10, not an observed vehicle measurement.
+        record, = decode_records(can_data([(0x12f96750, bytes.fromhex('a00000090000'))]))
+        self.assertEqual(record['signals']['72'], 10)
+        self.assertIs(record['signals']['124'], True)
+        self.assertIs(record['signals']['115'], True)
+        self.assertNotIn('71', record['signals'])  # Date-unit bits are not present.
+
+    def test_short_minder_and_odometer_records_do_not_invent_readings(self):
+        records = decode_records(can_data([(0x12f96750, bytes.fromhex('50')),
+                                           (0x294, bytes(3)), (0x454, b'')]))
+        values = {key: value for record in records for key, value in record['signals'].items()}
+        self.assertEqual(values['72'], 5)  # Actually present cluster oil-life code.
+        for field in ('75', '42', *map(str, range(114, 126))):
+            self.assertNotIn(field, values)
+        cache = SignalCache()
+        cache.update(records, 100, 257)
+        rows = {row['api_id']: row for row in cache.snapshot(100)}
+        self.assertEqual(rows[72]['value'], 5)
+        for field in (75, 42, *range(114, 126)):
+            self.assertFalse(rows[field]['received'])
+
     def test_vehicle_retains_separate_fault_reports_and_last_values_through_restarts(self):
         probe = self.probe()
         probe.vehicle_scope = lambda: 'vehicle'
@@ -185,7 +253,7 @@ class VehicleCAN(unittest.TestCase):
         monitor.observe(dict(state='connected', uuid='test-cafe', device='radio-one'))
         events, _ = self.authenticate(probe)
         queued = [event for event in events if event['state'] == 'honda_can_subscription_queued']
-        self.assertEqual([event['settings_count'] for event in queued], [7, 7])
+        self.assertEqual([event['settings_count'] for event in queued], [4, 4])
         self.assertEqual(queued[0]['interval_seconds'], 1)
         self.assertIn(0x12f96750, queued[0]['can_ids'])
         for event in queued:

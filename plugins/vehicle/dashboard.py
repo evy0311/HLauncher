@@ -7,7 +7,7 @@ from hlauncher.ui import home_art
 from hlauncher.ui.chrome import BACK_BOUNDS, render as chrome
 from hlauncher.vehicle_fields import (
     DIAGNOSTIC_FIELDS, DIAGNOSTIC_KEYS, GROUPS, MINDER_IDS, SERVICE_ITEMS,
-    field_label, unit, visible,
+    field_label, minder_oil_life, unit, visible,
 )
 from diagnostics import fault_codes, record_title
 
@@ -197,7 +197,9 @@ class Dashboard:
         left, top, right, end = box
         self.panel(box)
         cx, cy, r = (left+right)//2, top+120, 84
-        value = self.reading('42')
+        value = minder_oil_life(self.reading('72'))
+        if value is None:
+            value = self.reading('42')
         valid = type(value) in (int, float) and 0 <= value <= 100
         for tick in range(41):
             angle = radians(142 + 256*tick/40)

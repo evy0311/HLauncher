@@ -66,16 +66,17 @@ def decode_value(info, source, raw):
     return value
 
 
-def speed_field_present(source, byte_count):
-    # Variable-length records may omit trailing bytes. Zero padding must not create a speed reading.
-    return byte_count * 8 >= source['length'] * 8 - source['trailing_offset']
+def field_present(source, byte_count):
+    # Omitted trailing bytes are unknown, including Minder flags and mileage.
+    # Padding them would turn a partial record into a false zero/False reading.
+    return 'signal' not in source or byte_count * 8 >= source['length'] * 8 - source['trailing_offset']
 
 
 def record_signals(mid, raw, api_ids=None):
     return {str(info['api_id']): decode_value(info, source, raw)
             for info, source in BY_MESSAGE.get(mid, ())
             if ((api_ids is None and info['api_id'] <= 168) or (api_ids is not None and info['api_id'] in api_ids))
-            and (info['api_id'] != 152 or speed_field_present(source, len(raw)))}
+            and field_present(source, len(raw))}
 
 
 GAUGE_API_IDS = (44,40,167,1002,12,1003)
@@ -132,7 +133,7 @@ class SignalCache:
                     if source['trailing_offset'] < missing_bits:
                         continue
                 if record and record.get('api_ids') is not None and info['api_id'] not in record['api_ids']:continue
-                if record and info['api_id'] == 152 and not speed_field_present(source, len(record['data']) // 2):
+                if record and not field_present(source, len(record['data']) // 2):
                     continue
                 if record and (selected is None or record['at']-selected[0]['at'] > 30):
                     selected = (record, source)

@@ -190,22 +190,20 @@ class ProtocolDiagnostics:
         saved = self.last_vehicle
         active = self.vehicle.subscription.get('scope') == 'vehicle'
         now = event['monotonic']
-        # Identity is also requested by the small startup subscription. Preserve
-        # it without treating that subscription as a full Vehicle data refresh.
-        if state == 'honda_can_data' and self.connected and event.get('data_type') == 0:
-            identity = self.vehicle_identity_from(event)
-            if 'vin' in identity:
-                self.live_vin = identity['vin']
-            if identity and any(saved.readings.get(key) != value for key, value in identity.items()):
-                saved.update(identity, now)
-        if state == 'honda_can_data' and active and self.connected and event.get('scope') == 'vehicle':
-            if event['data_type']:
-                saved.update_report(event['data_type'], event['records'], now)
-            else:
+        # Every consumer contributes real readings to the per-radio history.
+        # Otherwise Gauges/diagnostics data disappears when Vehicle is opened
+        # and its new subscription clears the live cache.
+        if state == 'honda_can_data' and self.connected:
+            if event.get('data_type', 0) == 0:
+                identity = self.vehicle_identity_from(event)
+                if 'vin' in identity:
+                    self.live_vin = identity['vin']
                 readings = self.vehicle_readings_from(event)
-                if readings:
+                if readings.keys() - {'vin', 'head-unit'}:
                     self.vehicle_feed_at = now
-                    saved.update(readings, now)
+                saved.update(readings, now)
+            elif active and event.get('scope') == 'vehicle':
+                saved.update_report(event['data_type'], event['records'], now)
         elif state == 'honda_radio_status' and active and self.connected:
             saved.update({'brake': event['parking_brake_engaged']}, now)
         elif ((state == 'honda_can_subscription_queued' and event.get('scope') != 'vehicle') or

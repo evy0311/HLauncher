@@ -6,7 +6,9 @@ session when opened. Vehicle requires both the parking brake and a fresh
 zero-speed reading. If either is lost, the worker closes and the shared parking
 screen offers Home or reopens Vehicle once both are confirmed.
 
-- **Maintenance** shows engine oil life and instrument cluster service codes.
+- **Maintenance** shows cluster oil life and instrument cluster service codes.
+  It converts the cluster Minder code using the original HondaLink Connect
+  mapping, falling back to engine oil life when no valid cluster code is available.
   Tap a code for its service description or open the full guide. Definitions
   come from the [2014 Honda Civic Sedan Owner’s Manual, p. 359](https://techinfo.honda.com/rjanisis/pubs/OM/R0144D/R0144DOM.pdf)
   for models with i-MID. Refer to the manual for your model if it reports a
@@ -34,15 +36,15 @@ shown in the plugin. Hide **Tires and TPMS** to remove the section while keeping
 your individual choices saved. Visibility settings affect the display only.
 
 Vehicle keeps the latest value received for each signal and the latest reports
-per module in `/var/lib/hlauncher/vehicle-last-known.json`. The cache can be
-viewed after a disconnect or reboot. It writes on the first reading, every
+per module in `/var/lib/hlauncher/vehicle-last-known.json`. Readings received in Gauges or full diagnostics also populate this cache,
+which can be viewed after a disconnect or reboot. It writes on the first reading, every
 30 seconds during use, and when closing the session normally. The cache retains
 the most recent sample time even though the dashboard does not display it.
 
 **Refresh data** asks the head unit to reapply the subscription. The request uses
-the same one-second cyclic receive mode as HondaLink Connect. If the request
-with optional diagnostic context fails to start the normal stream, Vehicle
-retries once with the standard diagnostic presets and the same live signal mask.
+the same one-second cyclic receive mode as HondaLink Connect. Vehicle uses the original SDK ALL masks and standard diagnostic presets,
+without optional CRM context. It retries once if rejected or no decoded sensor
+readings arrive; VIN-only traffic does not count as a sensor reading.
 Refresh does not clear the last received values. A dash means there is no value
 in the cache for that field; zero and Off are actual reported values.
 

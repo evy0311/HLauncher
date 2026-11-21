@@ -3,6 +3,7 @@ __pycache__/
 node_modules/
 .npm-cache/
 .venv/
+.venv-simulator/
 .env
 captures/
 logs/

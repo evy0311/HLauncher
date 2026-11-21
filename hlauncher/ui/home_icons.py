@@ -16,11 +16,15 @@ HOME_ICONS = {
     'obd': 'obd',
     'vehicle': 'vehicle-sedan',
     'vehicle-coupe': 'vehicle-coupe',
+    'vehicle-crv': 'vehicle-crv',
+    'vehicle-hrv': 'vehicle-hrv',
+    'vehicle-fit-ge8': 'vehicle-fit-ge8',
+    'vehicle-fit-gk5': 'vehicle-fit-gk5',
     'settings': 'settings',
 }
 
 
-@lru_cache(maxsize=5)
+@lru_cache(maxsize=9)
 def home_coverage(name):
     """Use the approved white ink as coverage over any themed tile.
 

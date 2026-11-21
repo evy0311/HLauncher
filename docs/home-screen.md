@@ -9,7 +9,7 @@ Phone-provided projection keeps its full-screen viewport. The global Picture con
   Settings, and returns touch regions to the existing input handler.
 - `hlauncher/ui/home_art.py` owns fading mirror reflections, gradient surfaces,
   fine bevels and themed background illumination. `home_icons.py` fits the
-  approved white phone, gauge, Civic sedan/coupe and settings artwork.
+  approved white phone, gauge, vehicle side profiles and settings artwork.
   It also fits the colored projection
   logos and draws auxiliary glyphs.
   Artwork is cached. Tiles stay still in Home edit mode until dragged.
@@ -33,6 +33,10 @@ Touch regions scale with the displayed image on other framebuffer dimensions.
 Settings → Appearance → Vehicle Model selects the Vehicle tile artwork. The
 HondaLink startup identity subscription requests `VIN_NO` without opening Vehicle.
 VIN positions 4–6 map FB2/FB4/FB5/FB6 to the sedan and FG3/FG4 to the coupe.
+RM3/RM4 select the 2014 CR-V, RU5/RU6 select the RU-generation HR-V, GE8 selects
+the 2013 Fit and GK5 selects the 2015 Fit. FWD/AWD variants share their model's
+artwork; both Fit generations have distinct silhouettes. The detector recognizes
+Honda SUV manufacturer prefixes as well as the passenger-car prefixes.
 The model and identifying VIN are saved in preferences. A manual model selection
 survives reboots with the same VIN; a different live VIN replaces it with a fresh
 detection. Detect from VIN restores the current detected choice. Before a model

@@ -20,15 +20,30 @@ def vin(code, serial='123456'):
 
 
 class VehicleModels(unittest.TestCase):
-    def test_supported_civic_variants_and_invalid_identity(self):
+    def test_supported_variants_and_invalid_identity(self):
         for code, model in MODELS.items():
             with self.subTest(code=code):
                 self.assertEqual(model_from_vin(vin(code)), code)
                 self.assertEqual(model_from_vin(vin(code).lower() + '\0\0'), code)
-                self.assertEqual(icon_for_model(code), 'vehicle-coupe' if model.body == 'coupe' else 'vehicle')
+                self.assertEqual(icon_for_model(code), model.icon)
         for value in (None, '', 'FG4', vin('ZZ9'), 'XXX' + vin('FG4')[3:], vin('FG4')[:-1], vin('FG4').replace('E', 'I')):
             self.assertIsNone(model_from_vin(value))
         self.assertEqual(icon_for_model(None), 'vehicle')
+
+    def test_suv_manufacturers_and_distinct_fit_generations(self):
+        examples = {
+            '5J6RM3H50EH123456': ('RM3', 'vehicle-crv'),
+            '2HKRM4H50EH123456': ('RM4', 'vehicle-crv'),
+            'JHLRM4H50EH123456': ('RM4', 'vehicle-crv'),
+            '3CZRU5H50GM123456': ('RU5', 'vehicle-hrv'),
+            '3CZRU6H50GM123456': ('RU6', 'vehicle-hrv'),
+            'JHMGE8H50DS123456': ('GE8', 'vehicle-fit-ge8'),
+            '3HGGK5H50FM123456': ('GK5', 'vehicle-fit-gk5'),
+        }
+        for value, (code, artwork) in examples.items():
+            with self.subTest(vin=value):
+                self.assertEqual(model_from_vin(value), code)
+                self.assertEqual(icon_for_model(code), artwork)
 
     def test_encrypted_startup_vin_reaches_persistent_identity_without_vehicle_page(self):
         fixture = vehicle_fixture.VehicleCAN()

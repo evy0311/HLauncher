@@ -11,18 +11,18 @@ class VehicleModel:
 
 
 MODELS = {
-    'FB2': VehicleModel('Civic Sedan', 'sedan'),
-    'FB4': VehicleModel('Civic Hybrid Sedan', 'sedan'),
-    'FB5': VehicleModel('Civic Natural-gas Sedan', 'sedan'),
-    'FB6': VehicleModel('Civic Si Sedan', 'sedan'),
-    'FG3': VehicleModel('Civic Coupe', 'coupe', 'vehicle-coupe'),
-    'FG4': VehicleModel('Civic Si Coupe', 'coupe', 'vehicle-coupe'),
-    'RM3': VehicleModel('CR-V FWD', 'suv', 'vehicle-crv'),
-    'RM4': VehicleModel('CR-V AWD', 'suv', 'vehicle-crv'),
-    'RU5': VehicleModel('HR-V FWD', 'suv', 'vehicle-hrv'),
-    'RU6': VehicleModel('HR-V AWD', 'suv', 'vehicle-hrv'),
-    'GE8': VehicleModel('Fit (2013 / GE8)', 'hatchback', 'vehicle-fit-ge8'),
-    'GK5': VehicleModel('Fit (2015 / GK5)', 'hatchback', 'vehicle-fit-gk5'),
+    'FB2': VehicleModel('Civic Sedan (FB2)', 'sedan'),
+    'FB4': VehicleModel('Civic Hybrid Sedan (FB4)', 'sedan'),
+    'FB5': VehicleModel('Civic Natural-gas Sedan (FB5)', 'sedan'),
+    'FB6': VehicleModel('Civic Si Sedan (FB6)', 'sedan'),
+    'FG3': VehicleModel('Civic Coupe (FG3)', 'coupe', 'vehicle-coupe'),
+    'FG4': VehicleModel('Civic Si Coupe (FG4)', 'coupe', 'vehicle-coupe'),
+    'RM3': VehicleModel('CR-V (RM3)', 'suv', 'vehicle-crv'),
+    'RM4': VehicleModel('CR-V (RM4)', 'suv', 'vehicle-crv'),
+    'RU5': VehicleModel('HR-V (RU5)', 'suv', 'vehicle-hrv'),
+    'RU6': VehicleModel('HR-V (RU6)', 'suv', 'vehicle-hrv'),
+    'GE8': VehicleModel('Fit (GE8)', 'hatchback', 'vehicle-fit-ge8'),
+    'GK5': VehicleModel('Fit (GK5)', 'hatchback', 'vehicle-fit-gk5'),
 }
 # Include Honda MPV manufacturers for CR-V and HR-V, as well as passenger cars.
 # Honda's Part 565 filing: https://vpic.nhtsa.dot.gov/mid/home/displayfile/69a24a5d-780c-4562-b28c-5eaf08531280

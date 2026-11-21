@@ -24,9 +24,12 @@ VEHICLE_REFRESH_INTERVAL = 3
 PARKING_DIAGNOSTIC_API_IDS = (78, 79, 80, 95, 99, 100, 101)
 GPS_IDS = (0x99F00003, 0x99F00004)
 GPS_SUBSCRIPTIONS = tuple(row for row in SUBSCRIPTIONS if row['message_id'] in GPS_IDS)
+VIN_ID = 0x99F00007
+VIN_SUBSCRIPTION = next(row for row in SUBSCRIPTIONS if row['message_id'] == VIN_ID)
 
 SCOPE_GROUPS = (('gauges', GAUGE_API_IDS), ('illumination', ILLUMINATION_API_IDS),
-                ('driving', DRIVING_API_IDS), ('gps', ()), ('parking', PARKING_DIAGNOSTIC_API_IDS))
+                ('driving', DRIVING_API_IDS), ('gps', ()), ('parking', PARKING_DIAGNOSTIC_API_IDS),
+                ('identity', ()))
 SCOPED_API_IDS = {'off': ()}
 for count in range(1, len(SCOPE_GROUPS) + 1):
     for groups in combinations(SCOPE_GROUPS, count):
@@ -88,6 +91,8 @@ def subscription_rows(scope):
     rows = signal_subscriptions(api_ids)
     if 'illumination' in scope:
         rows = (*rows, ILLUMINATION_SUBSCRIPTION)
+    if 'identity' in scope:
+        rows = (*rows, VIN_SUBSCRIPTION)
     return (*rows, *GPS_SUBSCRIPTIONS) if 'gps' in scope else rows
 
 

@@ -568,6 +568,7 @@ def adapter_branding(ui):
 
 
 def appearance(ui):
+    from ..vehicle_models import MODELS
     color = ui.prefs.data['tile_color']
     color_name = 'Custom' if color.startswith('#') else color
     clock = ui.prefs.data['show_clock']
@@ -576,12 +577,29 @@ def appearance(ui):
     if theme.supports_color_selection:
         rows.append(Row('Background color' if theme.id == 'oem' else 'Theme color', ui.tile_colors, value=color_name))
     rows.extend((Row('Show clock', ui.toggle_clock, toggle=clock),
+                 Row('Vehicle Model', ui.vehicle_model_settings,
+                     value=MODELS[ui.vehicle_model()].name if ui.vehicle_model() else 'Detect from VIN'),
                  Row('Picture', ui.color_settings),
                  Row('Change theme', ui.themes_page, value=theme.name)))
     if settings_menu(ui, 'Appearance', ui.settings, row_items(rows)):
         return
     p = page_for(ui, 'Appearance', ui.settings)
     draw_rows(ui, p, rows)
+    present(ui, p)
+
+
+def vehicle_model(ui):
+    from ..vehicle_models import MODELS
+    selected = ui.prefs.data['vehicle_model']
+    rows = [Row('Detect from VIN', lambda: ui.set_vehicle_model('auto'),
+                value='Selected' if selected == 'auto' else '')]
+    rows.extend(Row(model.name, lambda code=code: ui.set_vehicle_model(code),
+                    value='Selected' if selected == code else '') for code, model in MODELS.items())
+    if settings_menu(ui, 'Vehicle Model', ui.appearance_settings, row_items(rows), footer='Sets the Home icon'):
+        return
+    p = page_for(ui, 'Vehicle Model', ui.appearance_settings)
+    p.text((24, 94), 'Sets the Home icon', 19)
+    draw_rows(ui, p, rows, size=24)
     present(ui, p)
 
 
@@ -751,7 +769,7 @@ def waiting(ui):
     present(ui,p)
 
 
-PAGES={'projection_phone':projection_phone,'phone_projection':phone_projection,'projection_settings':projection_settings,'projection_phones':projection_phones,'ssh_settings':ssh,'adapter_branding':adapter_branding,'adapter_info':adapter_info,'appearance_settings':appearance,'startup_settings':startup,'system_settings':system,'recovery_settings':network,'hotspot_settings':hotspot,'wifi_power_settings':wifi_power,'storage_confirm':storage,
+PAGES={'vehicle_model_settings':vehicle_model,'projection_phone':projection_phone,'phone_projection':phone_projection,'projection_settings':projection_settings,'projection_phones':projection_phones,'ssh_settings':ssh,'adapter_branding':adapter_branding,'adapter_info':adapter_info,'appearance_settings':appearance,'startup_settings':startup,'system_settings':system,'recovery_settings':network,'hotspot_settings':hotspot,'wifi_power_settings':wifi_power,'storage_confirm':storage,
        'plugins_settings':plugins,'plugin_detail':plugin_detail,'tile_colors':themes,'colors':picture,'hdmi_test':hdmi,
        'shutdown_confirm':shutdown,'shutdown_pending':shutdown,'about_settings':about,
        'legal_info':legal_info,'audio_coming_soon':audio_coming_soon,

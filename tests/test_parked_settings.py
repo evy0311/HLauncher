@@ -47,7 +47,7 @@ class ParkedSettings(unittest.TestCase):
 
         bootstrap = BootstrapLauncher.__new__(BootstrapLauncher)
         bootstrap.ui = self.ui
-        self.assertEqual(bootstrap.vehicle_scope(), 'driving')
+        self.assertEqual(bootstrap.vehicle_scope(), 'driving_identity')
 
         now = time.monotonic()
         self.monitor.observe(dict(state='connected', uuid='test-cafe'))
@@ -251,7 +251,7 @@ class ParkedSettings(unittest.TestCase):
         self.assertEqual([callback for _, callback in self.ui.actions], [self.ui.close_parking_status])
         bootstrap = BootstrapLauncher.__new__(BootstrapLauncher)
         bootstrap.ui = self.ui
-        self.assertEqual(bootstrap.vehicle_scope(), 'driving_parking')
+        self.assertEqual(bootstrap.vehicle_scope(), 'driving_parking_identity')
         self.assertFalse(self.monitor.recording)
 
         self.touch('down', 664, 85)
@@ -260,7 +260,7 @@ class ParkedSettings(unittest.TestCase):
         self.assertTrue(self.ui.parked_screen_locked)
         self.assertEqual(self.ui.actions, [])
         self.assertFalse(self.prefs.safety_notice_accepted)
-        self.assertEqual(bootstrap.vehicle_scope(), 'driving')
+        self.assertEqual(bootstrap.vehicle_scope(), 'driving_identity')
 
     def test_parking_status_is_under_system_debug_diagnostics(self):
         self.prefs.data['setup_complete'] = True
@@ -382,7 +382,7 @@ class ParkedSettings(unittest.TestCase):
             self.assertFalse(self.ui.parked_screen_locked)
         bootstrap = BootstrapLauncher.__new__(BootstrapLauncher)
         bootstrap.ui = self.ui
-        self.assertEqual(bootstrap.vehicle_scope(), 'driving')
+        self.assertEqual(bootstrap.vehicle_scope(), 'driving_identity')
 
         address = '02:00:00:00:00:01'
         key = hashlib.sha256(address.encode()).hexdigest()[:24]

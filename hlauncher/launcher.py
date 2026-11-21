@@ -207,6 +207,55 @@ class Launcher:
         self.banner=''
         self.draw()
 
+    def vehicle_model(self):
+        from .vehicle_models import selected_model
+        return selected_model(self.prefs.data['vehicle_model'], self.protocols.vehicle_vin())
+
+    def vehicle_icon(self):
+        from .vehicle_models import icon_for_model
+        return icon_for_model(self.vehicle_model())
+
+    def vehicle_model_settings(self):
+        self.host.deactivate()
+        self.mode = 'vehicle_model_settings'
+        self.press = None
+        self.banner = ''
+        self.draw()
+
+    def set_vehicle_model(self, selection):
+        from .vehicle_models import MODELS, normalize_vin, model_from_vin
+        if selection not in ('auto', *MODELS):
+            raise ValueError('Unknown vehicle model')
+        vin = normalize_vin(self.protocols.vehicle_vin())
+        changes = dict(vehicle_model=(model_from_vin(vin) or 'auto') if selection == 'auto' else selection,
+                       vehicle_model_vin=vin)
+        if not self.save_vehicle_model(changes):
+            self.banner = 'Could not save Vehicle Model'
+        else:
+            self.banner = ''
+        self.draw()
+
+    def save_vehicle_model(self, changes):
+        previous = {key: self.prefs.data[key] for key in changes}
+        self.prefs.data.update(changes)
+        try:
+            self.prefs.save(force=tuple(changes))
+        except OSError as exc:
+            self.prefs.data.update(previous)
+            self.event(state='vehicle_model_save_failed', error=str(exc))
+            return False
+        return True
+
+    def sync_vehicle_model(self):
+        from .vehicle_models import normalize_vin, model_from_vin
+        vin = normalize_vin(self.protocols.vehicle_vin(live=True))
+        if vin is None or vin == self.prefs.data['vehicle_model_vin']:
+            return
+        # A saved override belongs to this VIN. Only a new VIN replaces it.
+        if self.save_vehicle_model(dict(vehicle_model=model_from_vin(vin) or 'auto', vehicle_model_vin=vin)):
+            if self.mode in ('home', 'appearance_settings', 'vehicle_model_settings'):
+                self.draw()
+
     @property
     def layout_theme(self):
         return self.themes.get(self.prefs.data['layout_theme'])
@@ -1670,6 +1719,7 @@ class Launcher:
                 self.home()
 
     def tick(self):
+        self.sync_vehicle_model()
         if self.plugin_manager:
             self.plugin_manager.tick()
             if time.monotonic() - getattr(self, 'plugin_checked', 0) > 1:

@@ -56,7 +56,7 @@ class Preferences:
                      "setup_complete": False, "setup_step": 0, "safety_notice_version": 0,
                      "safety_notice_app_version": "",
                      "debug_mode": False, "show_clock": False, "ssh_enabled": False, "wifi_power": "off",
-                     "wifi_delay_boot": True,
+                     "wifi_delay_boot": True, "vehicle_model": "auto", "vehicle_model_vin": None,
                      "layout_theme": "oem", "vehicle_hidden": [], "include_beta_updates": False, "development_branch": "develop", "source_updates": False,
                      "home_pages": [], "carplay_fps": CARPLAY_FRAME_RATES[0],
                      "carplay_auto_night": True, "android_auto_auto_night": True,
@@ -76,6 +76,10 @@ class Preferences:
                 self.data['safety_notice_app_version'] = loaded['safety_notice_app_version']
             self.data['debug_mode'] = loaded.get('debug_mode', False) is True
             self.data['show_clock'] = loaded.get('show_clock', False) is True
+            from .vehicle_models import MODELS, normalize_vin
+            if isinstance(loaded.get('vehicle_model'), str) and loaded['vehicle_model'] in ('auto', *MODELS):
+                self.data['vehicle_model'] = loaded['vehicle_model']
+            self.data['vehicle_model_vin'] = normalize_vin(loaded.get('vehicle_model_vin'))
             self.data['include_beta_updates'] = loaded.get('include_beta_updates') is True
             self.data['source_updates'] = loaded.get('source_updates') is True
             from .development_builds import branch_name

@@ -74,7 +74,7 @@ def tile_image(theme, text, icon_name, corner, active):
     width, height = art.TILE_SIZE
     tile = art.tile(theme).copy()
     # The shallow car profile needs more width to match the other icons' weight.
-    icon = art.glyph(icon_name, 100 if icon_name == 'vehicle' else 80)
+    icon = art.glyph(icon_name, 100 if icon_name in ('vehicle', 'vehicle-coupe') else 80)
     icon_x = (width - icon.width) // 2
     icon_y = 20 - (icon.height - 80) // 2
     caption_y = height - 40
@@ -129,7 +129,7 @@ def render(layout, *, theme='Red', size=(720,480), page=0, clock=None,
         if colors:
             edge = colors['accent'] if active else art.blend(colors['panel'], colors['text'], .15)
             d.rounded_rectangle((x, y, x+tw-1, y+th-1), radius=10, fill=colors['panel'], outline=edge)
-            icon = art.glyph(entry.icon, 70 if entry.icon == 'vehicle' else 56)
+            icon = art.glyph(entry.icon, 70 if entry.icon in ('vehicle', 'vehicle-coupe') else 56)
             image.paste(icon, (x+(tw-icon.width)//2,y+22-(icon.height-56)//2), icon)
             face = interface_font(20, 500)
             title = entry.label
@@ -240,7 +240,8 @@ def launcher_layout(launcher, presentation=None):
 
     projection_name, projection_icon = launcher.projection_tile()
     entries=[Entry(projection_name if m.id in ('carplay','android-auto') else m.name,
-                   projection_icon if m.id in ('carplay','android-auto') else m.icon or m.id,
+                   projection_icon if m.id in ('carplay','android-auto') else
+                   launcher.vehicle_icon() if m.id == 'vehicle' else m.icon or m.id,
                    lambda pid=m.id:launcher.open_plugin(pid),m.id)
              for m in launcher.home_manifests()]
     # entries.append(Entry('Audio', 'audio', launcher.audio_page, AUDIO))

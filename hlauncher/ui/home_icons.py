@@ -15,17 +15,18 @@ HOME_ICONS = {
     'phone-projection': 'phone-projection',
     'obd': 'obd',
     'vehicle': 'vehicle-sedan',
+    'vehicle-coupe': 'vehicle-coupe',
     'settings': 'settings',
 }
 
 
-@lru_cache(maxsize=4)
+@lru_cache(maxsize=5)
 def home_coverage(name):
     """Use the approved white ink as coverage over any themed tile.
 
     Source previews have dark backgrounds. Ignore their low-level texture and
     map the white artwork to opacity, preserving the approved shape and holes.
-    Keep source files intact, including the unused coupe variant.
+    Keep the approved source files intact.
     """
     with Image.open(HOME_ART / (name + '.png')) as source:
         coverage = ImageOps.grayscale(source).point(

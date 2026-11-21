@@ -58,7 +58,7 @@ class BootstrapLauncher:
     def launch(self, app_id): return self.open().launch(app_id)
 
     def vehicle_scope(self):
-        if self.ui is None:return 'off'
+        if self.ui is None:return 'identity'
         if self.ui.mode=='protocol_tests' and self.ui.protocol_page==1:return 'diagnostics'
         from .projection import PROJECTIONS
         host = self.ui.host
@@ -87,6 +87,7 @@ class BootstrapLauncher:
         return '_'.join(name for enabled, name in (
             (gauges, 'gauges'), (illumination, 'illumination'), (driving, 'driving'), (gps, 'gps'),
             (parking, 'parking'),
+            (True, 'identity'),
         ) if enabled) or 'off'
 
     def queue_display_test(self, action):

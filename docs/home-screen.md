@@ -9,8 +9,8 @@ Phone-provided projection keeps its full-screen viewport. The global Picture con
   Settings, and returns touch regions to the existing input handler.
 - `hlauncher/ui/home_art.py` owns fading mirror reflections, gradient surfaces,
   fine bevels and themed background illumination. `home_icons.py` fits the
-  approved white phone, gauge, Civic Si sedan and settings artwork. The saved
-  coupe variant is retained for future use. It also fits the colored projection
+  approved white phone, gauge, Civic sedan/coupe and settings artwork.
+  It also fits the colored projection
   logos and draws auxiliary glyphs.
   Artwork is cached. Tiles stay still in Home edit mode until dragged.
 - `hlauncher/ui/assets/fonts/` bundles Noto Sans JP at Bold (700) for tile labels,
@@ -30,6 +30,17 @@ Icons use an 80-pixel canvas; reflections fade out before captions. Tiles follow
 your finger as you swipe between pages. You can also tap a bar below the tiles
 to change pages. The active page bar is brighter.
 Touch regions scale with the displayed image on other framebuffer dimensions.
+Settings → Appearance → Vehicle Model selects the Vehicle tile artwork. The
+HondaLink startup identity subscription requests `VIN_NO` without opening Vehicle.
+VIN positions 4–6 map FB2/FB4/FB5/FB6 to the sedan and FG3/FG4 to the coupe.
+The model and identifying VIN are saved in preferences. A manual model selection
+survives reboots with the same VIN; a different live VIN replaces it with a fresh
+detection. Detect from VIN restores the current detected choice. Before a model
+is saved, missing or unsupported VINs use the sedan. A saved model remains
+available when no VIN arrives, and malformed VINs do not replace it. Model
+selection currently changes only the Home icon, with no change
+to CAN decoding or parking policy.
+
 On a fresh layout, CarPlay appears first, then the remaining enabled plugins and
 Settings. Each page has six slots. Hold a tile to edit Home. Drag tiles into
 empty slots or onto another tile to swap positions. Hold a dragged tile at either

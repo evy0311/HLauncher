@@ -8,8 +8,10 @@ Phone-provided projection keeps its full-screen viewport. The global Picture con
 - `hlauncher/ui/home.py` lays out the header, clock, enabled apps and
   Settings, and returns touch regions to the existing input handler.
 - `hlauncher/ui/home_art.py` owns fading mirror reflections, gradient surfaces,
-  fine bevels and themed background illumination. `home_icons.py` draws the
-  original colored source icons, instrument dial, EQ sliders and silver gear.
+  fine bevels and themed background illumination. `home_icons.py` fits the
+  approved white phone, gauge, Civic Si sedan and settings artwork. The saved
+  coupe variant is retained for future use. It also fits the colored projection
+  logos and draws auxiliary glyphs.
   Artwork is cached. Tiles stay still in Home edit mode until dragged.
 - `hlauncher/ui/assets/fonts/` bundles Noto Sans JP at Bold (700) for tile labels,
   with its OFL license and source checksum. Barlow Condensed SemiBold remains
@@ -45,7 +47,8 @@ Settings → Appearance → Background color offers Blue, Red, Green, Amber,
 Purple or Graphite. The migrated screens map these names to the shared stock-style accent palette. All tile gradients, edges, tab
 color and background illumination derive from that accent. Icon colors stay
 consistent when switching themes: CarPlay stays green, Android Auto
-stays blue, and the gauge/EQ retain their instrument colors. The header has a Wi-Fi icon at the far right, moving left of the optional
+stays blue when connected; the disconnected phone, gauge, Vehicle and Settings
+icons remain white. The EQ retains its instrument colors. The header has a Wi-Fi icon at the far right, moving left of the optional
 clock. One to four lit signal marks show connected signal strength; an × means
 disconnected, a slash means the radio is off, and ? means telemetry is unavailable.
 Status refreshes about every two seconds without scanning for networks. When enabled under Settings → Appearance → Show clock, the clock follows the

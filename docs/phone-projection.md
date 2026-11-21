@@ -14,6 +14,13 @@ directly into the Pi**. Native wireless AA is outside this scope.
 
 Home, Plugins settings, and setup expose one **Phone Projection** entry. The
 landing page shows a phone/display symbol and live waiting/connection status.
+It remains accessible while driving; only its Settings pages are parking-gated.
+The Devices button opens a modal on this page, showing saved phones with favorites
+and connection status. Tap a phone to request a targeted dongle connection without
+a parking check. The modal uses three rows per page and blocks input to the page
+beneath it; it remains open until dismissed or the selected phone connects.
+The dongle must be connected and have reported its paired phone list to reconnect
+a saved phone. Connection failures and timeouts stay visible in the modal.
 A bottom-left settings cog opens combined settings, including Phones, dongle
 information and explicit dongle/direct USB connection choices. A reported phone
 connection automatically brings its projection session to the foreground when

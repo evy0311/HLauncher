@@ -8,8 +8,10 @@ Phone-provided projection keeps its full-screen viewport. The global Picture con
 - `hlauncher/ui/home.py` lays out the header, clock, enabled apps and
   Settings, and returns touch regions to the existing input handler.
 - `hlauncher/ui/home_art.py` owns fading mirror reflections, gradient surfaces,
-  fine bevels and themed background illumination. `home_icons.py` draws the
-  original colored source icons, instrument dial, EQ sliders and silver gear.
+  fine bevels and themed background illumination. `home_icons.py` fits the
+  approved white phone, gauge, vehicle side profiles and settings artwork.
+  It also fits the colored projection
+  logos and draws auxiliary glyphs.
   Artwork is cached. Tiles stay still in Home edit mode until dragged.
 - `hlauncher/ui/assets/fonts/` bundles Noto Sans JP at Bold (700) for tile labels,
   with its OFL license and source checksum. Barlow Condensed SemiBold remains
@@ -28,6 +30,21 @@ Icons use an 80-pixel canvas; reflections fade out before captions. Tiles follow
 your finger as you swipe between pages. You can also tap a bar below the tiles
 to change pages. The active page bar is brighter.
 Touch regions scale with the displayed image on other framebuffer dimensions.
+Settings → Appearance → Vehicle Model selects the Vehicle tile artwork. The
+HondaLink startup identity subscription requests `VIN_NO` without opening Vehicle.
+VIN positions 4–6 map FB2/FB4/FB5/FB6 to the sedan and FG3/FG4 to the coupe.
+RM3/RM4 select the 2014 CR-V, RU5/RU6 select the RU-generation HR-V, GE8 selects
+the 2013 Fit and GK5 selects the 2015 Fit. FWD/AWD variants share their model's
+artwork; both Fit generations have distinct silhouettes. The detector recognizes
+Honda SUV manufacturer prefixes as well as the passenger-car prefixes.
+The model and identifying VIN are saved in preferences. A manual model selection
+survives reboots with the same VIN; a different live VIN replaces it with a fresh
+detection. Detect from VIN restores the current detected choice. Before a model
+is saved, missing or unsupported VINs use the sedan. A saved model remains
+available when no VIN arrives, and malformed VINs do not replace it. Model
+selection currently changes only the Home icon, with no change
+to CAN decoding or parking policy.
+
 On a fresh layout, CarPlay appears first, then the remaining enabled plugins and
 Settings. Each page has six slots. Hold a tile to edit Home. Drag tiles into
 empty slots or onto another tile to swap positions. Hold a dragged tile at either
@@ -45,7 +62,8 @@ Settings → Appearance → Background color offers Blue, Red, Green, Amber,
 Purple or Graphite. The migrated screens map these names to the shared stock-style accent palette. All tile gradients, edges, tab
 color and background illumination derive from that accent. Icon colors stay
 consistent when switching themes: CarPlay stays green, Android Auto
-stays blue, and the gauge/EQ retain their instrument colors. The header has a Wi-Fi icon at the far right, moving left of the optional
+stays blue when connected; the disconnected phone, gauge, Vehicle and Settings
+icons remain white. The EQ retains its instrument colors. The header has a Wi-Fi icon at the far right, moving left of the optional
 clock. One to four lit signal marks show connected signal strength; an × means
 disconnected, a slash means the radio is off, and ? means telemetry is unavailable.
 Status refreshes about every two seconds without scanning for networks. When enabled under Settings → Appearance → Show clock, the clock follows the

@@ -45,6 +45,7 @@ class ProtocolDiagnostics:
         self.parking_speed = None
         self.parking_brake = None
         self.last_vehicle = VehicleLastKnown(vehicle_path)
+        self.live_vin = None
         self.app_keys = deque(maxlen=6)
         self.display_trials = deque(maxlen=4)
 
@@ -84,9 +85,11 @@ class ProtocolDiagnostics:
                 self.last_reported_speed_at = None
             if state=='connected' and str(item.get('uuid','')).endswith('cafe'):
                 self.connected = True
+                self.live_vin = None
                 self.last_vehicle.select_device(item.get('device'))
             if state in ('closed','released') and str(item.get('uuid','')).endswith('cafe'):
                 self.connected=False;self.sessions.clear();self.vehicle.clear()
+                self.live_vin = None
                 self.last_reported_speed = None
                 self.last_reported_speed_at = self.last_reported_speed_session = None
                 self.last_vehicle.flush_requested = True
@@ -187,6 +190,14 @@ class ProtocolDiagnostics:
         saved = self.last_vehicle
         active = self.vehicle.subscription.get('scope') == 'vehicle'
         now = event['monotonic']
+        # Identity is also requested by the small startup subscription. Preserve
+        # it without treating that subscription as a full Vehicle data refresh.
+        if state == 'honda_can_data' and self.connected and event.get('data_type') == 0:
+            identity = self.vehicle_identity_from(event)
+            if 'vin' in identity:
+                self.live_vin = identity['vin']
+            if identity and any(saved.readings.get(key) != value for key, value in identity.items()):
+                saved.update(identity, now)
         if state == 'honda_can_data' and active and self.connected and event.get('scope') == 'vehicle':
             if event['data_type']:
                 saved.update_report(event['data_type'], event['records'], now)
@@ -208,6 +219,19 @@ class ProtocolDiagnostics:
         readings = {str(row['api_id']): row['value']
                     for row in self.vehicle.signals.snapshot(now, SCOPED_API_IDS['vehicle'])
                     if row['received'] and row['at'] == now}
+        readings.update(self.vehicle_identity_from(event))
+        gps = self.vehicle.gps
+        if gps.get('at') == now and gps['fix'] is not None:
+            readings['latitude'], readings['longitude'] = gps['fix']
+        return readings
+
+    def vehicle_vin(self, *, live=False):
+        with self.lock:
+            return self.live_vin if live else self.last_vehicle.readings.get('vin')
+
+    @staticmethod
+    def vehicle_identity_from(event):
+        readings = {}
         identity = {0x99f00006: 'head-unit', 0x99f00007: 'vin'}
         for record in event['records']:
             if label := identity.get(record['can_id']):
@@ -215,9 +239,6 @@ class ProtocolDiagnostics:
                 value = raw.rstrip(b'\x00').decode('ascii', errors='replace')
                 if value:
                     readings[label] = value if value.isascii() and value.isprintable() else raw.hex().upper()
-        gps = self.vehicle.gps
-        if gps.get('at') == now and gps['fix'] is not None:
-            readings['latitude'], readings['longitude'] = gps['fix']
         return readings
 
     def vehicle_plugin_snapshot(self, now):

@@ -58,7 +58,7 @@ class BootstrapLauncher:
     def launch(self, app_id): return self.open().launch(app_id)
 
     def vehicle_scope(self):
-        if self.ui is None:return 'off'
+        if self.ui is None:return 'identity'
         if self.ui.mode=='protocol_tests' and self.ui.protocol_page==1:return 'diagnostics'
         from .projection import PROJECTIONS
         host = self.ui.host
@@ -75,18 +75,19 @@ class BootstrapLauncher:
         gauges = self.ui.mode == 'plugin' and host.active == 'obd'
         android = getattr(host, 'workers', {}).get('android-auto')
         carplay = getattr(host, 'workers', {}).get('carplay')
-        # Keep speed sampled on Home so opening Settings can use a live reading.
+        # Keep speed sampled on Home and the connection page for Settings gating.
         parking = self.ui.mode == 'parking_status'
         from .catalog import PARKING_CAPABILITY
         plugin_parking = any(PARKING_CAPABILITY in worker.manifest.capabilities
                              for worker in getattr(host, 'workers', {}).copy().values())
-        driving = (parking or plugin_parking or self.ui.mode == 'home' or getattr(self.ui, 'parked_only_screen', False)
+        driving = (parking or plugin_parking or self.ui.mode in ('home', 'phone_projection') or getattr(self.ui, 'parked_only_screen', False)
                    or (android is not None and getattr(android.manifest, 'bundled', False))
                    or getattr(carplay, 'car_gps', False))
         gps = any(getattr(worker, 'car_gps', False) for worker in getattr(host, 'workers', {}).copy().values())
         return '_'.join(name for enabled, name in (
             (gauges, 'gauges'), (illumination, 'illumination'), (driving, 'driving'), (gps, 'gps'),
             (parking, 'parking'),
+            (True, 'identity'),
         ) if enabled) or 'off'
 
     def queue_display_test(self, action):

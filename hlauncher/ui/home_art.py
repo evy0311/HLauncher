@@ -1,6 +1,6 @@
 """Original UI surfaces and fitted brand icons. No Honda firmware assets.
 
-Surfaces and metallic glyphs are rendered once and cached; their accent remains
+Surfaces and glyphs are rendered once and cached; the surface accent remains
 parametric so every theme gets the same gradients, bevels and reflections.
 """
 from functools import lru_cache

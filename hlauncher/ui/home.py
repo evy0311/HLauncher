@@ -73,13 +73,16 @@ def tile_label(text):
 def tile_image(theme, text, icon_name, corner, active):
     width, height = art.TILE_SIZE
     tile = art.tile(theme).copy()
-    icon = art.glyph(icon_name, 80)
+    # Side profiles need more width to match the other icons' visual weight.
+    vehicle = isinstance(icon_name, str) and (icon_name == 'vehicle' or icon_name.startswith('vehicle-'))
+    icon = art.glyph(icon_name, 100 if vehicle else 80)
     icon_x = (width - icon.width) // 2
+    icon_y = 20 - (icon.height - 80) // 2
     caption_y = height - 40
-    mirror_y = 20 + 2 * icon.getbbox()[3] - icon.height + 3
+    mirror_y = icon_y + 2 * icon.getbbox()[3] - icon.height + 3
     reflected = art.reflection(icon_name, icon.width, max(1, caption_y - 6 - mirror_y))
     label = tile_label(text)
-    tile.alpha_composite(icon, (icon_x, 20))
+    tile.alpha_composite(icon, (icon_x, icon_y))
     tile.alpha_composite(reflected, (icon_x, mirror_y))
     tile.alpha_composite(label, ((width - label.width) // 2, caption_y - 1))
 
@@ -127,8 +130,9 @@ def render(layout, *, theme='Red', size=(720,480), page=0, clock=None,
         if colors:
             edge = colors['accent'] if active else art.blend(colors['panel'], colors['text'], .15)
             d.rounded_rectangle((x, y, x+tw-1, y+th-1), radius=10, fill=colors['panel'], outline=edge)
-            icon = art.glyph(entry.icon, 56)
-            image.paste(icon, (x+(tw-icon.width)//2,y+22), icon)
+            vehicle = isinstance(entry.icon, str) and (entry.icon == 'vehicle' or entry.icon.startswith('vehicle-'))
+            icon = art.glyph(entry.icon, 70 if vehicle else 56)
+            image.paste(icon, (x+(tw-icon.width)//2,y+22-(icon.height-56)//2), icon)
             face = interface_font(20, 500)
             title = entry.label
             if d.textlength(title, font=face) > tw-26:
@@ -238,7 +242,8 @@ def launcher_layout(launcher, presentation=None):
 
     projection_name, projection_icon = launcher.projection_tile()
     entries=[Entry(projection_name if m.id in ('carplay','android-auto') else m.name,
-                   projection_icon if m.id in ('carplay','android-auto') else m.icon or m.id,
+                   projection_icon if m.id in ('carplay','android-auto') else
+                   launcher.vehicle_icon() if m.id == 'vehicle' else m.icon or m.id,
                    lambda pid=m.id:launcher.open_plugin(pid),m.id)
              for m in launcher.home_manifests()]
     # entries.append(Entry('Audio', 'audio', launcher.audio_page, AUDIO))

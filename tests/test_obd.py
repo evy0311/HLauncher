@@ -11,17 +11,17 @@ from sdk.hlauncher_sdk.obd import snapshot
 
 
 class Protocol(unittest.TestCase):
-    def test_view_demand_is_off_without_a_consumer_and_full_only_in_vehicle_tests(self):
+    def test_view_demand_keeps_identity_at_boot_and_full_only_in_vehicle_tests(self):
         from types import SimpleNamespace
         from hlauncher.bootstrap import BootstrapLauncher
         b=BootstrapLauncher.__new__(BootstrapLauncher);b.ui=None
-        self.assertEqual(b.vehicle_scope(),'off')
+        self.assertEqual(b.vehicle_scope(),'identity')
         b.ui=SimpleNamespace(mode='home',protocol_page=1,host=SimpleNamespace(active=None))
-        self.assertEqual(b.vehicle_scope(),'driving')
+        self.assertEqual(b.vehicle_scope(),'driving_identity')
         b.ui.mode='plugin';b.ui.host.active='obd'
-        self.assertEqual(b.vehicle_scope(),'gauges')
+        self.assertEqual(b.vehicle_scope(),'gauges_identity')
         b.ui.mode='protocol_tests';b.ui.protocol_page=0
-        self.assertEqual(b.vehicle_scope(),'off')
+        self.assertEqual(b.vehicle_scope(),'identity')
         b.ui.protocol_page=1
         self.assertEqual(b.vehicle_scope(),'diagnostics')
 

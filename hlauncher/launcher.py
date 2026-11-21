@@ -130,6 +130,10 @@ class Launcher:
         self.started = False
         self.pending_default = False
         self.last_frame_at = 0
+        self.projection_devices_open = False
+        self.projection_devices_index = 0
+        self.projection_device_key = None
+        self.projection_device_notice = ''
         from .wifi_status import indicator
         self.header_wifi = indicator()
         self.wifi_checked = time.monotonic()
@@ -202,6 +206,55 @@ class Launcher:
         self.press=None
         self.banner=''
         self.draw()
+
+    def vehicle_model(self):
+        from .vehicle_models import selected_model
+        return selected_model(self.prefs.data['vehicle_model'], self.protocols.vehicle_vin())
+
+    def vehicle_icon(self):
+        from .vehicle_models import icon_for_model
+        return icon_for_model(self.vehicle_model())
+
+    def vehicle_model_settings(self):
+        self.host.deactivate()
+        self.mode = 'vehicle_model_settings'
+        self.press = None
+        self.banner = ''
+        self.draw()
+
+    def set_vehicle_model(self, selection):
+        from .vehicle_models import MODELS, normalize_vin, model_from_vin
+        if selection not in ('auto', *MODELS):
+            raise ValueError('Unknown vehicle model')
+        vin = normalize_vin(self.protocols.vehicle_vin())
+        changes = dict(vehicle_model=(model_from_vin(vin) or 'auto') if selection == 'auto' else selection,
+                       vehicle_model_vin=vin)
+        if not self.save_vehicle_model(changes):
+            self.banner = 'Could not save Vehicle Model'
+        else:
+            self.banner = ''
+        self.draw()
+
+    def save_vehicle_model(self, changes):
+        previous = {key: self.prefs.data[key] for key in changes}
+        self.prefs.data.update(changes)
+        try:
+            self.prefs.save(force=tuple(changes))
+        except OSError as exc:
+            self.prefs.data.update(previous)
+            self.event(state='vehicle_model_save_failed', error=str(exc))
+            return False
+        return True
+
+    def sync_vehicle_model(self):
+        from .vehicle_models import normalize_vin, model_from_vin
+        vin = normalize_vin(self.protocols.vehicle_vin(live=True))
+        if vin is None or vin == self.prefs.data['vehicle_model_vin']:
+            return
+        # A saved override belongs to this VIN. Only a new VIN replaces it.
+        if self.save_vehicle_model(dict(vehicle_model=model_from_vin(vin) or 'auto', vehicle_model_vin=vin)):
+            if self.mode in ('home', 'appearance_settings', 'vehicle_model_settings'):
+                self.draw()
 
     @property
     def layout_theme(self):
@@ -704,6 +757,38 @@ class Launcher:
         self.mode = 'phone_projection'
         self.press = None
         self.banner = ''
+        self.projection_devices_open = False
+        self.draw()
+
+    def open_projection_devices(self):
+        self.mode = 'phone_projection'
+        self.projection_devices_open = True
+        self.projection_devices_index = 0
+        self.projection_device_key = None
+        self.projection_device_notice = ''
+        self.banner = ''
+        self.press = self.pressed_box = None
+        self.draw()
+
+    def close_projection_devices(self):
+        self.projection_devices_open = False
+        self.press = self.pressed_box = None
+        self.draw()
+
+    def change_projection_devices_page(self, delta):
+        self.projection_devices_index += delta
+        self.press = self.pressed_box = None
+        self.draw()
+
+    def select_projection_device(self, key):
+        try:
+            self.request_projection_phone(key)
+            self.projection_device_key = key
+            self.projection_device_notice = 'Connection requested'
+        except (OSError, ValueError) as exc:
+            self.projection_device_key = None
+            self.projection_device_notice = str(exc)
+        self.press = self.pressed_box = None
         self.draw()
 
     def projection_settings_page(self):
@@ -740,12 +825,15 @@ class Launcher:
 
     def connect_projection_phone(self):
         try:
-            request = self.host.connect_phone(self.projection_phone_id)
-            self.projection_phone_request = (self.projection_phone_id, request, time.monotonic()+45)
+            self.request_projection_phone(self.projection_phone_id)
             self.banner = 'Connection requested'
         except (OSError, ValueError) as exc:
             self.banner = str(exc)
         self.draw()
+
+    def request_projection_phone(self, key):
+        request = self.host.connect_phone(key)
+        self.projection_phone_request = (key, request, time.monotonic()+45)
 
     def start_projection(self, engine):
         self.projection_auto_native = False
@@ -1272,7 +1360,7 @@ class Launcher:
     def parked_only_screen(self):
         if self.mode == 'home':
             return self.home_editor.editing
-        return self.mode not in ('plugin', 'obd_coming_soon', 'shutdown_pending', 'parking_status')
+        return self.mode not in ('plugin', 'phone_projection', 'obd_coming_soon', 'shutdown_pending', 'parking_status')
 
     def sync_parked_screen(self):
         # Pending plugins reopen on tick, after the host has finished stopping
@@ -1631,6 +1719,7 @@ class Launcher:
                 self.home()
 
     def tick(self):
+        self.sync_vehicle_model()
         if self.plugin_manager:
             self.plugin_manager.tick()
             if time.monotonic() - getattr(self, 'plugin_checked', 0) > 1:
@@ -1692,10 +1781,13 @@ class Launcher:
         if self.mode == 'home' and self.projection_tile() != previous_projection_tile:
             self.draw()
         if self.mode == 'phone_projection':
+            if (self.projection_devices_open and self.projection_device_key is not None
+                    and self.projection_device_key in self.host.projection_phones.live):
+                self.projection_devices_open = False
             connected = next((ident for ident, worker in self.host.workers.items()
                 if ident in PROJECTIONS and (getattr(worker, 'video_available', False)
                     or getattr(worker, 'metrics', {}).get('phone_connected') is True)), None)
-            if connected:
+            if connected and not self.projection_devices_open:
                 self.open_plugin(connected, projection_engine=True)
         if now - getattr(self, 'projection_appearance_checked', 0) >= .1:
             self.projection_appearance_checked = now
@@ -1746,7 +1838,9 @@ class Launcher:
                                    monotonic_ms=round(time.monotonic()*1000))
                         self.projection_auto_native = True
                         self.projection_auto_native_deadline = time.monotonic()+30
-                        self.host.request_projection('android-auto', self.mode in ('phone_projection', 'plugin'))
+                        foreground = (self.mode == 'plugin' or
+                                      self.mode == 'phone_projection' and not self.projection_devices_open)
+                        self.host.request_projection('android-auto', foreground)
                         if self.host.active == 'android-auto':
                             self.mode = 'plugin'
                             self.has_frame = False

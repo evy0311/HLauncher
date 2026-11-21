@@ -44,13 +44,22 @@ def diagnostic_subscriptions():
     return (*SUBSCRIPTIONS, IMID_AUDIO_SWITCH)
 
 
-def subscription_rows(scope):
+def subscription_rows(scope, *, standard=False):
     if scope == 'diagnostics':
         return diagnostic_subscriptions()
     if scope == 'vehicle':
-        # The SDK ALL request produced live Civic data and includes the oil-life
-        # and Minder fields. Expanded masks remain unverified.
-        return SUBSCRIPTIONS
+        if standard:
+            return SUBSCRIPTIONS
+        # Preserve every original mask and alternate source. Add only fields
+        # present on Vehicle whose native layouts extend the SDK ALL inventory.
+        rows = {row['message_id']: row for row in SUBSCRIPTIONS}
+        for extra in signal_subscriptions(info['api_id'] for info in EXTRA_SIGNALS):
+            original = rows.get(extra['message_id'])
+            if original:
+                mask = int(original['mask'], 16) | int(extra['mask'], 16)
+                extra = dict(extra, mask=mask.to_bytes(extra['length'], 'big').hex())
+            rows[extra['message_id']] = extra
+        return tuple(rows[mid] for mid in sorted(rows))
     # Preserve the known full illumination mask, even in mixed subscriptions.
     api_ids = tuple(api for api in SCOPED_API_IDS[scope] if api not in ILLUMINATION_API_IDS)
     rows = signal_subscriptions(api_ids)
@@ -83,9 +92,9 @@ def subscription_ticks(scope):
     return 1 if 'gauges' in scope or 'driving' in scope else 10
 
 
-def subscription_payloads(scope='diagnostics'):
+def subscription_payloads(scope='diagnostics', *, standard=False):
     if scope=='off':return (bytes.fromhex('0200000a0100'),)
-    rows=subscription_rows(scope)
+    rows=subscription_rows(scope, standard=standard)
     normal = serialize_setting(0, ((r['message_id'], r['can_type'], r['mask']) for r in rows))
     ticks = subscription_ticks(scope)
     if scope not in DIAGNOSTIC_SCOPES:
@@ -187,7 +196,7 @@ class VehicleSubscription:
         if scope == 'vehicle':
             return (refresh and age >= VEHICLE_REFRESH_INTERVAL) or (
                 previous['vehicle_retries'] < 1 and age >= VEHICLE_RETRY_DELAY
-                and (previous['status'] == 'rejected' or previous['transport_status'] == 'rejected'
+                and (previous['status'] != 'accepted' or previous['transport_status'] == 'rejected'
                      or not previous.get('signals_received')))
         retries = previous['speed_retries']
         return ('driving' in scope and not previous.get('speed_received')
@@ -199,24 +208,30 @@ class VehicleSubscription:
             return
         previous=self.requests.get(sid)
         speed_retries = previous['speed_retries'] + 1 if previous and previous['scope'] == scope else 0
-        rows = subscription_rows(scope)
+        same_scope = previous is not None and previous['scope'] == scope
+        standard = scope == 'vehicle' and same_scope and (
+            previous['standard'] or previous['status'] != 'accepted'
+            or previous['transport_status'] == 'rejected' or not previous.get('signals_received'))
+        rows = subscription_rows(scope, standard=standard)
         api_ids = SCOPED_API_IDS.get(scope)
         cycle = subscription_ticks(scope)
-        same_scope = previous is not None and previous['scope'] == scope
         vehicle_retries = previous['vehicle_retries'] + 1 if same_scope else 0
-        if scope == 'vehicle':
+        if standard:
             api_ids = tuple(range(1, 169))
-        payloads=subscription_payloads(scope)
+        payloads=subscription_payloads(scope, standard=standard)
+        previous_ids = previous['api_ids'] if previous else None
+        if previous and previous['scope'] in DIAGNOSTIC_SCOPES and previous['status'] != 'accepted':
+            previous_ids = previous['previous_api_ids']
         request = self.requests[sid] = dict(at=at,scope=scope,api_ids=api_ids,
-            previous_api_ids=previous['api_ids'] if previous else None,can_ids={r['message_id'] for r in rows},
+            previous_api_ids=previous_ids,can_ids={r['message_id'] for r in rows},
             status='pending', protocol=protocol, transport_status='pending', transactions=[], acks={},
-            speed_retries=speed_retries, vehicle_retries=vehicle_retries)
+            speed_retries=speed_retries, vehicle_retries=vehicle_retries, standard=standard)
         for index, payload in enumerate(payloads):
             send(sid, 0xc2, payload, events, replies, 'honda_can_subscription_queued')
             events[-1].update(can_ids=[r['message_id'] for r in rows], cycle=cycle,
                 interval_seconds=cycle/10,scope=scope,api_ids=api_ids,
                 can_classes=sorted({r['can_type'] for r in rows}),api_count=168 if api_ids is None else len(api_ids),
-                settings_count=payloads[0][5],
+                settings_count=payloads[0][5], standard=standard,
                 part=index+1, parts=len(payloads), receive_only=True, status='pending', protocol=protocol,
                 authorization_session=sid, transport_status='pending', speed_retries=speed_retries)
             request['transactions'].append(events[-1]['transaction'])
@@ -254,9 +269,11 @@ class VehicleSubscription:
                 allowed=request['api_ids']
                 if request['scope'] in DIAGNOSTIC_SCOPES and request['status']=='pending':
                     allowed=request['previous_api_ids']
-                    if request['scope'] == 'vehicle' and allowed is None:
-                        # Until the new mask is accepted, decode only original API fields.
-                        allowed=range(1, 169)
+                    if request['scope'] == 'vehicle':
+                        # A previous mask may still be active until acceptance.
+                        # Never decode extension bits from a standard-mask frame.
+                        allowed = range(1, 169) if allowed is None else allowed
+                        allowed = tuple(api for api in request['api_ids'] if api in allowed)
                 records = decode_records(payload, self.keys[sid], allowed)
                 if request['scope'] not in DIAGNOSTIC_SCOPES:
                     records=[r for r in records if r['data_type']==0 and r['can_id'] in request['can_ids']]

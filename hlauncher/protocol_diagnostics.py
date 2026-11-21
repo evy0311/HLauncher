@@ -188,7 +188,6 @@ class ProtocolDiagnostics:
     def remember_vehicle(self, event):
         state = event['state']
         saved = self.last_vehicle
-        active = self.vehicle.subscription.get('scope') == 'vehicle'
         now = event['monotonic']
         # Every consumer contributes real readings to the per-radio history.
         # Otherwise Gauges/diagnostics data disappears when Vehicle is opened
@@ -202,9 +201,9 @@ class ProtocolDiagnostics:
                 if readings.keys() - {'vin', 'head-unit'}:
                     self.vehicle_feed_at = now
                 saved.update(readings, now)
-            elif active and event.get('scope') == 'vehicle':
+            elif event.get('data_type') in (1, 2, 3):
                 saved.update_report(event['data_type'], event['records'], now)
-        elif state == 'honda_radio_status' and active and self.connected:
+        elif state == 'honda_radio_status' and self.connected:
             saved.update({'brake': event['parking_brake_engaged']}, now)
         elif ((state == 'honda_can_subscription_queued' and event.get('scope') != 'vehicle') or
               state in ('iap_data_session_closed', 'iap_remote_reset', 'honda_app_disconnect_received')):
@@ -258,7 +257,9 @@ class ProtocolDiagnostics:
                 link = 'Connecting to HondaLink'
             else:
                 link = 'Requesting vehicle data'
-            snapshot = dict(last_updated=saved.updated_text(now), readings=dict(saved.readings), link=link)
+            requested = subscription.get('api_ids') if subscription.get('scope') == 'vehicle' else None
+            snapshot = dict(last_updated=saved.updated_text(now), readings=dict(saved.readings), link=link,
+                            requested_fields=list(map(str, requested)) if requested is not None else None)
             return snapshot, saved.report_revision, saved.report_view()
 
     def save_last_vehicle(self, *, force=False):

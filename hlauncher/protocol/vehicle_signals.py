@@ -23,6 +23,7 @@ for ident,name,mid,signal,bits,shift,factor,offset,kind in (
     (1006,'MAINTENANCE_RESULT_RAW',0x12f96750,'C_MAINT_RESULT',2,36,1,0,'INT32'),
     (1007,'MAINTENANCE_DISPLAY_CONDITION_RAW',0x12f96750,'C_I_DISPLAY_CONDITION_MAINT',4,20,1,0,'INT32'),
     (1008,'MAINTENANCE_VEHICLE_CONDITION_RAW',0x12f96750,'C_I_CAR_CONDITION_MAINT',1,19,1,0,'BOOLEAN'),
+    (1009,'CLUSTER_ODOMETER_RAW',0x12f95f50,'C_DISPLAY_ODO',20,0,1,0,'INT32'),
     *((1010+i, f'MAINTENANCE_ITEM_{item}_APPLIED', 0x12f96750, f'C_MAINT_ITEM_{item}_APPLIED',
        1, 11-i, 1, 0, 'BOOLEAN') for i, item in enumerate('AB0123456789'))):
     m=MESSAGES[mid]
@@ -38,7 +39,7 @@ for info in (*SIGNALS,*EXTRA_SIGNALS):
 
 # Only annotate units established by the corresponding native field/layout.
 # Unannotated values retain their SDK conversion and display as native units.
-UNITS = {40:'°C', 42:'%', 44:'rpm', 77:'°C', 113:'°', 132:'cycles', 152:'km/h', 167:'%', 1002:'°C'}
+UNITS = {40:'°C', 44:'rpm', 113:'°', 132:'cycles', 152:'km/h', 167:'%', 1002:'°C'}
 LABELS = {40:'Coolant temperature', 44:'Engine RPM', 152:'Vehicle speed',
           167:'Accelerator pedal position'}
 ALIASES = {40:'coolant_temperature_c', 44:'engine_rpm'}
@@ -69,7 +70,9 @@ def decode_value(info, source, raw):
 def field_present(source, byte_count):
     # Omitted trailing bytes are unknown, including Minder flags and mileage.
     # Padding them would turn a partial record into a false zero/False reading.
-    return 'signal' not in source or byte_count * 8 >= source['length'] * 8 - source['trailing_offset']
+    if 'signal' not in source:
+        return byte_count >= source['length']
+    return byte_count * 8 >= source['length'] * 8 - source['trailing_offset']
 
 
 def record_signals(mid, raw, api_ids=None):

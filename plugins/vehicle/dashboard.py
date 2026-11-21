@@ -31,6 +31,7 @@ class Dashboard:
         self.last_point = None
         self.hidden = set()
         self.readings = {}
+        self.requested = None
         self.reports = {}
         self.last_updated = 'No readings yet'
         self.link = 'Connecting to HondaLink'
@@ -42,6 +43,8 @@ class Dashboard:
     def update(self, snapshot, hidden, colors, layout, *, oem_color=None):
         self.hidden = set(hidden)
         self.readings = snapshot['readings']
+        requested = snapshot.get('requested_fields')
+        self.requested = set(requested) if requested is not None else None
         self.last_updated = snapshot['last_updated']
         self.link = snapshot.get('link', 'Connecting to HondaLink')
         self.refreshing = snapshot.get('refreshing', False)
@@ -181,8 +184,12 @@ class Dashboard:
     def value(self, key):
         value = self.reading(key)
         if value is None:
-            return '—'
-        if key == '42' and not 0 <= value <= 100:
+            return ('Not requested' if key.isdecimal() and self.requested is not None
+                    and key not in self.requested else 'Not received')
+        if key in ('42', '72'):
+            percent = minder_oil_life(value)
+            return f'{percent}% (code {value})' if percent is not None else f'Unavailable (code {value})'
+        if key == '77' and value == 1023:
             return 'Unavailable'
         if isinstance(value, bool):
             result = ('On' if value else 'Off')
@@ -199,7 +206,7 @@ class Dashboard:
         cx, cy, r = (left+right)//2, top+120, 84
         value = minder_oil_life(self.reading('72'))
         if value is None:
-            value = self.reading('42')
+            value = minder_oil_life(self.reading('42'))
         valid = type(value) in (int, float) and 0 <= value <= 100
         for tick in range(41):
             angle = radians(142 + 256*tick/40)
@@ -211,7 +218,8 @@ class Dashboard:
         self.text(cx, cy+39, 'Oil life', 18, 'muted', anchor='mm')
         note = ''
         if not valid:
-            note = 'Not reported' if value is None else 'Unavailable'
+            note = ('Unavailable' if any(self.reading(key) is not None for key in ('42', '72'))
+                    else 'Not received')
         elif value <= 15:
             note = 'Oil life depleted' if value == 0 else 'Service due now' if value <= 5 else 'Service due soon'
         if note:
@@ -228,7 +236,7 @@ class Dashboard:
         if 'maintenance' in self.hidden:
             self.empty('Maintenance hidden', 'Change visibility in Settings › Plugins › Vehicle')
             return
-        oil = self.has('42')
+        oil = self.has('42') or self.has('72')
         if oil:
             self.dial((24, y, 284, y+232))
         x = 300 if oil else 24
@@ -253,14 +261,17 @@ class Dashboard:
         self.button((x+12, y+194, 684, y+230), 'guide', 'Service code guide',
                     lambda: self.navigate('guide'), size=16)
         self.chevron(669, y+212)
-        quick = [key for key in ('75', '144', '40', '77', '61', '132') if self.reading(key) is not None]
+        odometer = '75' if self.reading('75') is not None or self.reading('1009') is None else '1009'
+        quick = ([odometer] if self.has(odometer) else []) + (['70'] if self.has('70') else [])
+        quick += [key for key in ('1005', '144', '40', '77', '61', '132') if self.reading(key) is not None]
         for i, key in enumerate(quick[:3]):
             left = 24+i*228
             self.panel((left, y+248, left+216, y+324))
-            label = {'144': 'Range', '40': 'Coolant'}.get(key, field_label(key))
+            label = {'75': 'Odometer (raw)', '1009': 'Odometer (raw)', '70': 'Minder interval (raw)',
+                     '1005': 'Oil-life distance (raw)', '144': 'Range (raw)', '61': 'Fuel level (raw)', '40': 'Coolant'}.get(key, field_label(key))
             self.text(left+16, y+268, label, 16, 'muted', width=184)
             value = self.value(key)
-            if key == '75' and isinstance((odo := self.reading(key)), int):
+            if key in ('75', '1009', '70') and isinstance((odo := self.reading(key)), int):
                 value = f'{odo:,}'
             self.text(left+16, y+300, value, 23, weight=500, width=184)
 
@@ -506,6 +517,6 @@ class Dashboard:
         self.heading('All readings')
         for i, (key, title, fields) in enumerate(self.paginate(groups, 5)):
             saved = sum(self.reading(key) is not None for key in fields)
-            self.list_row(self.top+52+i*44, key, title, 'View' if saved else 'Not reported',
+            self.list_row(self.top+52+i*44, key, title, f'{saved}/{len(fields)} received',
                           action=lambda key=key: self.navigate(key))
         self.pager('groups')

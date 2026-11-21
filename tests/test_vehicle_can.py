@@ -11,7 +11,7 @@ from hlauncher.protocol.frames import frame
 from hlauncher.protocol.session import StartProbe, packet, pi_honda_identity
 from hlauncher.protocol.vehicle_can import (GENERAL, GPS_IDS, HONDALINK, ILLUMINATION_ID, IMID_AUDIO_SWITCH_ID, decode_records,
                                             subscription_payloads, session_key)
-from hlauncher.protocol.vehicle_signals import SIGNALS, SUBSCRIPTIONS, SignalCache
+from hlauncher.protocol.vehicle_signals import BY_ID, SIGNALS, SUBSCRIPTIONS, SignalCache
 from hlauncher.protocol_diagnostics import ProtocolDiagnostics
 
 FIXTURE = json.loads((Path(__file__).parent / 'fixtures/hondalink-native-can.json').read_text())
@@ -175,7 +175,7 @@ class VehicleCAN(unittest.TestCase):
             self.assertEqual(probe.sync_vehicle_scope(refresh=1), ([], []))
 
     def test_vehicle_uses_the_live_tested_sdk_masks_and_diagnostic_presets(self):
-        payloads = subscription_payloads('vehicle')
+        payloads = subscription_payloads('vehicle', standard=True)
         self.assertEqual([hashlib.sha256(raw).hexdigest() for raw in payloads],
                          FIXTURE['payload_sha256'])
 
@@ -241,6 +241,131 @@ class VehicleCAN(unittest.TestCase):
         self.assertEqual(rows[72]['value'], 5)
         for field in (75, 42, *range(114, 126)):
             self.assertFalse(rows[field]['received'])
+
+    def test_every_vehicle_field_and_alternate_source_is_requested_on_the_wire(self):
+        # Parse actual bytes independently of the subscription-row builder.
+        normal, presets = subscription_payloads('vehicle')
+        self.assertEqual(normal[:8], bytes.fromhex('0200000a01040036'))
+        self.assertEqual(presets, subscription_payloads('vehicle', standard=True)[1])
+        rows, offset = {}, 8
+        for _ in range(normal[7]):
+            mid = int.from_bytes(normal[offset:offset+4], 'big')
+            bus, length = normal[offset+4:offset+6]
+            raw = normal[offset+6:offset+6+length]
+            rows[mid] = (bus, length, int.from_bytes(raw, 'big'))
+            offset += 6+length
+        self.assertEqual(offset, len(normal))
+        for info in BY_ID.values():
+            for source in info['sources']:
+                with self.subTest(api=info['api_id'], source=source['message_id_hex']):
+                    bus, length, mask = rows[source['message_id']]
+                    self.assertEqual(bus, {'B-CAN': 0, 'F-CAN': 1, 'OTHER': 2}[source['bus']])
+                    self.assertEqual(length, source['length'])
+                    required = (((1 << source['bits'])-1) << source['trailing_offset']
+                                if 'signal' in source else (1 << (8*length))-1)
+                    self.assertEqual(mask & required, required)
+        # Added fields cannot remove any original source or requested bit.
+        for original in SUBSCRIPTIONS:
+            mask = int(original['mask'], 16)
+            self.assertEqual(rows[original['message_id']][2] & mask, mask)
+
+    def test_each_alternate_source_can_independently_supply_its_vehicle_field(self):
+        for info in BY_ID.values():
+            ident = info['api_id']
+            for source in info['sources']:
+                with self.subTest(api=ident, source=source['message_id_hex']):
+                    raw = bytes([0x55])*source['length']
+                    records = decode_records(can_data([(source['message_id'], raw)]), api_ids=tuple(BY_ID))
+                    self.assertIn(str(ident), records[0]['signals'])
+                    cache = SignalCache()
+                    cache.update(records, 100, 257)
+                    row, = cache.snapshot(100, {ident})
+                    self.assertTrue(row['received'])
+                    self.assertEqual(row['source'], source)
+                    self.assertEqual(row['value'], records[0]['signals'][str(ident)])
+
+    def test_old_speed_frames_do_not_confirm_a_pending_vehicle_request(self):
+        probe = self.probe()
+        probe.vehicle_scope = lambda: 'vehicle'
+        self.authenticate(probe)
+        key = probe.vehicle_subscription.keys[257]
+        probe.feed(incoming(257, 0xc1, can_data([(0x12f85050, b'\0')], key=key)))
+        request = probe.vehicle_subscription.requests[257]
+        self.assertTrue(request['signals_received'])
+        self.assertEqual(request['status'], 'pending')
+        with patch('hlauncher.protocol.session.time.monotonic', return_value=request['at']+6):
+            events, _ = probe.sync_vehicle_scope()
+        self.assertTrue(next(e for e in events if e['state']=='honda_can_subscription_queued')['standard'])
+
+    def test_extensions_wait_for_acceptance_and_are_excluded_from_standard_retry(self):
+        probe = self.probe()
+        probe.vehicle_scope = lambda: 'vehicle'
+        self.authenticate(probe)
+        key = probe.vehicle_subscription.keys[257]
+        raw = can_data([(0x12f95f50, bytes.fromhex('0000000000012345'))], key=key)
+        events, _ = probe.feed(incoming(257, 0xc1, raw))
+        record = next(e for e in events if e['state'] == 'honda_can_data')['records'][0]
+        self.assertNotIn('1009', record['signals'])
+        probe.feed(incoming(257, 0xc1, bytes.fromhex('020000')))
+        events, _ = probe.feed(incoming(257, 0xc1, raw))
+        record = next(e for e in events if e['state'] == 'honda_can_data')['records'][0]
+        self.assertEqual(record['signals']['1009'], 0x12345)
+        probe.feed(incoming(257, 0xc1, bytes.fromhex('020100')))
+        request = probe.vehicle_subscription.requests[257]
+        with patch('hlauncher.protocol.session.time.monotonic', return_value=request['at'] + 6):
+            events, _ = probe.sync_vehicle_scope()
+        queued = [e for e in events if e['state'] == 'honda_can_subscription_queued']
+        self.assertEqual([bytes.fromhex(e['payload']) for e in queued],
+                         list(subscription_payloads('vehicle', standard=True)))
+        self.assertTrue(all(e['standard'] for e in queued))
+        probe.feed(incoming(257, 0xc1, bytes.fromhex('020000')))
+        events, _ = probe.feed(incoming(257, 0xc1, raw))
+        record = next(e for e in events if e['state'] == 'honda_can_data')['records'][0]
+        self.assertNotIn('1009', record['signals'])
+
+    def test_brake_and_fault_reports_received_before_vehicle_are_retained(self):
+        with tempfile.TemporaryDirectory() as folder:
+            monitor = ProtocolDiagnostics(folder)
+            self.addCleanup(monitor.close)
+            monitor.observe(dict(state='connected', uuid='test-cafe', device='radio'))
+            monitor.observe(dict(state='honda_radio_status', session=257, parking_brake_engaged=False))
+            monitor.observe(dict(state='honda_can_data', session=257, scope='diagnostics', data_type=2,
+                                 records=decode_records(can_data([(0x403, bytes.fromhex('0705000000'))], kind=2))))
+            snapshot, _, reports = monitor.vehicle_plugin_snapshot(0)
+            self.assertIs(snapshot['readings']['brake'], False)
+            self.assertIn(2, reports)
+
+    def test_complete_vehicle_feed_reaches_the_dashboard_within_ipc_limit(self):
+        from hlauncher.protocol.vehicle_can import subscription_rows
+        from sdk.hlauncher_sdk import encode, MAX_PACKET
+        probe = self.probe()
+        probe.vehicle_scope = lambda: 'vehicle'
+        with tempfile.TemporaryDirectory() as folder:
+            monitor = ProtocolDiagnostics(folder)
+            self.addCleanup(monitor.close)
+            monitor.observe(dict(state='connected', uuid='test-cafe', device='radio'))
+            for event in self.authenticate(probe)[0]:
+                monitor.observe(event)
+            probe.feed(incoming(257, 0xc1, bytes.fromhex('020000')))
+            raw = can_data([(r['message_id'], bytes([0x55])*r['length'])
+                            for r in subscription_rows('vehicle')], key=probe.vehicle_subscription.keys[257])
+            for event in probe.feed(incoming(257, 0xc1, raw))[0]:
+                monitor.observe(event)
+            snapshot, revision, _ = monitor.vehicle_plugin_snapshot(0)
+            self.assertTrue(set(map(str, BY_ID)).issubset(snapshot['readings']))
+            self.assertEqual(set(snapshot['requested_fields']), set(map(str, BY_ID)))
+            body = encode(dict(type='vehicle.dashboard', snapshot=snapshot, revision=revision,
+                               colors={}, hidden=[], layout='menu'))
+            self.assertLessEqual(len(body), MAX_PACKET)
+
+    def test_short_virtual_counter_is_unknown_instead_of_zero(self):
+        for raw in (b'', bytes(3)):
+            record, = decode_records(can_data([(0x99f00005, raw)]))
+            self.assertNotIn('132', record['signals'])
+            cache = SignalCache()
+            cache.update([record], 100, 257)
+            row, = cache.snapshot(100, {132})
+            self.assertFalse(row['received'])
 
     def test_vehicle_retains_separate_fault_reports_and_last_values_through_restarts(self):
         probe = self.probe()

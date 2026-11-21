@@ -59,7 +59,8 @@ class VehicleTraffic:
                           and self.subscription.get('session') == event.get('session'))
             self.subscription.update({k:v for k,v in event.items()
                                       if k in ('session','status','result_code','reason','can_ids','cycle','protocol',
-                                               'transaction','transport_status','phase','can_classes','interval_seconds','api_count','settings_count')})
+                                               'transaction','transport_status','phase','can_classes','interval_seconds','api_count','settings_count',
+                                               'api_ids','standard')})
             if state == 'honda_can_subscription_queued':
                 if event.get('part',1)==1 and not same_scope:
                     if not set(GPS_IDS).issubset(event.get('can_ids', ())):

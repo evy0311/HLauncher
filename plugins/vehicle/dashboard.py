@@ -157,8 +157,8 @@ class Dashboard:
             refresh_box = (574, 12, 696, 56)
             self.rule(24, 60 if nav_y == 68 else 64, 696)
         if self.readings or self.reports:
-            status = self.last_updated if self.link == 'Receiving vehicle data' else self.link
-            self.text(556, status_y, status, 14, 'muted', width=300, anchor='rm')
+            if self.link != 'Receiving vehicle data':
+                self.text(556, status_y, self.link, 14, 'muted', width=300, anchor='rm')
         else:
             self.text(556, status_y, self.link, 16, 'muted', width=325, anchor='rm')
         if self.refreshing:

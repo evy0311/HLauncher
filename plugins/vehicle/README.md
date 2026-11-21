@@ -20,6 +20,15 @@ screen offers Home or reopens Vehicle once both are confirmed.
   recovered readings, including raw interval and cluster codes. Raw values
   are shown where a unit or code mapping is still unknown.
 
+The four overview tabs use short headings and show connection status only when
+needed, without a last-refreshed timestamp. Maintenance
+summary tiles appear only for received values, including legitimate zeroes.
+Service descriptions, indicator details and raw report records remain available
+on tap. Partial warning telemetry stays labelled incomplete.
+
+UI polish used [unslop by Damir Sokolovsky (@heydamir)](https://heydamir.design/unslop),
+CC BY 4.0, while retaining HLauncher's radio theme and navigation.
+
 Open **Settings → Plugins → Vehicle** to choose the groups and individual fields
 shown in the plugin. Hide **Tires and TPMS** to remove the section while keeping
 your individual choices saved. Visibility settings affect the display only.
@@ -27,10 +36,8 @@ your individual choices saved. Visibility settings affect the display only.
 Vehicle keeps the latest value received for each signal and the latest reports
 per module in `/var/lib/hlauncher/vehicle-last-known.json`. The cache can be
 viewed after a disconnect or reboot. It writes on the first reading, every
-30 seconds during use, and when closing the session normally. Last updated
-refers to the most recent sample in the cache. When the Pi has a synchronized
-clock, it shows the sample date and time. Without a synchronized clock, it
-shows elapsed time within this boot, or an unavailable date after reboot.
+30 seconds during use, and when closing the session normally. The cache retains
+the most recent sample time even though the dashboard does not display it.
 
 **Refresh data** asks the head unit to reapply the subscription. The request uses
 the same one-second cyclic receive mode as HondaLink Connect. If the request

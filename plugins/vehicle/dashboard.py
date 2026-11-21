@@ -157,15 +157,14 @@ class Dashboard:
             refresh_box = (574, 12, 696, 56)
             self.rule(24, 60 if nav_y == 68 else 64, 696)
         if self.readings or self.reports:
-            self.text(556, status_y - 10, self.link, 16, 'text', width=285, anchor='rm')
-            self.text(556, status_y + 10, f'Last received · {self.last_updated}', 13, 'muted',
-                      width=340 if self.oem_color else 326, anchor='rm')
+            if self.link != 'Receiving vehicle data':
+                self.text(556, status_y, self.link, 14, 'muted', width=300, anchor='rm')
         else:
             self.text(556, status_y, self.link, 16, 'muted', width=325, anchor='rm')
         if self.refreshing:
             self.text(635, status_y, 'Requesting…', 15, 'muted', anchor='mm')
         else:
-            self.button(refresh_box, 'refresh', 'Refresh data', lambda: 'refresh', selected=True, size=15)
+            self.button(refresh_box, 'refresh', 'Refresh', lambda: 'refresh', selected=True, size=16)
         for i, tab in enumerate(TABS):
             left = 24 + i*170
             self.button((left, nav_y, left+162, nav_y+40), ('tab', i), tab,
@@ -207,16 +206,14 @@ class Dashboard:
             self.d.line(here, fill=self.c['accent' if valid and 100*tick <= 40*value else 'edge'],
                         width=3 if tick % 10 == 0 else 2)
         self.text(cx, cy-6, f'{value:.0f}%' if valid else '—', 60, weight=500, anchor='mm')
-        self.text(cx, cy+39, 'Engine oil life', 16, 'muted', anchor='mm')
-        cluster = self.reading('72')
-        note = 'HondaLink · engine ECU'
-        if not valid and cluster is not None:
-            note = 'Cluster code · ' + self.value('72')
-        elif not valid:
-            note = 'No oil-life reading received' if value is None else 'Oil life unavailable'
+        self.text(cx, cy+39, 'Oil life', 18, 'muted', anchor='mm')
+        note = ''
+        if not valid:
+            note = 'Not reported' if value is None else 'Unavailable'
         elif value <= 15:
             note = 'Oil life depleted' if value == 0 else 'Service due now' if value <= 5 else 'Service due soon'
-        self.text(cx, end-20, note, 14, 'muted', anchor='mm')
+        if note:
+            self.text(cx, end-20, note, 15, 'muted', anchor='mm')
 
     def maintenance(self):
         if self.view == 'guide':
@@ -237,29 +234,29 @@ class Dashboard:
         service_fields = [(code, str(ident)) for code, ident in MINDER_IDS.items() if self.has(str(ident))]
         readings = [(code, self.reading(field)) for code, field in service_fields]
         active = [code for code, value in readings if value is True]
-        self.text(x+20, y+24, 'Maintenance Minder', 23, weight=500)
+        self.text(x+20, y+24, 'Service', 23, weight=500)
         if active:
             for i, code in enumerate(active[:3]):
                 row_y = y+48+i*44
                 self.service_row(x+20, row_y, 676, code)
             if len(active) > 3:
-                self.text(676, y+186, f'+{len(active)-3} more in code guide', 13, 'muted', anchor='rm')
+                self.text(676, y+186, f'+{len(active)-3} more', 15, 'muted', anchor='rm')
         elif not readings or not any(value is not None for _, value in readings):
-            self.text(x+20, y+80, 'No service data received' if readings else 'Service codes hidden', 21)
-            self.text(x+20, y+113, 'Codes are shown when the cluster reports them', 15, 'muted', width=656-x)
+            self.text(x+20, y+80, 'Not reported' if readings else 'Codes hidden', 23)
         else:
             complete = all(value is False for _, value in readings)
-            self.text(x+20, y+80, 'No service codes reported' if complete else 'Service codes incomplete', 20,
+            self.text(x+20, y+80, 'No codes reported' if complete else 'Readings incomplete', 23,
                       width=656-x)
         self.rule(x+20, y+192, 676)
-        self.button((x+12, y+194, 684, y+230), 'guide', 'Honda service code guide',
+        self.button((x+12, y+194, 684, y+230), 'guide', 'Service code guide',
                     lambda: self.navigate('guide'), size=16)
         self.chevron(669, y+212)
-        quick = [key for key in ('75', '144', '40', '77', '61', '132') if self.has(key)]
+        quick = [key for key in ('75', '144', '40', '77', '61', '132') if self.reading(key) is not None]
         for i, key in enumerate(quick[:3]):
             left = 24+i*228
             self.panel((left, y+248, left+216, y+324))
-            self.text(left+16, y+268, field_label(key), 14, 'muted', width=184)
+            label = {'144': 'Range', '40': 'Coolant'}.get(key, field_label(key))
+            self.text(left+16, y+268, label, 16, 'muted', width=184)
             value = self.value(key)
             if key == '75' and isinstance((odo := self.reading(key)), int):
                 value = f'{odo:,}'
@@ -308,9 +305,10 @@ class Dashboard:
         if code in SERVICE_ITEMS:
             self.text(44, y+264, 'Honda 2014 Civic Sedan Owner’s Manual · p. 359', 14, 'muted')
 
-    def heading(self, title, note, back=None):
+    def heading(self, title, note='', back=None):
         self.text(24, self.top+13, title, 25, weight=500, width=540)
-        self.text(24, self.top+38, note, 14, 'muted', width=540)
+        if note:
+            self.text(24, self.top+38, note, 14, 'muted', width=540)
         if back:
             self.button((592, self.top, 696, self.top+44), 'back', '‹  Back', back, selected=True)
 
@@ -361,30 +359,32 @@ class Dashboard:
         y = self.top
         if warnings:
             self.panel((24, y, 696, y+148))
-            self.text(44, y+26, 'Warning indicators', 23, weight=500)
+            self.text(44, y+26, 'Warnings', 23, weight=500)
             if active:
-                self.text(44, y+61, f'{len(active)} reported active', 26, 'accent', weight=500)
+                self.text(44, y+61, f'{len(active)} active', 26, 'accent', weight=500)
                 self.text(44, y+90, ' · '.join(map(field_label, active)), 16, 'muted', width=626)
             else:
-                self.text(44, y+70, 'No active warnings reported' if checked else 'No warning data received', 23)
-            self.button((44, y+104, 676, y+144), 'warnings', f'View indicators · {checked} of {len(warnings)} reported',
+                status = ('No active warnings reported' if checked == len(warnings) else
+                          'Readings incomplete' if checked else 'Not reported')
+                self.text(44, y+70, status, 23)
+            self.button((44, y+104, 676, y+144), 'warnings', 'View indicators',
                         lambda: self.navigate('warnings'), size=16)
             self.chevron(672, y+124)
         if tires:
             top = y+164 if warnings else y
             self.panel((24, top, 696, top+160))
-            self.text(44, top+26, 'Tires and TPMS', 23, weight=500)
-            pressure = [k for k in ('126', '127', '128', '129') if self.has(k)]
+            self.text(44, top+26, 'Tires', 23, weight=500)
+            pressure = [k for k in ('126', '127', '128', '129') if self.reading(k) is not None]
             for index, key in enumerate(pressure):
                 x = 44+index*156
                 self.text(x, top+62, field_label(key).removesuffix(' pressure'), 15, 'muted')
                 self.text(x, top+91, self.value(key), 20, width=144)
-            if pressure and any(self.reading(key) is not None for key in pressure):
-                self.text(676, top+26, 'Native pressure values', 14, 'muted', anchor='rm')
+            if pressure:
+                self.text(676, top+26, 'Raw values', 14, 'muted', anchor='rm')
             if not pressure:
-                self.text(44, top+76, 'View tire warning indicators', 17, 'muted')
+                self.text(44, top+76, 'Pressure not reported', 21, 'muted')
             self.rule(44, top+116, 676)
-            self.button((44, top+118, 676, top+158), 'tires', 'Tire readings and warnings',
+            self.button((44, top+118, 676, top+158), 'tires', 'View tire details',
                         lambda: self.navigate('tires'), size=16)
             self.chevron(672, top+138)
         else:
@@ -414,7 +414,7 @@ class Dashboard:
         if not keys:
             self.empty('Diagnostics hidden', 'Change visibility in Settings › Plugins › Vehicle')
             return
-        self.heading('Fault codes and freeze frames', 'Last reports from vehicle modules')
+        self.heading('Fault reports')
         for i, (kind, field) in enumerate(keys):
             y = self.top+64+i*76
             box = (24, y, 696, y+64)
@@ -427,10 +427,10 @@ class Dashboard:
                 codes = fault_codes(kind, records)
                 status = 'Receiving report'
                 if complete:
-                    count = f'{total} record' + ('s' if total != 1 else '')
-                    status = count if kind == 3 else f'{len(codes)} decoded · {count}'
+                    status = ('Available' if total else 'No records') if kind == 3 else (
+                        f'{len(codes)} fault code' + ('s' if len(codes) != 1 else '') if codes else 'No codes decoded')
             else:
-                status = 'No report received'
+                status = 'Not reported'
             self.text(44, y+44, status, 15, 'muted')
             self.chevron(676, y+32)
 
@@ -501,9 +501,9 @@ class Dashboard:
         if not groups:
             self.empty('Readings hidden', 'Change visibility in Settings › Plugins › Vehicle')
             return
-        self.heading('Vehicle readings', 'All visible HondaLink signals by system')
+        self.heading('All readings')
         for i, (key, title, fields) in enumerate(self.paginate(groups, 5)):
             saved = sum(self.reading(key) is not None for key in fields)
-            self.list_row(self.top+52+i*44, key, title, f'{saved} of {len(fields)} recorded',
+            self.list_row(self.top+52+i*44, key, title, 'View' if saved else 'Not reported',
                           action=lambda key=key: self.navigate(key))
         self.pager('groups')

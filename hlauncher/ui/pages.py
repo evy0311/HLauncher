@@ -385,7 +385,73 @@ def phone_projection(ui):
     gear = art.glyph('settings', 36)
     p.image.paste(gear, (34, 418), gear)
     p.text((96, 436), 'Settings', 18, anchor='lm')
+    p.button((496, 408, 696, 464), 'Devices', ui.open_projection_devices, secondary=True, size=24)
+    if ui.projection_devices_open:
+        projection_devices(ui, p)
     present(ui, p)
+
+
+def projection_devices(ui, p):
+    """A modal on the connection page, with no actions from the dimmed page."""
+    p.image.paste(Image.blend(p.image, Image.new('RGB', p.image.size), .72), (0, 0))
+    p.actions = []
+    p.panel((64, 80, 656, 456))
+    p.label((88, 102), 'Devices', 28)
+    p.text((88, 144), 'Tap a saved phone to connect', 17)
+    p.button((584, 96, 632, 144), '×', ui.close_projection_devices, secondary=True, size=28)
+    phones = ui.host.projection_phones.snapshot()
+    count = max(1, math.ceil(len(phones) / 3))
+    index = ui.projection_devices_index = max(0, min(count - 1, ui.projection_devices_index))
+    for row, phone in enumerate(phones[index*3:index*3+3]):
+        top = 178 + row * 64
+        box = (88, top, 632, top+56)
+        p.panel(box)
+        if p.pressed == scale_bounds(box, p.size):
+            p.draw.rounded_rectangle(box, radius=6, outline=p.accent, width=2)
+        p.text((104, top+8), p.fit(phone['name'], 446, 22), 22, fill='#ffffff')
+        status = 'Connected' if phone['connected'] else 'Saved phone'
+        if phone.get('favorite'):
+            status = 'Favorite · ' + status
+        p.text((104, top+34), p.fit(status, 446, 14), 14)
+        p.text((608, top+28), '›', 28, anchor='mm', fill='#ffffff')
+        p.actions.append((scale_bounds(box, p.size), lambda key=phone['id']: ui.select_projection_device(key)))
+    if not phones:
+        p.text((360, 248), 'No saved phones yet', 24, anchor='mm', fill='#ffffff')
+        for line, text in enumerate(wrap_status('Connect a phone through the USB dongle to save it here.', p.draw, font(18), 480)):
+            p.text((360, 286+24*line), text, 18, anchor='mm')
+    if count > 1:
+        if index:
+            p.button((88, 378, 152, 426), '‹', lambda: ui.change_projection_devices_page(-1), secondary=True, size=28)
+        if index < count-1:
+            p.button((568, 378, 632, 426), '›', lambda: ui.change_projection_devices_page(1), secondary=True, size=28)
+        p.text((360, 402), f'{index+1} / {count}', 17, anchor='mm')
+    notice = ui.projection_device_notice
+    if ui.projection_device_key is not None:
+        notice = projection_phone_status(ui, ui.projection_device_key, notice)
+    if notice:
+        p.text((88, 434), p.fit(notice, 544, 14), 14, fill='#efbd82')
+
+
+def projection_phone_status(ui, key, fallback):
+    worker = ui.host.workers.get('carplay')
+    attempt = getattr(worker, 'metrics', {}).get('phone_connection', {})
+    request = getattr(ui, 'projection_phone_request', None)
+    matches = (isinstance(attempt, dict) and attempt.get('phone_id') == key
+               and (not request or request[0] != key or attempt.get('request_id') == request[1]))
+    if (request and request[0] == key and time.monotonic() > request[2]
+            and (not matches or attempt.get('result') in ('connecting', 'disconnecting'))):
+        return 'Connection request timed out · no dongle response'
+    if not matches:
+        return fallback
+    labels = {'disconnecting':'Disconnecting current phone', 'connecting':'Connecting to phone',
+              'connected':'Selected phone connected', 'failed':'Connection failed', 'skipped':'Current session kept'}
+    reasons = {'busy':'Another connection attempt is running', 'not_paired':'Phone is not in the dongle paired list',
+               'disconnect_send_failed':'Dongle rejected the disconnect request',
+               'connect_send_failed':'Dongle rejected the connection request',
+               'autoconnect_send_failed':'Dongle rejected auto-connect setup',
+               'disconnect_timeout':'Current phone did not disconnect', 'connection_timeout':'Selected phone did not connect',
+               'adapter_disconnected':'Dongle connection lost', 'worker_queue_full':'Dongle command queue is full'}
+    return reasons.get(attempt.get('reason'), labels.get(attempt.get('result'), 'Waiting for dongle'))
 
 
 def projection_settings(ui):
@@ -450,28 +516,9 @@ def projection_phone(ui):
         rows.append(Row('Favorite phone', ui.favorite_projection_phone, toggle=favorite))
     else:
         rows.append(Row('Favorite phone', None, value='Connect dongle'))
-    worker = ui.host.workers.get('carplay')
-    attempt = getattr(worker, 'metrics', {}).get('phone_connection', {})
-    request = getattr(ui, 'projection_phone_request', None)
     detail = ui.banner or 'Connect now switches away from the current dongle phone'
-    if (not ui.banner or ui.banner == 'Connection requested') and isinstance(attempt, dict) and attempt.get('phone_id') == key:
-        result = attempt.get('result')
-        labels = {'disconnecting':'Disconnecting current phone', 'connecting':'Connecting to phone',
-                  'connected':'Selected phone connected', 'failed':'Connection failed',
-                  'skipped':'Current session kept'}
-        if not request or request[0] != key or attempt.get('request_id') == request[1]:
-            detail = labels.get(result, 'Waiting for dongle')
-            reasons = {'busy':'Another connection attempt is running', 'not_paired':'Phone is not in the dongle paired list',
-                       'disconnect_send_failed':'Dongle rejected the disconnect request',
-                       'connect_send_failed':'Dongle rejected the connection request',
-                       'autoconnect_send_failed':'Dongle rejected auto-connect setup',
-                       'disconnect_timeout':'Current phone did not disconnect',
-                       'connection_timeout':'Selected phone did not connect',
-                       'adapter_disconnected':'Dongle connection lost', 'worker_queue_full':'Dongle command queue is full'}
-            if attempt.get('reason') in reasons:
-                detail = reasons[attempt['reason']]
-    if request and request[0] == key and time.monotonic() > request[2] and (attempt.get('request_id') != request[1] or attempt.get('result') in ('connecting', 'disconnecting')):
-        detail = 'Connection request timed out · no dongle response'
+    if not ui.banner or ui.banner == 'Connection requested':
+        detail = projection_phone_status(ui, key, detail)
     rows += [Row('Status', None, value='Connected' if phone.get('connected') else 'Disconnected'),
              Row('Last protocol', None, value=phone.get('protocol') or 'Unknown'),
              Row('Last transport', None, value=phone.get('transport') or 'Unknown'),

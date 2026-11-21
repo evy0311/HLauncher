@@ -130,6 +130,10 @@ class Launcher:
         self.started = False
         self.pending_default = False
         self.last_frame_at = 0
+        self.projection_devices_open = False
+        self.projection_devices_index = 0
+        self.projection_device_key = None
+        self.projection_device_notice = ''
         from .wifi_status import indicator
         self.header_wifi = indicator()
         self.wifi_checked = time.monotonic()
@@ -704,6 +708,38 @@ class Launcher:
         self.mode = 'phone_projection'
         self.press = None
         self.banner = ''
+        self.projection_devices_open = False
+        self.draw()
+
+    def open_projection_devices(self):
+        self.mode = 'phone_projection'
+        self.projection_devices_open = True
+        self.projection_devices_index = 0
+        self.projection_device_key = None
+        self.projection_device_notice = ''
+        self.banner = ''
+        self.press = self.pressed_box = None
+        self.draw()
+
+    def close_projection_devices(self):
+        self.projection_devices_open = False
+        self.press = self.pressed_box = None
+        self.draw()
+
+    def change_projection_devices_page(self, delta):
+        self.projection_devices_index += delta
+        self.press = self.pressed_box = None
+        self.draw()
+
+    def select_projection_device(self, key):
+        try:
+            self.request_projection_phone(key)
+            self.projection_device_key = key
+            self.projection_device_notice = 'Connection requested'
+        except (OSError, ValueError) as exc:
+            self.projection_device_key = None
+            self.projection_device_notice = str(exc)
+        self.press = self.pressed_box = None
         self.draw()
 
     def projection_settings_page(self):
@@ -740,12 +776,15 @@ class Launcher:
 
     def connect_projection_phone(self):
         try:
-            request = self.host.connect_phone(self.projection_phone_id)
-            self.projection_phone_request = (self.projection_phone_id, request, time.monotonic()+45)
+            self.request_projection_phone(self.projection_phone_id)
             self.banner = 'Connection requested'
         except (OSError, ValueError) as exc:
             self.banner = str(exc)
         self.draw()
+
+    def request_projection_phone(self, key):
+        request = self.host.connect_phone(key)
+        self.projection_phone_request = (key, request, time.monotonic()+45)
 
     def start_projection(self, engine):
         self.projection_auto_native = False
@@ -1272,7 +1311,7 @@ class Launcher:
     def parked_only_screen(self):
         if self.mode == 'home':
             return self.home_editor.editing
-        return self.mode not in ('plugin', 'obd_coming_soon', 'shutdown_pending', 'parking_status')
+        return self.mode not in ('plugin', 'phone_projection', 'obd_coming_soon', 'shutdown_pending', 'parking_status')
 
     def sync_parked_screen(self):
         # Pending plugins reopen on tick, after the host has finished stopping
@@ -1692,10 +1731,13 @@ class Launcher:
         if self.mode == 'home' and self.projection_tile() != previous_projection_tile:
             self.draw()
         if self.mode == 'phone_projection':
+            if (self.projection_devices_open and self.projection_device_key is not None
+                    and self.projection_device_key in self.host.projection_phones.live):
+                self.projection_devices_open = False
             connected = next((ident for ident, worker in self.host.workers.items()
                 if ident in PROJECTIONS and (getattr(worker, 'video_available', False)
                     or getattr(worker, 'metrics', {}).get('phone_connected') is True)), None)
-            if connected:
+            if connected and not self.projection_devices_open:
                 self.open_plugin(connected, projection_engine=True)
         if now - getattr(self, 'projection_appearance_checked', 0) >= .1:
             self.projection_appearance_checked = now
@@ -1746,7 +1788,9 @@ class Launcher:
                                    monotonic_ms=round(time.monotonic()*1000))
                         self.projection_auto_native = True
                         self.projection_auto_native_deadline = time.monotonic()+30
-                        self.host.request_projection('android-auto', self.mode in ('phone_projection', 'plugin'))
+                        foreground = (self.mode == 'plugin' or
+                                      self.mode == 'phone_projection' and not self.projection_devices_open)
+                        self.host.request_projection('android-auto', foreground)
                         if self.host.active == 'android-auto':
                             self.mode = 'plugin'
                             self.has_frame = False

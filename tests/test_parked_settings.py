@@ -348,6 +348,7 @@ class ParkedSettings(unittest.TestCase):
         self.speed(0, now)
         self.ui.appearance_settings()
         self.assertFalse(self.ui.parked_screen_locked)
+
         box = next(box for box, callback in self.ui.actions if callback == self.ui.toggle_clock)
         x, y = (box[0] + box[2]) / 2, (box[1] + box[3]) / 2
         contact = dict(slot=0, has_position=True, x_raw=round(x * 32767 / 719),
@@ -363,3 +364,44 @@ class ParkedSettings(unittest.TestCase):
         self.ui.actions[0][1]()
         self.assertEqual(self.ui.mode, 'home')
         self.assertFalse(self.ui.parked_screen_locked)
+
+    def test_projection_and_device_picker_work_while_driving_but_settings_lock(self):
+        import hashlib
+        from hlauncher.config import ROOT
+
+        self.prefs.data['setup_complete'] = True
+        self.prefs.accept_safety_notice()
+        self.monitor.observe(dict(state='connected', uuid='test-cafe'))
+        self.speed(25, time.monotonic())
+        self.brake(False, time.monotonic())
+        self.ui.manifests.update({ident: Manifest.load(ROOT/'plugins'/ident, bundled=True)
+                                 for ident in ('carplay', 'android-auto')})
+        for ident in ('carplay', 'android-auto'):
+            self.ui.open_plugin(ident)
+            self.assertEqual(self.ui.mode, 'phone_projection')
+            self.assertFalse(self.ui.parked_screen_locked)
+        bootstrap = BootstrapLauncher.__new__(BootstrapLauncher)
+        bootstrap.ui = self.ui
+        self.assertEqual(bootstrap.vehicle_scope(), 'driving')
+
+        address = '02:00:00:00:00:01'
+        key = hashlib.sha256(address.encode()).hexdigest()[:24]
+        self.ui.host.projection_phones.update([dict(id=key, address=address, name='Saved phone', paired=True)])
+        self.touch('down', 596, 436)
+        self.touch('up', 596, 436)
+        self.assertTrue(self.ui.projection_devices_open)
+        self.assertFalse(self.ui.parked_screen_locked)
+        self.assertNotIn(self.ui.projection_settings_page, [action for _, action in self.ui.actions])
+        with patch.object(self.ui.host, 'connect_phone', return_value='fixture-request') as connect:
+            self.touch('down', 300, 206)
+            self.touch('up', 300, 206)
+            connect.assert_called_once_with(key)
+        self.assertEqual(self.ui.projection_device_key, key)
+        self.assertFalse(self.ui.parked_screen_locked)
+        self.touch('down', 608, 120)
+        self.touch('up', 608, 120)
+        self.assertFalse(self.ui.projection_devices_open)
+        self.touch('down', 52, 436)
+        self.touch('up', 52, 436)
+        self.assertEqual(self.ui.mode, 'projection_settings')
+        self.assertTrue(self.ui.parked_screen_locked)

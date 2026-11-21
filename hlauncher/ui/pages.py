@@ -384,7 +384,6 @@ def phone_projection(ui):
     p.button((24, 408, 80, 464), '', ui.projection_settings_page, secondary=True)
     gear = art.glyph('settings', 36)
     p.image.paste(gear, (34, 418), gear)
-    p.text((96, 436), 'Settings', 18, anchor='lm')
     p.button((496, 408, 696, 464), 'Devices', ui.open_projection_devices, secondary=True, size=24)
     if ui.projection_devices_open:
         projection_devices(ui, p)
@@ -595,10 +594,9 @@ def vehicle_model(ui):
                 value='Selected' if selected == 'auto' else '')]
     rows.extend(Row(model.name, lambda code=code: ui.set_vehicle_model(code),
                     value='Selected' if selected == code else '') for code, model in MODELS.items())
-    if settings_menu(ui, 'Vehicle Model', ui.appearance_settings, row_items(rows), footer='Sets the Home icon'):
+    if settings_menu(ui, 'Vehicle Model', ui.appearance_settings, row_items(rows)):
         return
     p = page_for(ui, 'Vehicle Model', ui.appearance_settings)
-    p.text((24, 94), 'Sets the Home icon', 19)
     draw_rows(ui, p, rows, size=24)
     present(ui, p)
 

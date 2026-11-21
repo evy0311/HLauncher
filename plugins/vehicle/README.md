@@ -20,6 +20,14 @@ screen offers Home or reopens Vehicle once both are confirmed.
   recovered readings, including raw interval and cluster codes. Raw values
   are shown where a unit or code mapping is still unknown.
 
+The four overview tabs use short headings and one status line. Maintenance
+summary tiles appear only for received values, including legitimate zeroes.
+Service descriptions, indicator details and raw report records remain available
+on tap. Partial warning telemetry stays labelled incomplete.
+
+UI polish used [unslop by Damir Sokolovsky (@heydamir)](https://heydamir.design/unslop),
+CC BY 4.0, while retaining HLauncher's radio theme and navigation.
+
 Open **Settings → Plugins → Vehicle** to choose the groups and individual fields
 shown in the plugin. Hide **Tires and TPMS** to remove the section while keeping
 your individual choices saved. Visibility settings affect the display only.

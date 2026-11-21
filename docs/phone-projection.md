@@ -31,6 +31,16 @@ process-tree lease remain intact for upgrade/rollback compatibility. Existing
 startup choices still start their selected engine automatically. Settings retain
 independent GPS/headlight preferences for the dongle and direct USB paths.
 
+**Open on connection** in Phone Projection settings optionally opens the first
+connected CarPlay or Android Auto session while Home is visible. It defaults Off
+and is independent of the Startup app, so Startup can remain Home. Opening an
+app or Settings before the phone connects cancels this automatic opening for
+the current launcher session, even after returning Home. The phone can still
+connect in the background. Returning Home after an automatic opening also stays
+on Home. A new launcher session arms the saved option again; enabling the toggle
+also arms it immediately. Existing navigation from the Phone Projection landing
+page still opens a connected phone normally.
+
 Passive sysfs discovery recognizes AOA accessory IDs and Android-labelled USB
 phones, excluding the Carlinkit vendor. A newly attached candidate can hand off
 an idle dongle worker to native AA. It never preempts a reported connected

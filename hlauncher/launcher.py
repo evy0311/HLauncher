@@ -130,6 +130,7 @@ class Launcher:
         self.started = False
         self.pending_default = False
         self.last_frame_at = 0
+        self.projection_auto_launch_pending = self.prefs.data['projection_auto_launch']
         self.projection_devices_open = False
         self.projection_devices_index = 0
         self.projection_device_key = None
@@ -639,6 +640,7 @@ class Launcher:
         self.event(state="launcher_home", message=message)
 
     def settings(self):
+        self.projection_auto_launch_pending = False
         self.diagnostics.stop()
         self.host.deactivate()
         self.mode = "settings"
@@ -673,6 +675,7 @@ class Launcher:
         self.draw()
 
     def audio_page(self):
+        self.projection_auto_launch_pending = False
         self.audio_return=self.settings if self.mode=='settings' else self.home
         self.tone_test.stop()
         self.host.deactivate()
@@ -792,6 +795,7 @@ class Launcher:
         self.draw()
 
     def projection_settings_page(self):
+        self.projection_auto_launch_pending = False
         if self.mode in ('phone_projection', 'plugin'):
             self.projection_settings_return = self.projection_page
         elif self.mode not in ('projection_settings', 'adapter_info', 'adapter_branding', 'projection_phones', 'projection_phone'):
@@ -871,6 +875,33 @@ class Launcher:
             self.host.sync_projection_appearance(plugin_id)
             self.banner = 'Night mode follows the lights' if enabled else 'Day mode'
         self.draw()
+
+    def toggle_projection_auto_launch(self):
+        enabled = not self.prefs.data['projection_auto_launch']
+        try:
+            self.prefs.set_projection_auto_launch(enabled)
+        except OSError as exc:
+            self.banner = 'Could not save auto-launch setting'
+            self.event(state='settings_save_failed', error=str(exc))
+        else:
+            self.projection_auto_launch_pending = enabled
+            self.banner = ''
+        self.draw()
+
+    def auto_launch_projection(self):
+        if (not self.projection_auto_launch_pending or not self.prefs.data['projection_auto_launch']
+                or not self.prefs.safety_notice_accepted or not self.prefs.data['setup_complete']
+                or self.pending_default or self.mode != 'home' or self.home_editor.editing
+                or self.press is not None):
+            return
+        connected = next((ident for ident, worker in self.host.workers.items()
+            if ident in PROJECTIONS and ident in self.manifests and self.prefs.enabled(self.manifests[ident])
+            and (getattr(worker, 'video_available', False)
+                 or getattr(worker, 'metrics', {}).get('phone_connected') is True)), None)
+        if connected:
+            # Once used or cancelled, returning Home cannot steal focus again.
+            self.projection_auto_launch_pending = False
+            self.open_plugin(connected, projection_engine=True)
 
     def projection_night_mode(self, plugin_id):
         return self.prefs.auto_night(plugin_id) and self.protocols.illumination_night_mode()
@@ -1262,6 +1293,7 @@ class Launcher:
         return False
 
     def open_plugin(self, plugin_id, *, projection_engine=False):
+        self.projection_auto_launch_pending = False
         if not self.prefs.safety_notice_accepted:
             self.safety_notice()
             return
@@ -1838,7 +1870,7 @@ class Launcher:
                                    monotonic_ms=round(time.monotonic()*1000))
                         self.projection_auto_native = True
                         self.projection_auto_native_deadline = time.monotonic()+30
-                        foreground = (self.mode == 'plugin' or
+                        foreground = (self.mode == 'plugin' and self.host.active in PROJECTIONS or
                                       self.mode == 'phone_projection' and not self.projection_devices_open)
                         self.host.request_projection('android-auto', foreground)
                         if self.host.active == 'android-auto':
@@ -1891,6 +1923,7 @@ class Launcher:
                 self.manifests[plugin_id]
             ):
                 self.open_plugin(plugin_id, projection_engine=plugin_id in PROJECTIONS)
+        self.auto_launch_projection()
         if self.mode != "plugin":
             return
         worker=self.host.workers.get(self.host.active)

@@ -454,7 +454,8 @@ def projection_phone_status(ui, key, fallback):
 
 
 def projection_settings(ui):
-    rows = []
+    rows = [Row('Open on connection', ui.toggle_projection_auto_launch,
+                toggle=ui.prefs.data['projection_auto_launch'])]
     for ident, label in (('carplay', 'Use USB dongle'), ('android-auto', 'Use direct USB Android Auto')):
         manifest = ui.manifests.get(ident)
         if manifest:

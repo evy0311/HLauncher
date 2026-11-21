@@ -209,7 +209,9 @@ class Simulator:
         for key in list(ui.host.workers):
             if key in ('carplay','android-auto') and (key!=ident or new['dongle']=='none' and key=='carplay'):ui.host.stop(key)
         if new['dongle']!='none' or ident=='android-auto':
-            ui.host.request_projection(ident,ui.mode in ('phone_projection','plugin'))
+            foreground = (ui.mode == 'phone_projection' and not ui.projection_devices_open or
+                          ui.mode == 'plugin' and ui.host.active in ('carplay', 'android-auto'))
+            ui.host.request_projection(ident,foreground)
             worker=ui.host.workers.get(ident)
             if worker:
                 connected=phone!='none' and (phone!='android-dongle' or new['dongle']=='dual')

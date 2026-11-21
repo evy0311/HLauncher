@@ -59,6 +59,7 @@ class Preferences:
                      "wifi_delay_boot": True, "vehicle_model": "auto", "vehicle_model_vin": None,
                      "layout_theme": "oem", "vehicle_hidden": [], "include_beta_updates": False, "development_branch": "develop", "source_updates": False,
                      "home_pages": [], "carplay_fps": CARPLAY_FRAME_RATES[0],
+                     "projection_auto_launch": False,
                      "carplay_auto_night": True, "android_auto_auto_night": True,
                      "carplay_car_gps": False, "android_auto_car_gps": False}
         try:
@@ -76,6 +77,7 @@ class Preferences:
                 self.data['safety_notice_app_version'] = loaded['safety_notice_app_version']
             self.data['debug_mode'] = loaded.get('debug_mode', False) is True
             self.data['show_clock'] = loaded.get('show_clock', False) is True
+            self.data['projection_auto_launch'] = loaded.get('projection_auto_launch') is True
             from .vehicle_models import MODELS, normalize_vin
             if isinstance(loaded.get('vehicle_model'), str) and loaded['vehicle_model'] in ('auto', *MODELS):
                 self.data['vehicle_model'] = loaded['vehicle_model']
@@ -256,6 +258,15 @@ class Preferences:
             self.save()
         except OSError:
             self.data["default_plugin"] = before
+            raise
+
+    def set_projection_auto_launch(self, enabled):
+        previous = self.data['projection_auto_launch']
+        self.data['projection_auto_launch'] = bool(enabled)
+        try:
+            self.save(force=('projection_auto_launch',))
+        except OSError:
+            self.data['projection_auto_launch'] = previous
             raise
 
     @property

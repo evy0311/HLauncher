@@ -337,9 +337,9 @@ class RadioUI(unittest.TestCase):
     def test_plugin_switch_and_debug_switch_save_their_values(self):
         ui=self.ui;ui.plugin_settings();ui.actions[1][1]();self.assertEqual(ui.mode,'projection_settings')
         before=ui.prefs.enabled(ui.manifests['carplay'])
-        ui.actions[3 if before else 2][1]()
+        ui.actions[6 if before else 5][1]()
         self.assertEqual(ui.prefs.enabled(ui.manifests['carplay']),before)
-        ui.actions[1][1]()
+        ui.actions[4][1]()
         self.assertEqual(Preferences(ui.prefs.path).enabled(ui.manifests['carplay']),not before)
         ui.system_settings();next(action for _,action in ui.actions if action==ui.toggle_debug)()
         self.assertFalse(Preferences(ui.prefs.path).data['debug_mode'])
@@ -382,6 +382,8 @@ class RadioUI(unittest.TestCase):
         ui = self.ui
         ui.plugin_detail('carplay')
         self.assertEqual(ui.prefs.carplay_fps, 30)
+        ui.list_offsets['projection-settings'] = 64
+        ui.draw()
         toggle = next(action for _, action in ui.actions if action == ui.toggle_carplay_fps)
         with patch.object(ui.host, 'stop') as stop:
             toggle()
@@ -404,7 +406,7 @@ class RadioUI(unittest.TestCase):
         self.assertTrue(ui.prefs.auto_night('carplay'))
         self.assertTrue(ui.prefs.auto_night('android-auto'))
         ui.plugin_detail('carplay')
-        ui.list_offsets['projection-settings'] = 256
+        ui.list_offsets['projection-settings'] = 320
         ui.draw()  # Keep the existing controls visible below Dongle info.
         carplay = SimpleNamespace(manifest=ui.manifests['carplay'], send=Mock(return_value=True))
         with patch.object(ui.host, 'workers', {'carplay': carplay}), \
@@ -416,7 +418,7 @@ class RadioUI(unittest.TestCase):
             carplay.send.assert_called_with(type='projection.appearance', night_mode=False)
             self.assertTrue(ui.projection_night_mode('android-auto'))
         ui.plugin_detail('android-auto')
-        ui.list_offsets['projection-settings'] = 320
+        ui.list_offsets['projection-settings'] = 384
         ui.draw()
         next(action for box, action in ui.actions if box[:2] == (24, 320))()
         saved = Preferences(ui.prefs.path)
@@ -428,12 +430,12 @@ class RadioUI(unittest.TestCase):
         ui.plugin_detail('carplay')
         self.assertFalse(ui.prefs.car_gps('carplay'))
         self.assertFalse(ui.prefs.car_gps('android-auto'))
-        ui.list_offsets['projection-settings'] = 256
+        ui.list_offsets['projection-settings'] = 320
         ui.draw()
         next(action for box, action in ui.actions if box[:2] == (24, 320))()
         self.assertTrue(Preferences(ui.prefs.path).car_gps('carplay'))
         ui.plugin_detail('android-auto')
-        ui.list_offsets['projection-settings'] = 320
+        ui.list_offsets['projection-settings'] = 384
         ui.draw()
         next(action for box, action in ui.actions if box[:2] == (24, 384))()
         self.assertTrue(Preferences(ui.prefs.path).car_gps('android-auto'))

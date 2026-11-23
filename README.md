@@ -136,6 +136,12 @@ It is provided **as is, without warranty**, under the terms of the [license](LIC
 Use it at your own risk, verify compatibility with your setup, and perform setup
 and testing while parked. Do not rely on it for safety-critical vehicle functions.
 
+**HondaLink Assist will not work when HLauncher is paired as the radio's Bluetooth
+phone in place of your actual phone.** HondaLink Assist requires your mobile phone
+to be connected directly to the radio through Bluetooth HandsFreeLink to place
+an emergency call after a collision. HLauncher does not forward those outgoing
+call requests to your phone. Do not rely on HondaLink Assist with this setup.
+
 The driver is responsible for safe vehicle operation, maintaining attention to
 the road and complying with all applicable traffic laws. Complete setup and
 adjustments while safely parked. Do not operate HLauncher, watch video or use

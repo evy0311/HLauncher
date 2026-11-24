@@ -16,6 +16,8 @@ HondaLink phone-app integration, tested on my 2014 Civic Si. It adds CarPlay
 and wired Android Auto through plugins, plus a Vehicle maintenance dashboard
 available while parked. OBD Gauges is coming soon.
 
+[Watch the in-depth HLauncher v0.2.12 feature overview on YouTube](https://www.youtube.com/watch?v=3ASVC89aZSI).
+
 ![The dashboard of a 2014 Honda Civic Si with the HLauncher tile visible in CarPlay on the factory radio](docs/images/hlauncher-in-car.jpg)
 
 *CarPlay running through HLauncher on the factory radio in my 2014 Civic Si.*

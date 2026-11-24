@@ -4,7 +4,7 @@
 
 <p align="center">
   <a href="https://github.com/evy0311/HLauncher/releases"><img src="https://img.shields.io/github/v/release/evy0311/HLauncher?style=flat-square&amp;color=b42326" alt="Latest release"></a>
-  <a href="https://github.com/evy0311/HLauncher/releases"><img src="https://img.shields.io/github/downloads/evy0311/HLauncher/total?style=flat-square&amp;label=Downloads" alt="Total downloads across all releases"></a>
+  <a href="https://github.com/evy0311/HLauncher/releases"><img src="https://img.shields.io/endpoint?url=https%3A%2F%2Fevy0311.github.io%2FHLauncher%2Fimage-downloads.json&amp;style=flat-square" alt="Image downloads across all releases (.img and .img.xz; not unique users)"></a>
   <a href="docs/install.md"><img src="https://img.shields.io/badge/Raspberry_Pi-4_Model_B-9d174d?style=flat-square&amp;logo=raspberrypi" alt="Raspberry Pi 4 Model B installation guide"></a>
   <a href="docs/vehicle-compatibility.md"><img src="https://img.shields.io/badge/HondaLink-Vehicle_compatibility-285c83?style=flat-square" alt="HondaLink vehicle compatibility"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-GPL--3.0-3c5c49?style=flat-square" alt="GPL-3.0 license"></a>

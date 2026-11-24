@@ -1,0 +1,51 @@
+name: Image download badge
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - scripts/image_downloads_badge.py
+      - .github/workflows/image-downloads.yml
+  release:
+    types: [published, edited, deleted]
+  schedule:
+    - cron: '17 */6 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: image-download-badge
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    if: github.repository == 'evy0311/HLauncher'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: main
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - name: Count image downloads
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: python scripts/image_downloads_badge.py _badge
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v4
+        with:
+          path: _badge
+      - name: Publish badge data
+        id: deployment
+        uses: actions/deploy-pages@v4

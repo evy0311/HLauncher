@@ -25,11 +25,12 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+      actions: read
       pages: write
       id-token: write
     environment:
       name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
+      url: ${{ steps.deployment.outputs.page_url || steps.deployment_retry.outputs.page_url }}
     steps:
       - uses: actions/checkout@v6
         with:
@@ -44,8 +45,42 @@ jobs:
         run: python scripts/image_downloads_badge.py _badge
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v4
+        id: artifact
         with:
           path: _badge
+      - name: Wait for the uploaded Pages artifact
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ARTIFACT_ID: ${{ steps.artifact.outputs.artifact_id }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "$ARTIFACT_ID" || "$ARTIFACT_ID" == *[!0-9]* ]]; then
+            echo "::error::Pages upload did not return a valid artifact ID."
+            exit 1
+          fi
+          # Upload completion can precede visibility in the artifact listing.
+          for attempt in {1..12}; do
+            if gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/artifacts?per_page=100" \
+              --jq '.artifacts[] | select(.name == "github-pages" and .expired == false) | .id' \
+              | grep -Fxq "$ARTIFACT_ID"; then
+              exit 0
+            fi
+            if (( attempt < 12 )); then
+              echo "Pages artifact is not visible yet (attempt $attempt/12); waiting 5 seconds."
+              sleep 5
+            fi
+          done
+          echo "::error::Uploaded Pages artifact $ARTIFACT_ID did not become visible."
+          exit 1
       - name: Publish badge data
         id: deployment
+        uses: actions/deploy-pages@v4
+        continue-on-error: true
+      - name: Wait before retrying Pages deployment
+        if: steps.deployment.outcome == 'failure'
+        run: sleep 15
+      - name: Retry publishing badge data
+        id: deployment_retry
+        if: steps.deployment.outcome == 'failure'
         uses: actions/deploy-pages@v4

@@ -229,9 +229,11 @@ Diagnostics → System diagnostics → USB devices** (enable Debug mode first).
 It lists all USB devices detected by Linux, including hubs, with their port,
 reported name, and hexadecimal vendor/product IDs. The list refreshes every two
 seconds independently of the CarPlay plugin, and **Save report** includes the
-inventory. A powered dongle that does not enumerate will not appear. Install its
-signed branch build through Software updates; no SD card reflash is needed on
-an existing update-enabled development installation.
+inventory. A powered dongle that does not enumerate will not appear. On the
+latest development build, enable **Unsigned source testing**, select this branch,
+and review **Install unsigned source**. This Python-only change reuses the
+existing native runtime; no SD card reflash is needed. A signed branch build can
+also be installed if one is published.
 
 When no branch snapshots exist, selecting `develop` retains discovery of older
 numeric beta releases. Turning Development builds off prevents installation of

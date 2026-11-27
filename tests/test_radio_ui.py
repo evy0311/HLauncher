@@ -28,6 +28,25 @@ class RadioUI(unittest.TestCase):
         self.ui=Launcher(framebuffer=Display(),preferences=prefs,manifests=manifests)
     def tearDown(self):self.ui.close();self.temp.cleanup()
 
+    def test_usb_diagnostics_lists_unsupported_devices_and_scrolls_on_refresh(self):
+        from hlauncher.ui.scroll_list import draw
+        ui=self.ui
+        devices=[dict(port=f'1-{i}',name='USB adapter',vendor='abcd',product=f'{i:04x}')
+                 for i in range(8)]
+        with patch.object(ui.diagnostics,'start'), patch.object(ui.diagnostics,'snapshot',
+                return_value=({'usb_devices':devices,'usb_error':None},7,'')), \
+                patch('hlauncher.ui.diagnostics.draw_rows',wraps=draw) as rows:
+            ui.system_diagnostics()
+            ui.diagnostic_tab(2)
+            self.assertEqual([row.value for row in rows.call_args.args[2]],
+                             [f'abcd:{i:04x}' for i in range(8)])
+            self.assertGreater(ui.scroll_view['maximum'],0)
+            ui.list_offsets['diagnostics-usb']=128
+            ui.draw()
+            self.assertEqual(ui.scroll_view['offset'],128)
+            self.assertEqual(ui.diagnostic_revision,7)
+            self.assertIn(ui.diagnostics_menu,[action for _,action in ui.actions])
+
     def test_projection_tile_tracks_negotiated_protocol_without_changing_home_identity(self):
         from hlauncher.ui.home import launcher_layout
         ui = self.ui
@@ -189,7 +208,7 @@ class RadioUI(unittest.TestCase):
         ui=self.ui
         ui.system_settings();header=ui.fb.last.crop((80,0,720,52))
         methods=[ui.projection_page,ui.projection_settings_page,ui.projection_phones_page,ui.ssh_settings,ui.adapter_branding_page,ui.adapter_info_page,ui.appearance_settings,ui.startup_settings,ui.recovery_page,lambda:ui.storage_confirm(True),ui.plugin_settings,lambda:ui.plugin_detail('carplay'),lambda:ui.plugin_detail('obd'),ui.tile_colors,
-                 ui.color_settings,ui.system_diagnostics,ui.protocol_tests,
+                 ui.color_settings,ui.system_diagnostics,lambda:ui.diagnostic_tab(2),ui.protocol_tests,
                  lambda:ui.protocol_tab(4),
                  lambda:ui.set_integration_tab('Buttons'),
                  lambda:ui.set_integration_tab('Display'),

@@ -77,9 +77,18 @@ def system(ui):
     p.button((556,64,696,108),'Shut down',ui.shutdown_page,size=18,secondary=True)
     system,revision,report=ui.diagnostics.snapshot();ui.diagnostic_revision=revision
     runtime=ui.diagnostic_runtime()
-    for i,title in enumerate(('Connections','System')):
-        x=24+i*344
-        p.button((x,112,x+328,156),title,lambda i=i:ui.diagnostic_tab(i),selected=i==ui.diagnostic_page)
+    for i,title in enumerate(('Connections','System','USB devices')):
+        x=24+i*228
+        p.button((x,112,x+216,156),title,lambda i=i:ui.diagnostic_tab(i),selected=i==ui.diagnostic_page,size=20)
+    if ui.diagnostic_page==2:
+        devices=system.get('usb_devices',[])
+        rows=[Row(p.fit(f"{device['port']} · {device['name']}",330,20),None,
+                  value=f"{device['vendor']}:{device['product']}") for device in devices]
+        draw_rows(ui,p,rows,top=176,bottom=354,key='diagnostics-usb',size=20)
+        message=system.get('usb_error') or (
+            f'{len(devices)} devices · Includes hubs · Refreshes every 2 seconds' if devices
+            else 'No USB devices detected' if 'usb_devices' in system else 'Checking USB devices…')
+        p.text((24,370),p.fit(message,672,16),16)
     if ui.diagnostic_page==0:
         session=runtime['session'];display=runtime['display'];audio=runtime['audio']
         rows=[('HondaLink','Connected' if session.get('connected') else 'Disconnected'),
@@ -88,7 +97,7 @@ def system(ui):
               ('USB dongle',str(len(system['dongles']))+' detected' if 'dongles' in system else 'Checking…'),
               ('Audio',f"{audio['route'].upper()} · {audio['streams']} streams"),
               ('Running apps',', '.join(runtime['plugins']) or 'None')]
-    else:
+    elif ui.diagnostic_page==1:
         temp=system.get('temperature_c');uptime=system.get('uptime_seconds')
         total=system.get('memory_total');available=system.get('memory_available');free=system.get('storage_free')
         rows=[('Hardware',system.get('model','Checking…')),
@@ -97,7 +106,8 @@ def system(ui):
               ('Memory',f'{(total-available)/1024**2:.0f} / {total/1024**2:.0f} MB used' if total is not None and available is not None else 'Unavailable'),
               ('Storage',f'{free/1024**3:.1f} GB free' if free is not None else 'Unavailable'),
               ('Uptime',f'{int(uptime)//3600}h {int(uptime)%3600//60}m' if uptime is not None else 'Unavailable')]
-    for i,row in enumerate(rows):p.info(176+i*34,*row)
+    if ui.diagnostic_page!=2:
+        for i,row in enumerate(rows):p.info(176+i*34,*row)
     p.button((24,404,224,448),'Save report',lambda:ui.diagnostics.save_report(ui.diagnostic_runtime()),size=18)
     p.button((240,404,440,448),'HondaLink',ui.protocol_tests,size=18)
     p.button((456,404,696,448),'Debug menu',ui.debug_tools,size=18)

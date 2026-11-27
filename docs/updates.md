@@ -223,6 +223,16 @@ In the default signed-build mode, only compatible, signed, published builds appe
 500 recent GitHub releases and chooses the highest installation build number
 per branch. A raw Git branch without a published build cannot be installed.
 The Pi needs Wi-Fi, not Git, a compiler, SSH access or a GitHub account.
+
+The `feature/usb-device-diagnostics` branch adds **Settings → System → Debug →
+Diagnostics → System diagnostics → USB devices** (enable Debug mode first).
+It lists all USB devices detected by Linux, including hubs, with their port,
+reported name, and hexadecimal vendor/product IDs. The list refreshes every two
+seconds independently of the CarPlay plugin, and **Save report** includes the
+inventory. A powered dongle that does not enumerate will not appear. Install its
+signed branch build through Software updates; no SD card reflash is needed on
+an existing update-enabled development installation.
+
 When no branch snapshots exist, selecting `develop` retains discovery of older
 numeric beta releases. Turning Development builds off prevents installation of
 queued development offers as well as hiding discovery. Branch choice and opt-in

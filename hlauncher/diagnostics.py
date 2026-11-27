@@ -13,8 +13,29 @@ from .config import STATE_DIR
 def read(path):
     try:
         return Path(path).read_text().strip().strip('\0')
-    except OSError:
+    except (OSError, UnicodeError):
         return None
+
+
+def collect_usb(root='/sys/bus/usb/devices'):
+    """Enumerate Linux USB devices without claiming interfaces or needing usbutils."""
+    devices=[]
+    try:
+        paths=sorted(Path(root).iterdir(),key=lambda path:path.name)
+    except OSError:
+        return {'usb_devices':[], 'usb_error':'USB device list unavailable'}
+    for path in paths:
+        vendor=read(path/'idVendor');product=read(path/'idProduct')
+        # Interface entries have no device IDs. Unplugging during a scan is normal.
+        if not vendor or not product:continue
+        try:
+            if len(vendor)!=4 or len(product)!=4:continue
+            int(vendor,16);int(product,16)
+        except ValueError:continue
+        devices.append(dict(port=path.name,vendor=vendor.lower(),product=product.lower(),
+                            name=' '.join((read(path/'product') or 'USB device').split()),
+                            manufacturer=' '.join((read(path/'manufacturer') or '').split())))
+    return {'usb_devices':devices, 'usb_error':None}
 
 
 def collect():
@@ -37,11 +58,9 @@ def collect():
     except OSError:result.update(storage_total=None,storage_free=None)
     result['alsa_playback']={str(path):read(path) for path in Path('/proc/asound').glob('card*/pcm*p/sub*/hw_params')}
     result['hdmi_eld']={str(path):read(path) for path in Path('/proc/asound').glob('card*/eld*')}
-    result['dongles']=[]
-    for device in Path('/sys/bus/usb/devices').glob('*'):
-        if read(device/'idVendor')=='1314':
-            result['dongles'].append({'vendor':'1314','product':read(device/'idProduct'),
-                                      'name':read(device/'product') or 'USB adapter'})
+    result.update(collect_usb())
+    result['dongles']=[{'vendor':device['vendor'],'product':device['product'],'name':device['name']}
+                       for device in result['usb_devices'] if device['vendor']=='1314']
     try:result['load_average']=[float(v) for v in (read('/proc/loadavg') or '').split()[:3]]
     except ValueError:result['load_average']=None
     result['power_flags']=None
